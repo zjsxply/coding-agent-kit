@@ -13,7 +13,7 @@ class CursorAgent(CodeAgent):
     display_name = "Cursor Agent"
     binary = "cursor-agent"
 
-    def install(self) -> InstallResult:
+    def install(self, *, scope: str = "user") -> InstallResult:
         result = self._run(["bash", "-c", "curl -fsS https://cursor.com/install | bash"])
         ok = result.exit_code == 0
         details = result.output

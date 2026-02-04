@@ -17,8 +17,11 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 默认无限制模式（Yolo）。
 
 ```bash
-cakit install <agent>
+cakit install <agent> [--scope user|global]
 ```
+
+默认 `--scope user` 会把 npm 类 agent 安装到 `~/.npm-global`（无需 sudo），请确保 `~/.npm-global/bin` 在 `PATH` 中。
+如需全局安装，使用 `--scope global`（等价于 `npm install -g`，可能需要 sudo）。
 
 #### 支持的 Agent
 
@@ -64,7 +67,7 @@ cakit env --output .env
 cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
 ```
 
-若未安装对应 agent，会自动执行 `cakit install <agent>` 并提示。
+若未安装对应 agent，会自动执行 `cakit install <agent>`（user scope）并提示。
 输出字段包括：
 - `agent`, `agent_version`
 - `runtime_seconds`
@@ -109,6 +112,7 @@ cakit tools
 - 完整列表见 `.env.template`。
 - `CAKIT_OUTPUT_DIR`：覆盖日志输出目录。
 - `CAKIT_TRAE_TRAJECTORY`：覆盖 Trae trajectory 输出路径。
+- `CAKIT_NPM_PREFIX`：覆盖 npm 类 agent 的用户安装前缀（默认 `~/.npm-global`）。
 
 ## 测试覆盖矩阵
 

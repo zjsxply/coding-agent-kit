@@ -16,14 +16,14 @@ class CopilotAgent(CodeAgent):
     display_name = "GitHub Copilot CLI"
     binary = "copilot"
 
-    def install(self) -> InstallResult:
-        result = self._run(["npm", "install", "-g", "@github/copilot"])
+    def install(self, *, scope: str = "user") -> InstallResult:
+        result = self._npm_install("@github/copilot", scope)
         config_path = self.configure()
         ok = result.exit_code == 0
         details = result.output
         return InstallResult(
             agent=self.name,
-            version=self.get_version(),
+            version=self.get_version() if ok else None,
             ok=ok,
             details=details,
             config_path=config_path,

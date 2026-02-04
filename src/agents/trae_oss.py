@@ -14,7 +14,7 @@ class TraeOssAgent(CodeAgent):
     display_name = "Trae Agent (OSS)"
     binary = "trae-cli"
 
-    def install(self) -> InstallResult:
+    def install(self, *, scope: str = "user") -> InstallResult:
         commit = os.environ.get("TRAE_AGENT_COMMIT")
         url = "git+https://github.com/bytedance/trae-agent.git"
         if commit:

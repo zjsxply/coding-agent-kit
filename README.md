@@ -17,8 +17,11 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 Default is unrestricted mode (Yolo).
 
 ```bash
-cakit install <agent>
+cakit install <agent> [--scope user|global]
 ```
+
+By default, `--scope user` installs npm-based agents under `~/.npm-global` (no sudo). Ensure `~/.npm-global/bin` is on `PATH`.
+Use `--scope global` to run `npm install -g` (may require sudo).
 
 #### Supported Agents
 
@@ -64,7 +67,7 @@ Writes the environment template file for configuring API keys and endpoints.
 cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
 ```
 
-If the agent is not installed, `cakit run` will auto-run `cakit install <agent>` with a notice.
+If the agent is not installed, `cakit run` will auto-run `cakit install <agent>` (user scope) with a notice.
 Output fields:
 - `agent`, `agent_version`
 - `runtime_seconds`
@@ -109,6 +112,7 @@ Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, 
 - Full list in `.env.template`.
 - `CAKIT_OUTPUT_DIR`: override log output directory.
 - `CAKIT_TRAE_TRAJECTORY`: override Trae trajectory output path.
+- `CAKIT_NPM_PREFIX`: override the user install prefix for npm-based agents (default: `~/.npm-global`).
 
 ## Test Coverage Matrix
 

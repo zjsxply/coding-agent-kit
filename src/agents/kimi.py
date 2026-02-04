@@ -15,7 +15,7 @@ class KimiAgent(CodeAgent):
     display_name = "Kimi Code CLI"
     binary = "kimi"
 
-    def install(self) -> InstallResult:
+    def install(self, *, scope: str = "user") -> InstallResult:
         if self._has_uv():
             result = self._run(["uv", "tool", "install", "--python", "3.13", "kimi-cli"])
         else:

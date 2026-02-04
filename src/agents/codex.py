@@ -14,14 +14,14 @@ class CodexAgent(CodeAgent):
     display_name = "OpenAI Codex"
     binary = "codex"
 
-    def install(self) -> InstallResult:
-        result = self._run(["npm", "install", "-g", "@openai/codex"])
+    def install(self, *, scope: str = "user") -> InstallResult:
+        result = self._npm_install("@openai/codex", scope)
         config_path = self.configure()
         ok = result.exit_code == 0
         details = result.output
         return InstallResult(
             agent=self.name,
-            version=self.get_version(),
+            version=self.get_version() if ok else None,
             ok=ok,
             details=details,
             config_path=config_path,

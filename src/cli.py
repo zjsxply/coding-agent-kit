@@ -20,6 +20,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     install = subparsers.add_parser("install", help="Install a coding agent")
     install.add_argument("agent", choices=list_agents())
+    install.add_argument(
+        "--scope",
+        choices=("user", "global"),
+        default="user",
+        help="Install scope for npm-based agents (default: user).",
+    )
 
     run = subparsers.add_parser("run", help="Run a coding agent")
     run.add_argument("agent", choices=list_agents())
@@ -35,8 +41,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_install(agent_name: str) -> int:
-    install_result = _install_agent(agent_name)
+def _run_install(agent_name: str, scope: str) -> int:
+    install_result = _install_agent(agent_name, scope=scope)
     payload = {
         "agent": install_result.agent,
         "ok": install_result.ok,
@@ -65,7 +71,7 @@ def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[
     agent = create_agent(agent_name, workdir=workdir)
     if not agent.is_installed():
         print(f"[run] {agent_name} not installed; running cakit install {agent_name}.")
-        install_result = _install_agent(agent_name)
+        install_result = _install_agent(agent_name, scope="user")
         if not install_result.ok:
             print(f"[run] install failed: {install_result.details}")
             return 1
@@ -84,7 +90,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "install":
-        return _run_install(args.agent)
+        return _run_install(args.agent, args.scope)
     if args.command == "run":
         return _run_agent(args.agent, args.prompt, args.cwd, args.image)
     if args.command == "tools":
@@ -109,7 +115,7 @@ def _ensure_dependencies(agent_name: str) -> bool:
     return ok
 
 
-def _install_agent(agent_name: str) -> "InstallResult":
+def _install_agent(agent_name: str, scope: str) -> "InstallResult":
     from .models import InstallResult
 
     if not _ensure_dependencies(agent_name):
@@ -121,7 +127,7 @@ def _install_agent(agent_name: str) -> "InstallResult":
             config_path=None,
         )
     agent = create_agent(agent_name)
-    return agent.install()
+    return agent.install(scope=scope)
 
 
 def _install_node_linux() -> bool:

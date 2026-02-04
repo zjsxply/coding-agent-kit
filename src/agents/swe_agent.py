@@ -17,7 +17,7 @@ class SweAgent(CodeAgent):
     display_name = "SWE-agent"
     binary = "sweagent"
 
-    def install(self) -> InstallResult:
+    def install(self, *, scope: str = "user") -> InstallResult:
         version = self._resolve_version()
         url = f"https://github.com/SWE-agent/SWE-agent/archive/refs/tags/{version}.tar.gz"
         result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url])

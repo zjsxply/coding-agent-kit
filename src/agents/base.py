@@ -33,7 +33,7 @@ class CodeAgent(abc.ABC):
         self.workdir = (workdir or Path.cwd()).expanduser().resolve()
 
     @abc.abstractmethod
-    def install(self) -> "InstallResult":
+    def install(self, *, scope: str = "user") -> "InstallResult":
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -58,16 +58,29 @@ class CodeAgent(abc.ABC):
         merged_env = os.environ.copy()
         if env:
             merged_env.update({k: v for k, v in env.items() if v})
+        extra_paths = self._extra_path_entries()
+        if extra_paths:
+            current_path = merged_env.get("PATH", "")
+            merged_env["PATH"] = os.pathsep.join(extra_paths + ([current_path] if current_path else []))
         start = time.monotonic()
-        result = subprocess.run(
-            list(args),
-            cwd=str(self.workdir),
-            env=merged_env,
-            input=input_text,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                list(args),
+                cwd=str(self.workdir),
+                env=merged_env,
+                input=input_text,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except FileNotFoundError as exc:
+            duration = time.monotonic() - start
+            return CommandResult(
+                exit_code=127,
+                stdout="",
+                stderr=str(exc),
+                duration_seconds=duration,
+            )
         duration = time.monotonic() - start
         return CommandResult(
             exit_code=result.returncode,
@@ -79,7 +92,55 @@ class CodeAgent(abc.ABC):
     def is_installed(self) -> bool:
         if not self.binary:
             return True
-        return shutil.which(self.binary) is not None
+        return self._resolve_binary() is not None
+
+    def _npm_prefix(self) -> Path:
+        prefix = os.environ.get("CAKIT_NPM_PREFIX")
+        if prefix:
+            return Path(prefix).expanduser()
+        return Path.home() / ".npm-global"
+
+    def _npm_install(self, package: str, scope: str) -> CommandResult:
+        if scope == "global":
+            return self._run(["npm", "install", "-g", package])
+        prefix = self._npm_prefix()
+        prefix.mkdir(parents=True, exist_ok=True)
+        return self._run(["npm", "install", "-g", "--prefix", str(prefix), package])
+
+    def _extra_path_entries(self) -> list[str]:
+        candidates = [
+            self._npm_prefix() / "bin",
+            Path.home() / ".npm" / "bin",
+            Path.home() / ".local" / "bin",
+        ]
+        entries = []
+        for path in candidates:
+            if path.exists():
+                entries.append(str(path))
+        return entries
+
+    def _resolve_binary(self) -> Optional[str]:
+        if not self.binary:
+            return None
+        env_keys = (
+            f"CAKIT_{self.name.upper()}_BIN",
+            f"{self.name.upper()}_BIN",
+            f"{self.binary.upper()}_BIN",
+        )
+        for key in env_keys:
+            value = os.environ.get(key)
+            if value:
+                candidate = Path(value).expanduser()
+                if candidate.exists():
+                    return str(candidate)
+        path = shutil.which(self.binary)
+        if path:
+            return path
+        for folder in (self._npm_prefix() / "bin", Path.home() / ".npm" / "bin", Path.home() / ".local" / "bin"):
+            candidate = folder / self.binary
+            if candidate.exists():
+                return str(candidate)
+        return None
 
     def _write_text(self, path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

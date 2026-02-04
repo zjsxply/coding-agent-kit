@@ -13,7 +13,7 @@ class OpenHandsAgent(CodeAgent):
     display_name = "OpenHands"
     binary = "openhands"
 
-    def install(self) -> InstallResult:
+    def install(self, *, scope: str = "user") -> InstallResult:
         if self._has_uv():
             result = self._run(["uv", "tool", "install", "openhands", "--python", "3.12"])
         else:

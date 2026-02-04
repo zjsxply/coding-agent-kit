@@ -15,14 +15,14 @@ class GeminiAgent(CodeAgent):
     display_name = "Google Gemini CLI"
     binary = "gemini"
 
-    def install(self) -> InstallResult:
-        result = self._run(["npm", "install", "-g", "@google/gemini-cli"])
+    def install(self, *, scope: str = "user") -> InstallResult:
+        result = self._npm_install("@google/gemini-cli", scope)
         config_path = self.configure()
         ok = result.exit_code == 0
         details = result.output
         return InstallResult(
             agent=self.name,
-            version=self.get_version(),
+            version=self.get_version() if ok else None,
             ok=ok,
             details=details,
             config_path=config_path,
@@ -62,7 +62,7 @@ class GeminiAgent(CodeAgent):
                 image_paths.append(ref)
             quoted = ", ".join(json.dumps(item) for item in image_paths)
             prompt = (
-                f\"Please call read_many_files(paths=[{quoted}]) to load these image files before answering.\\n\\n{prompt}\"
+                f"Please call read_many_files(paths=[{quoted}]) to load these image files before answering.\n\n{prompt}"
             )
         telemetry_path = Path.home() / ".gemini" / "telemetry.log"
         telemetry_path.parent.mkdir(parents=True, exist_ok=True)
