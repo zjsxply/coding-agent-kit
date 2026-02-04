@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coding-agent-kit"
+version = "0.1.0"
+description = "Unified CLI to install and run coding agents for research"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+cakit = "src.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.setuptools.package-data]
+src = ["assets/*", "assets/.env.template"]
