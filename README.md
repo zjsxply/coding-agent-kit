@@ -114,6 +114,32 @@ Image input support:
 | trae-oss | No image input documented in CLI docs |
 | cursor | No image input documented in CLI docs |
 
+### Skills
+
+Skills are reusable instruction/tooling packs for coding agents (see [agentskills.io](https://agentskills.io)). Install a skill repo with:
+
+`npx skills` docs: [skills.sh](https://skills.sh/) and [vercel-labs/skills](https://github.com/vercel-labs/skills).
+
+```bash
+npx skills add <skills> -g [-a <agent1> <agent2> ...]
+```
+
+Use `-g`/`--global` to reuse across projects. Example:
+
+```bash
+npx skills add vercel-labs/agent-skills -g -a claude-code codex
+```
+
+Note: the “coding agent” names used by `skills` may differ from `cakit` agent names (e.g., `claude-code` vs `cakit`’s `claude`). If something doesn’t work, run `npx skills -h`.
+
+For scripts/CI, prefer non-interactive flags to avoid prompts, e.g.:
+
+```bash
+npx skills add --skill <skills> -g --agent '*' -y
+```
+
+`cakit` also provides a thin pass-through wrapper: `cakit skills ...` (it delegates to `npx skills ...`).
+
 ### Install fast shell power tools (recommended)
 
 ```bash
@@ -150,7 +176,8 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 ## Todo
 
 - [ ] Support network on/off toggle
-- [ ] Support skills and `AGENTS.md`
+- [x] Support skills
+- [ ] Support `AGENTS.md`
 - [ ] Support MCP
 - [ ] Support balanced mode
 - [ ] Support installing specific versions

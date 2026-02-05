@@ -114,6 +114,32 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
 | trae-oss | 暂未在 CLI 文档中发现图像输入方式 |
 | cursor | 暂未在 CLI 文档中发现图像输入方式 |
 
+### Skills（技能）
+
+Skills 是可复用的 coding agent 技能包/指令集（见 [agentskills.io](https://agentskills.io)）。安装某个 skill 仓库请使用：
+
+`npx skills` 文档： [skills.sh](https://skills.sh/) 和 [vercel-labs/skills](https://github.com/vercel-labs/skills)。
+
+```bash
+npx skills add <skills> -g [-a <agent1> <agent2> ...]
+```
+
+建议使用 `-g`/`--global` 以便跨项目复用。示例：
+
+```bash
+npx skills add vercel-labs/agent-skills -g -a claude-code codex
+```
+
+注意：`skills` 使用的“coding agent”命名可能与 `cakit` 的 agent 命名不一致（例如 `claude-code` vs `cakit` 的 `claude`）。如有问题可运行 `npx skills -h` 查看帮助。
+
+在脚本/CI 中建议显式指定参数并加 `-y` 以避免交互，例如：
+
+```bash
+npx skills add --skill <skills> -g --agent '*' -y
+```
+
+`cakit` 也提供一个透传封装：`cakit skills ...`（等价于执行 `npx skills ...`）。
+
 ### 安装 Fast Shell Power Tools（推荐）
 
 ```bash
@@ -153,7 +179,8 @@ cakit tools
 ## 待办（Todo）
 
 - [ ] 支持开关联网
-- [ ] 支持 skills 与 `AGENTS.md`
+- [x] 支持 skills
+- [ ] 支持 `AGENTS.md`
 - [ ] 支持 MCP
 - [ ] 支持 balanced 模式
 - [ ] 支持安装指定版本

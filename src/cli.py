@@ -46,6 +46,13 @@ def _build_parser() -> argparse.ArgumentParser:
     env_cmd = subparsers.add_parser("env", help="Write .env.template to a file")
     env_cmd.add_argument("--output", default=".env", help="Output path for the template file")
 
+    skills = subparsers.add_parser("skills", help="Manage Skills (delegates to `npx skills`)")
+    skills.add_argument(
+        "args",
+        nargs=argparse.REMAINDER,
+        help="Arguments passed through to `npx skills` (e.g., `add vercel-labs/agent-skills -g`).",
+    )
+
     return parser
 
 
@@ -136,6 +143,8 @@ def main() -> int:
         return _run_configure(args.agent)
     if args.command == "run":
         return _run_agent(args.agent, args.prompt, args.cwd, args.image)
+    if args.command == "skills":
+        return _run_skills(args.args)
     if args.command == "tools":
         return _run_tools()
     if args.command == "env":
@@ -144,14 +153,42 @@ def main() -> int:
     return 1
 
 
+def _ensure_node_tools() -> bool:
+    if shutil.which("node") is None or shutil.which("npm") is None:
+        print("[deps] nodejs/npm not found, attempting auto-install (Linux + apt-get required).")
+        return _install_node_linux()
+    return True
+
+
+def _run_skills(passthrough_args: list[str]) -> int:
+    if not _ensure_node_tools():
+        return 1
+
+    args = [arg for arg in passthrough_args if arg]
+    if not args:
+        args = ["-h"]
+
+    if shutil.which("npx") is not None:
+        cmd = ["npx", "skills", *args]
+    elif shutil.which("npm") is not None:
+        print("[skills] npx not found; falling back to `npm exec -- skills ...`.")
+        cmd = ["npm", "exec", "--", "skills", *args]
+    else:
+        print("[skills] npm not found; please install Node.js/npm.")
+        return 1
+
+    print(f"[skills] {' '.join(cmd)}")
+    result = subprocess.run(cmd, check=False)
+    return result.returncode
+
+
 def _ensure_dependencies(agent_name: str) -> bool:
     needs_node = agent_name in {"codex", "claude", "copilot", "gemini", "qwen"}
     needs_uv = agent_name in {"openhands", "kimi"}
     ok = True
 
-    if needs_node and (shutil.which("node") is None or shutil.which("npm") is None):
-        print("[deps] nodejs/npm not found, attempting auto-install (Linux + apt-get required).")
-        ok = _install_node_linux() and ok
+    if needs_node and not _ensure_node_tools():
+        ok = False
     if needs_uv and shutil.which("uv") is None:
         print("[deps] uv not found, attempting auto-install.")
         ok = _install_uv_linux() and ok
