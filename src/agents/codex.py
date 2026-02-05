@@ -35,14 +35,13 @@ class CodexAgent(CodeAgent):
 
     def configure(self) -> Optional[str]:
         use_oauth = self._use_oauth()
-        model = os.environ.get("CODEX_MODEL") or "gpt-5-codex"
-        lines = [
-            "project_root_markers = []",
-            f"model = \"{model}\"",
-        ]
+        model = os.environ.get("CODEX_MODEL")
+        lines = ["project_root_markers = []"]
+        if model:
+            lines.append(f"model = \"{model}\"")
         api_key = os.environ.get("CODEX_API_KEY")
         if not use_oauth and api_key:
-            base_url = os.environ.get("CODEX_API_BASE") or "https://api.openai.com/v1"
+            base_url = os.environ.get("CODEX_API_BASE")
             provider = "custom"
             lines.extend(
                 [
@@ -50,11 +49,12 @@ class CodexAgent(CodeAgent):
                     "",
                     f"[model_providers.{provider}]",
                     "name = \"custom\"",
-                    f"base_url = \"{base_url}\"",
                     "env_key = \"CODEX_API_KEY\"",
                     "wire_api = \"responses\"",
                 ]
             )
+            if base_url:
+                lines.insert(lines.index("env_key = \"CODEX_API_KEY\""), f"base_url = \"{base_url}\"")
         otel_exporter = os.environ.get("CODEX_OTEL_EXPORTER")
         otel_endpoint = os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
         otel_protocol = os.environ.get("CODEX_OTEL_PROTOCOL")
@@ -113,6 +113,7 @@ class CodexAgent(CodeAgent):
         api_key = None if use_oauth else os.environ.get("CODEX_API_KEY")
         if api_key:
             env["CODEX_API_KEY"] = api_key
+            env["OPENAI_API_KEY"] = api_key
         last_message_path = self._create_last_message_path()
         cmd = [
             "codex",
@@ -185,7 +186,7 @@ class CodexAgent(CodeAgent):
             if session_path:
                 model, usage, llm_calls = self._parse_session_file(session_path)
                 if usage:
-                    model_name = model or (os.environ.get("CODEX_MODEL") or "gpt-5-codex")
+                    model_name = model or "unknown"
                     return {model_name: usage}, llm_calls or turn_calls
         usage = None
         model_name = None
@@ -195,7 +196,7 @@ class CodexAgent(CodeAgent):
             if usage is None:
                 usage = self._find_usage(payload)
         if usage:
-            model_name = model_name or (os.environ.get("CODEX_MODEL") or "gpt-5-codex")
+            model_name = model_name or "unknown"
             return self._ensure_models_usage({}, usage, model_name), turn_calls
         return {}, turn_calls
 

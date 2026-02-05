@@ -14,7 +14,7 @@
 - `response`：`--output-last-message` 输出文件的内容。
 - `models_usage`：
   - 优先读取会话 JSONL：找到最后一个 `event_msg` 且 `payload.type == "token_count"`，使用 `payload.info.total_token_usage`（`input_tokens`/`output_tokens`/`total_tokens`）。
-  - 模型名来自 `turn_context` 的 `model` 字段；若缺失则回退到 `CODEX_MODEL` 或 `gpt-5-codex`。
+  - 模型名来自 `turn_context` 的 `model` 字段；若缺失则为 `unknown`。
   - 若找不到会话文件，则从 CLI JSON 事件中的 `usage` 解析。
 - `tool_calls`：尽力统计，扫描 JSON 负载中类似工具调用的字段（`tool`、`tool_name`、`tool_call`、`toolUse` 等）。
 - `llm_calls`：会话 JSONL 中 `token_count` 的去重计数（按 `input_tokens`/`output_tokens`/`total_tokens` 去重）；若会话文件不可用，则回退为 CLI JSON 输出中的 `turn.completed`/`turn.failed` 数量。

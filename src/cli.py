@@ -65,16 +65,16 @@ def _run_install(agent_name: str, scope: str) -> int:
 def _run_configure(agent_name: str) -> int:
     agent = create_agent(agent_name)
     config_path = agent.configure()
-    ok = config_path is not None
+    ok = True
     payload = {
         "agent": agent_name,
         "ok": ok,
         "config_path": config_path,
     }
-    if not ok:
-        payload["details"] = "configure failed"
+    if config_path is None:
+        payload["details"] = "no config written"
     sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
-    return 0 if ok else 1
+    return 0
 
 
 def _expand_image_args(images: list[str]) -> list[Path]:

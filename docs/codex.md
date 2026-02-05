@@ -14,7 +14,7 @@ This document explains how cakit collects Codex CLI metadata.
 - `response`: content of the file written by `--output-last-message`.
 - `models_usage`:
   - Prefer session JSONL: read the last `event_msg` with `payload.type == "token_count"` and use `payload.info.total_token_usage` (`input_tokens`, `output_tokens`, `total_tokens`).
-  - Model name comes from the `turn_context` payload field `model`; fallback to `CODEX_MODEL` or `gpt-5-codex`.
+  - Model name comes from the `turn_context` payload field `model`; if missing, use `unknown`.
   - If no session file is found, parse `usage` from CLI JSON events.
 - `tool_calls`: best-effort count of JSON payloads that look like tool calls (keys such as `tool`, `tool_name`, `tool_call`, `toolUse`, etc.).
 - `llm_calls`: count of distinct `token_count` totals in the session JSONL (deduped by `input_tokens`, `output_tokens`, `total_tokens`). If the session file is unavailable, fallback to the number of `turn.completed`/`turn.failed` events in CLI JSON output.

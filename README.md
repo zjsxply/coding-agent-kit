@@ -40,7 +40,7 @@ Use `--scope global` to run `npm install -g` (may require sudo).
 
 #### Login
 
-For OAuth, use the official CLI login. For API keys, copy `.env.template` to `.env`, then run `set -a; source .env; set +a` in the current shell.
+For OAuth, use the official CLI login. For API keys, copy `.env.template` to `.env`, then run `set -a; source .env; set +a` in the current shell (and rerun it after changing `.env`).
 
 - codex: `codex login`
 - claude: run `claude`, then `/login` in the interactive UI; `ANTHROPIC_AUTH_TOKEN` is also supported
@@ -68,7 +68,9 @@ cakit configure <agent>
 ```
 
 This regenerates the agent config based on current environment variables.
-If you update environment variables later, rerun `cakit configure <agent>`.
+If you update environment variables later, rerun `set -a; source .env; set +a` and then rerun `cakit configure <agent>`.
+If an agent does not require a config file, `cakit configure` may report `"config_path": null` and still succeed.
+Note: Claude Code reads environment variables directly; `cakit configure claude` is a no-op.
 
 ### Run and output JSON stats
 
@@ -81,11 +83,15 @@ If the agent is not installed, `cakit run` will auto-run `cakit install <agent>`
 Output fields:
 - `agent`, `agent_version`
 - `runtime_seconds`
+- `response` (final reply message from the coding agent)
 - `models_usage` (per model, includes `prompt_tokens`, `completion_tokens`, `total_tokens` when available)
-- `tool_calls` (best effort)
-- `llm_calls`, `total_cost` (when provided by the agent)
+- `total_cost` (when provided by the agent)
+- `llm_calls`
+- `tool_calls` (when provided by the agent)
 - `telemetry_log` (when enabled)
-- `response`, `exit_code`, `output_path`, `raw_output`
+- `exit_code`
+- `output_path` (path to a `.log` file containing the coding agent CLI raw output)
+- `raw_output` (captured raw output from the coding agent CLI)
 
 Telemetry:
 - Qwen Code: local log `~/.qwen/telemetry.log`
@@ -131,7 +137,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 | Agent | OAuth | API | Image Input | MCP | Skills | Telemetry | Web Access | Test Version |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | codex | ✓ | ✓ | ✓ |  |  |  |  | 0.95.0 |
-| claude |  |  | ✗* |  |  |  |  |  |
+| claude |  | ✓ | ✓ |  |  |  |  | 2.1.31 |
 | copilot |  |  |  |  |  |  |  |  |
 | gemini |  |  |  |  |  |  |  |  |
 | kimi |  |  | ✗* |  |  |  |  |  |

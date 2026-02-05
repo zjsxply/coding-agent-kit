@@ -40,7 +40,7 @@ cakit install <agent> [--scope user|global]
 
 #### 登录方式
 
-OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.template` 写 `.env`，然后在当前 shell 执行 `set -a; source .env; set +a`。
+OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.template` 写 `.env`，然后在当前 shell 执行 `set -a; source .env; set +a`（修改 `.env` 后也需要重新执行一次）。
 
 - codex：`codex login`
 - claude：运行 `claude`，在交互界面输入 `/login`，也支持 `ANTHROPIC_AUTH_TOKEN` 环境变量
@@ -68,7 +68,9 @@ cakit configure <agent>
 ```
 
 用于根据当前环境变量重新生成 agent 配置。
-如更新了环境变量，请再次执行 `cakit configure <agent>`。
+如更新了环境变量，请先重新执行 `set -a; source .env; set +a`，再执行 `cakit configure <agent>`。
+若某个 agent 不需要配置文件，`cakit configure` 可能返回 `"config_path": null` 但仍表示成功。
+注：Claude Code 直接读取环境变量，`cakit configure claude` 是空操作（不会写入配置文件）。
 
 ### 运行并输出 JSON 统计
 
@@ -81,11 +83,15 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
 输出字段包括：
 - `agent`, `agent_version`
 - `runtime_seconds`
+- `response`（Coding agent 的最终回复消息）
 - `models_usage`（按模型拆分，包含 `prompt_tokens`/`completion_tokens`/`total_tokens`，若可用）
-- `tool_calls`（尽力统计）
-- `llm_calls`, `total_cost`（若 agent 提供）
+- `total_cost`（若 agent 提供）
+- `llm_calls`
+- `tool_calls`（若 agent 提供）
 - `telemetry_log`（若启用）
-- `response`, `exit_code`, `output_path`, `raw_output`
+- `exit_code`
+- `output_path`（写入的 `.log` 文件路径，内容为 coding agent CLI 的原始输出）
+- `raw_output`（本次运行捕获到的 coding agent CLI 原始输出）
 
 遥测支持：
 - Qwen Code：本地日志 `~/.qwen/telemetry.log`
@@ -131,7 +137,7 @@ cakit tools
 | Agent | OAuth | API | 图像输入 | MCP | Skills | 遥测 | 联网 | 测试版本 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | codex | ✓ | ✓ | ✓ |  |  |  |  | 0.95.0 |
-| claude |  |  | ✗* |  |  |  |  |  |
+| claude |  | ✓ | ✓ |  |  |  |  | 2.1.31 |
 | copilot |  |  |  |  |  |  |  |  |
 | gemini |  |  |  |  |  |  |  |  |
 | kimi |  |  | ✗* |  |  |  |  |  |

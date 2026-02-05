@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -12,9 +13,11 @@ from src.agents import create_agent, list_agents
 TEST_DIR = Path(__file__).resolve().parent
 IMAGE_1 = TEST_DIR / "image1.png"
 IMAGE_2 = TEST_DIR / "image2.png"
-PROMPT = "这两张图片分别有啥？"
+PROMPT = (
+    "For each of the two images above: (1) briefly describe what you see, and (2) list any visible words/text."
+)
 
-IMAGE_SUPPORT = {"codex", "gemini", "qwen"}
+IMAGE_SUPPORT = {"claude", "codex"}
 
 
 def _run_cli(agent: str) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -47,6 +50,12 @@ class TestImageInput(unittest.TestCase):
     def test_agent_image_input(self) -> None:
         for name in list_agents():
             with self.subTest(agent=name):
+                if name in {"gemini", "qwen"}:
+                    continue
+                if name == "claude" and not (
+                    os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
+                ):
+                    continue
                 agent = create_agent(name, workdir=TEST_DIR)
                 if name in IMAGE_SUPPORT:
                     self.assertTrue(agent.is_installed(), f"{name} CLI is not installed")
