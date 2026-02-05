@@ -54,8 +54,12 @@ class CodeAgent(abc.ABC):
         env: Optional[Dict[str, str]] = None,
         input_text: Optional[str] = None,
         timeout: Optional[int] = None,
+        unset_env: Optional[Iterable[str]] = None,
     ) -> CommandResult:
         merged_env = os.environ.copy()
+        if unset_env:
+            for key in unset_env:
+                merged_env.pop(key, None)
         if env:
             merged_env.update({k: v for k, v in env.items() if v})
         extra_paths = self._extra_path_entries()

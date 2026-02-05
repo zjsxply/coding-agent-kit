@@ -30,6 +30,7 @@
 - Commands that are expected to succeed must return exit code 0; usage parsing failures or missing critical fields must return non-zero.
 - `cakit install` must auto-install missing runtime dependencies (e.g., Node.js, uv) and work without `sudo` or in root environments.
 - `cakit tools` is Linux-only; handle no-`sudo`/root cases; on non-`x86_64/amd64`, provide a clear message and skip.
+- For debugging, store temporary files under `/tmp` instead of writing into the project directory.
 - No output truncation (no `_preview`); output field is `raw_output`.
 - `get_version` must not use fallbacks.
 

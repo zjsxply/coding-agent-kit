@@ -23,3 +23,6 @@ This document explains how cakit collects Codex CLI metadata.
 
 **Notes**
 - If `CODEX_USE_OAUTH` is set, cakit expects a login file at `${CODEX_HOME}/auth.json` created by `codex login`.
+- For API-key mode, set `CODEX_API_KEY` and `CODEX_API_BASE` if you need a non-default base URL.
+- To avoid accidental auth mode selection, cakit removes both `OPENAI_API_KEY` and `CODEX_API_KEY` from the Codex CLI environment when OAuth is enabled.
+- If API-key mode is requested but `CODEX_API_KEY` is missing, cakit avoids passing `OPENAI_API_KEY`/`CODEX_API_KEY` to Codex (so an existing OAuth login can still work).

@@ -40,7 +40,8 @@ class CodexAgent(CodeAgent):
             "project_root_markers = []",
             f"model = \"{model}\"",
         ]
-        if not use_oauth:
+        api_key = os.environ.get("CODEX_API_KEY")
+        if not use_oauth and api_key:
             base_url = os.environ.get("CODEX_API_BASE") or "https://api.openai.com/v1"
             provider = "custom"
             lines.extend(
@@ -50,7 +51,7 @@ class CodexAgent(CodeAgent):
                     f"[model_providers.{provider}]",
                     "name = \"custom\"",
                     f"base_url = \"{base_url}\"",
-                    "env_key = \"OPENAI_API_KEY\"",
+                    "env_key = \"CODEX_API_KEY\"",
                     "wire_api = \"responses\"",
                 ]
             )
@@ -77,9 +78,13 @@ class CodexAgent(CodeAgent):
                 if otel_protocol:
                     lines.append(f"protocol = \"{otel_protocol}\"")
         config = "\n".join(lines) + "\n"
-        path = os.path.expanduser("~/.codex/config.toml")
-        self._write_text(Path(path), config)
-        return path
+        codex_home = os.environ.get("CODEX_HOME")
+        if codex_home:
+            config_path = Path(codex_home).expanduser() / "config.toml"
+        else:
+            config_path = Path(os.path.expanduser("~/.codex/config.toml"))
+        self._write_text(config_path, config)
+        return str(config_path)
 
     def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
         images = images or []
@@ -104,8 +109,10 @@ class CodexAgent(CodeAgent):
         env = {
             "OPENAI_API_BASE": os.environ.get("CODEX_API_BASE"),
         }
-        if not self._use_oauth():
-            env["OPENAI_API_KEY"] = os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        use_oauth = self._use_oauth()
+        api_key = None if use_oauth else os.environ.get("CODEX_API_KEY")
+        if api_key:
+            env["CODEX_API_KEY"] = api_key
         last_message_path = self._create_last_message_path()
         cmd = [
             "codex",
@@ -120,7 +127,10 @@ class CodexAgent(CodeAgent):
             image_arg = ",".join(str(path) for path in images)
             cmd.extend(["--image", image_arg])
         cmd.append("-")
-        result = self._run(cmd, env, input_text=prompt)
+        unset_env = None
+        if use_oauth or (not api_key):
+            unset_env = ["OPENAI_API_KEY", "CODEX_API_KEY"]
+        result = self._run(cmd, env, input_text=prompt, unset_env=unset_env)
         output = result.output
         payloads = load_json_payloads(output)
         models_usage, llm_calls = self._extract_models_usage(payloads)

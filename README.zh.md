@@ -100,7 +100,7 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
 | codex | 支持，使用 `--image` 传入路径，可多图 |
 | qwen | 支持，使用 `@{path}` 方式注入图片 |
 | gemini | 支持，`read_many_files` 可读取图片文件（cakit 会提示路径） |
-| claude | 仅交互模式支持（粘贴/路径），`cakit run` 不支持 |
+| claude | 支持，使用 `--image`（cakit 注入图片路径，Claude Code 通过 `Read` 工具读取） |
 | copilot | CLI 文档未说明图像输入 |
 | kimi | 暂未在 CLI 文档中发现图像输入方式 |
 | openhands | 暂未在 CLI 文档中发现图像输入方式 |
@@ -130,7 +130,7 @@ cakit tools
 
 | Agent | OAuth | API | 图像输入 | MCP | Skills | 遥测 | 联网 | 测试版本 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| codex |  | ✓ | ✓ |  |  |  |  | 0.95.0 |
+| codex | ✓ | ✓ | ✓ |  |  |  |  | 0.95.0 |
 | claude |  |  | ✗* |  |  |  |  |  |
 | copilot |  |  |  |  |  |  |  |  |
 | gemini |  |  |  |  |  |  |  |  |

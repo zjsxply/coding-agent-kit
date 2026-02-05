@@ -100,7 +100,7 @@ Image input support:
 | codex | Supported via `--image` (multiple images allowed) |
 | qwen | Supported via `@{path}` image injection in prompt |
 | gemini | Supported via `read_many_files` for image files (cakit injects file paths) |
-| claude | Interactive mode only (paste/path); not supported by `cakit run` |
+| claude | Supported via `--image` (cakit injects image paths and Claude Code reads them via the `Read` tool) |
 | copilot | No image input documented in the CLI docs |
 | kimi | No image input documented in CLI docs |
 | openhands | No image input documented in CLI docs |
@@ -130,7 +130,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 
 | Agent | OAuth | API | Image Input | MCP | Skills | Telemetry | Web Access | Test Version |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| codex |  | ✓ | ✓ |  |  |  |  | 0.95.0 |
+| codex | ✓ | ✓ | ✓ |  |  |  |  | 0.95.0 |
 | claude |  |  | ✗* |  |  |  |  |  |
 | copilot |  |  |  |  |  |  |  |  |
 | gemini |  |  |  |  |  |  |  |  |

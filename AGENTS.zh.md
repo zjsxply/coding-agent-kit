@@ -30,6 +30,7 @@
 - 预期成功的命令必须返回 0；usage 解析失败或关键信息缺失必须返回非 0。
 - `cakit install` 需自动安装缺失的运行时依赖（如 Node.js、uv），并兼容无 `sudo` 或 root 环境。
 - `cakit tools` 仅支持 Linux；需处理无 `sudo` 或 root 环境；在非 `x86_64/amd64` 上给出清晰提示并跳过。
+- 调试时产生的临时文件请放在 `/tmp`，不要写进项目目录。
 - 不做输出截断（无需 `_preview`）；输出字段为 `raw_output`。
 - `get_version` 不做 fallback。
 
