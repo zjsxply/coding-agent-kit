@@ -41,11 +41,9 @@ class CopilotAgent(CodeAgent):
                 agent=self.name,
                 agent_version=self.get_version(),
                 runtime_seconds=0.0,
-                prompt_tokens=None,
-                completion_tokens=None,
-                total_tokens=None,
                 models_usage={},
                 tool_calls=None,
+                response=message,
                 exit_code=2,
                 output_path=str(output_path),
                 raw_output=message,
@@ -75,17 +73,16 @@ class CopilotAgent(CodeAgent):
             usage = self._extract_usage_text(output)
         tool_calls = self._count_tool_calls(payloads)
         output_path = self._write_output(self.name, output)
-        prompt_tokens, completion_tokens, total_tokens = self._usage_totals(usage, models_usage)
+        models_usage = self._ensure_models_usage(models_usage, usage, None)
+        response = self._extract_response(payloads, output)
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
             models_usage=models_usage,
             tool_calls=tool_calls,
             telemetry_log=str(log_dir),
+            response=response,
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
@@ -178,6 +175,56 @@ class CopilotAgent(CodeAgent):
         if not found:
             return None, models_usage
         return totals, models_usage
+
+    def _extract_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
+        messages: List[str] = []
+
+        def add_text(value: Any) -> None:
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if cleaned:
+                    messages.append(cleaned)
+
+        def add_from_content(content: Any) -> None:
+            if isinstance(content, list):
+                parts: List[str] = []
+                for entry in content:
+                    if not isinstance(entry, dict):
+                        continue
+                    text = entry.get("text") or entry.get("output_text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                if parts:
+                    messages.append("\n".join(parts))
+            else:
+                add_text(content)
+
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            for key in ("response", "reply", "assistant_response", "assistantResponse", "final", "answer", "output"):
+                add_text(payload.get(key))
+            if payload.get("role") == "assistant":
+                add_from_content(payload.get("content"))
+            payload_type = payload.get("type")
+            if payload_type in {"assistant", "final", "assistant_message"}:
+                add_text(payload.get("text") or payload.get("message"))
+            message = payload.get("message")
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                add_from_content(message.get("content"))
+
+        if messages:
+            return messages[-1]
+
+        if output:
+            stdout = output
+            marker = "----- STDERR -----"
+            if marker in stdout:
+                stdout = stdout.split(marker, 1)[0]
+            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+            if lines:
+                return lines[-1]
+        return None
 
     def _find_usage(self, payload: Any) -> Optional[Dict[str, int]]:
         if not isinstance(payload, dict):

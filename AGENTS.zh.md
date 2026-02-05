@@ -38,15 +38,17 @@
 - 统计输出需包含：
   - `agent`, `agent_version`
   - `runtime_seconds`
-  - `prompt_tokens`, `completion_tokens`, `total_tokens`
-  - `models_usage`（按模型拆分）
+  - `models_usage`（按模型拆分，包含 token usage）
   - `tool_calls`、`llm_calls`、`total_cost`（若可获取）
   - `telemetry_log`（若启用，返回日志路径或 OTEL endpoint）
-  - `exit_code`, `output_path`, `raw_output`
+  - `response`, `exit_code`, `output_path`, `raw_output`
 - 能支持的 agent 必须支持图像输入；Codex 支持多图。若不支持，需在 README 中明确标注。
 
 ## 文档与配置同步
 - 新增或修改 agent 时，需同步更新：
   - `README.md`、`README.zh.md`
   - `.env.template`
+  - `docs/<agent>.md`（例如 `docs/codex.md`）
+  - `docs/<agent>.zh.md`（例如 `docs/codex.zh.md`）
   - 支持的 Agent 列表、登录方式说明、测试覆盖矩阵、Todo
+- 修改 `AGENTS.md` 时，也需要同步更新 `AGENTS.zh.md`。

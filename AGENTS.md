@@ -38,15 +38,17 @@
 - Stats output must include:
   - `agent`, `agent_version`
   - `runtime_seconds`
-  - `prompt_tokens`, `completion_tokens`, `total_tokens`
-  - `models_usage` (per-model breakdown)
+  - `models_usage` (per-model breakdown with token usage)
   - `tool_calls`, `llm_calls`, `total_cost` (when available)
   - `telemetry_log` (when enabled, return log path or OTEL endpoint)
-  - `exit_code`, `output_path`, `raw_output`
+  - `response`, `exit_code`, `output_path`, `raw_output`
 - Agents that can support image input must do so; Codex supports multiple images. If not supported, state clearly in README.
 
 ## Documentation and Config Sync
 - When adding or changing an agent, update:
   - `README.md`, `README.zh.md`
   - `.env.template`
+  - `docs/<agent>.md` (for example `docs/codex.md`)
+  - `docs/<agent>.zh.md` (for example `docs/codex.zh.md`)
   - Supported agents list, login methods, test coverage matrix, and Todo
+- When updating `AGENTS.md`, update `AGENTS.zh.md` as well.

@@ -46,14 +46,12 @@ class ClaudeAgent(CodeAgent):
                 agent=self.name,
                 agent_version=self.get_version(),
                 runtime_seconds=0.0,
-                prompt_tokens=None,
-                completion_tokens=None,
-                total_tokens=None,
                 models_usage={},
                 tool_calls=None,
                 llm_calls=None,
                 total_cost=None,
                 telemetry_log=None,
+                response=message,
                 exit_code=2,
                 output_path=str(output_path),
                 raw_output=message,
@@ -89,20 +87,27 @@ class ClaudeAgent(CodeAgent):
         runtime_seconds = result.duration_seconds
         if stats.get("duration_ms") is not None:
             runtime_seconds = stats["duration_ms"] / 1000.0
-        prompt_tokens, completion_tokens, total_tokens = self._usage_totals(stats, usage)
+        usage_fallback = usage
+        if usage_fallback is None and stats.get("prompt_tokens") is not None:
+            usage_fallback = {
+                "prompt_tokens": stats.get("prompt_tokens") or 0,
+                "completion_tokens": stats.get("completion_tokens") or 0,
+                "total_tokens": stats.get("total_tokens") or 0,
+            }
+        default_model = os.environ.get("CLAUDE_CODE_MODEL") or os.environ.get("ANTHROPIC_MODEL")
+        models_usage = self._ensure_models_usage(models_usage, usage_fallback, default_model)
+        response = self._extract_response(payloads, output)
         output_path = self._write_output(self.name, output)
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=runtime_seconds,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
             models_usage=models_usage,
             tool_calls=tool_calls,
             llm_calls=stats.get("num_turns"),
             total_cost=stats.get("total_cost_usd"),
             telemetry_log=otel_endpoint if telemetry_enabled and otel_endpoint else None,
+            response=response,
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
@@ -166,6 +171,62 @@ class ClaudeAgent(CodeAgent):
             usage = self._find_usage(payload)
             if usage:
                 return usage
+        return None
+
+    def _extract_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
+        messages: List[str] = []
+
+        def add_text(value: Any) -> None:
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if cleaned:
+                    messages.append(cleaned)
+
+        def add_from_message(message: Any) -> None:
+            if not isinstance(message, dict):
+                add_text(message)
+                return
+            content = message.get("content")
+            if isinstance(content, list):
+                parts: List[str] = []
+                for entry in content:
+                    if not isinstance(entry, dict):
+                        continue
+                    text = entry.get("text") or entry.get("output_text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                if parts:
+                    messages.append("\n".join(parts))
+                    return
+            add_text(message.get("text"))
+            add_text(message.get("content"))
+
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            add_text(payload.get("final"))
+            message = payload.get("message")
+            if isinstance(message, dict):
+                if message.get("role") == "assistant":
+                    add_from_message(message)
+                continue
+            if payload.get("role") == "assistant":
+                add_from_message(payload)
+            payload_type = payload.get("type")
+            if payload_type in {"message", "assistant", "final"}:
+                add_from_message(payload)
+
+        if messages:
+            return messages[-1]
+
+        if output:
+            stdout = output
+            marker = "----- STDERR -----"
+            if marker in stdout:
+                stdout = stdout.split(marker, 1)[0]
+            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+            if lines:
+                return lines[-1]
         return None
 
     def _find_usage(self, payload: Any) -> Optional[Dict[str, int]]:

@@ -53,11 +53,9 @@ class SweAgent(CodeAgent):
                 agent=self.name,
                 agent_version=self.get_version(),
                 runtime_seconds=0.0,
-                prompt_tokens=None,
-                completion_tokens=None,
-                total_tokens=None,
                 models_usage={},
                 tool_calls=None,
+                response=message,
                 exit_code=2,
                 output_path=str(output_path),
                 raw_output=message,
@@ -105,16 +103,16 @@ class SweAgent(CodeAgent):
         if trajectory_tool_calls is not None:
             tool_calls = trajectory_tool_calls
         output_path = self._write_output(self.name, output)
-        prompt_tokens, completion_tokens, total_tokens = self._usage_totals(usage)
+        model_name = os.environ.get("SWE_AGENT_MODEL")
+        models_usage = self._ensure_models_usage({}, usage, model_name)
+        response = self._extract_response(output, output_dir)
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            models_usage={},
+            models_usage=models_usage,
             tool_calls=tool_calls,
+            response=response,
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
@@ -189,6 +187,78 @@ class SweAgent(CodeAgent):
             tool_calls = self._count_actions_in_trajectory(data)
             return usage, tool_calls
         return None, None
+
+    def _extract_response(self, output: str, output_dir: Path) -> Optional[str]:
+        response = self._extract_response_from_trajectory(output_dir)
+        if response:
+            return response
+        response = self._extract_response_from_output(output)
+        if response:
+            return response
+        if output:
+            stdout = output
+            marker = "----- STDERR -----"
+            if marker in stdout:
+                stdout = stdout.split(marker, 1)[0]
+            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+            if lines:
+                return lines[-1]
+        return None
+
+    def _extract_response_from_output(self, output: str) -> Optional[str]:
+        if not output:
+            return None
+        patterns = [
+            r"Final Answer:\\s*(.*)",
+            r"FINAL ANSWER:\\s*(.*)",
+            r"Final response:\\s*(.*)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, output, re.IGNORECASE)
+            if match:
+                value = match.group(1).strip()
+                if value:
+                    return value
+        return None
+
+    def _extract_response_from_trajectory(self, output_dir: Path) -> Optional[str]:
+        if not output_dir.exists():
+            return None
+        traj_files = list(output_dir.rglob("*.traj")) + list(output_dir.rglob("*.json"))
+        if not traj_files:
+            return None
+        traj_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for path in traj_files:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            response = self._find_final_response(data)
+            if response:
+                return response
+        return None
+
+    def _find_final_response(self, payload: Any) -> Optional[str]:
+        if not isinstance(payload, dict):
+            return None
+        for key in ("final_answer", "final_response", "final", "response", "answer", "output"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for key in ("trajectory", "steps", "messages", "actions"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                for item in reversed(value):
+                    if not isinstance(item, dict):
+                        continue
+                    nested = self._find_final_response(item)
+                    if nested:
+                        return nested
+        if payload.get("role") == "assistant":
+            content = payload.get("content") or payload.get("message") or payload.get("text")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+        return None
 
     def _find_usage(self, payload: Any) -> Optional[Dict[str, int]]:
         if not isinstance(payload, dict):

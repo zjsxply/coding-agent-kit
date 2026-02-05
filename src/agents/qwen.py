@@ -114,17 +114,16 @@ class QwenAgent(CodeAgent):
         if tool_calls is None:
             tool_calls = self._count_tool_calls(output)
         output_path = self._write_output(self.name, output)
-        prompt_tokens, completion_tokens, total_tokens = self._usage_totals(usage)
+        models_usage = self._ensure_models_usage({}, usage, qwen_model)
+        response = self._extract_response(load_json_payloads(output), output)
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            models_usage={},
+            models_usage=models_usage,
             tool_calls=tool_calls,
             telemetry_log=telemetry_path,
+            response=response,
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
@@ -163,6 +162,54 @@ class QwenAgent(CodeAgent):
             usage = self._extract_usage_from_mapping(payload)
             if usage:
                 return usage
+        return None
+
+    def _extract_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
+        messages: List[str] = []
+
+        def add_text(value: Any) -> None:
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if cleaned:
+                    messages.append(cleaned)
+
+        def add_from_message(message: Any) -> None:
+            if isinstance(message, dict):
+                add_text(message.get("content"))
+                add_text(message.get("text"))
+            else:
+                add_text(message)
+
+        def add_from_choices(choices: Any) -> None:
+            if not isinstance(choices, list):
+                return
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message") or choice.get("delta")
+                add_from_message(message)
+
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            add_from_choices(payload.get("choices"))
+            event_type = payload.get("type")
+            if isinstance(event_type, str) and "output_text" in event_type:
+                add_text(payload.get("text"))
+            for key in ("output", "final", "response", "answer"):
+                add_text(payload.get(key))
+
+        if messages:
+            return messages[-1]
+
+        if output:
+            stdout = output
+            marker = "----- STDERR -----"
+            if marker in stdout:
+                stdout = stdout.split(marker, 1)[0]
+            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+            if lines:
+                return lines[-1]
         return None
 
     def _extract_usage_from_tokens_payload(self, payload: Any) -> Optional[Dict[str, int]]:

@@ -29,11 +29,11 @@ cakit install <agent> [--scope user|global]
 | --- | --- | --- | --- |
 | codex | [OpenAI Codex](https://openai.com/codex) | [Codex CLI](https://developers.openai.com/codex/cli) | — |
 | claude | [Claude](https://www.anthropic.com/claude) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) | — |
-| copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/using-github-copilot-in-the-cli) | — |
+| copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — |
 | gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | — |
 | kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | — |
 | qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | — |
-| openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/cli/headless-mode/) | — |
+| openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | — |
 | swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | — |
 | trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | OSS 版 Trae Agent，用于与其他 Trae 产品区分 |
 | cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — |
@@ -81,12 +81,11 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
 输出字段包括：
 - `agent`, `agent_version`
 - `runtime_seconds`
-- `prompt_tokens`, `completion_tokens`, `total_tokens`
-- `models_usage`（按模型拆分，若可用）
+- `models_usage`（按模型拆分，包含 `prompt_tokens`/`completion_tokens`/`total_tokens`，若可用）
 - `tool_calls`（尽力统计）
 - `llm_calls`, `total_cost`（若 agent 提供）
 - `telemetry_log`（若启用）
-- `exit_code`, `output_path`, `raw_output`
+- `response`, `exit_code`, `output_path`, `raw_output`
 
 遥测支持：
 - Qwen Code：本地日志 `~/.qwen/telemetry.log`
@@ -150,5 +149,7 @@ cakit tools
 - [ ] 支持开关联网
 - [ ] 支持 skills 与 `AGENTS.md`
 - [ ] 支持 MCP
+- [ ] 支持 balanced 模式
+- [ ] 支持安装指定版本
 
 说明：目前仅支持 Linux amd64。

@@ -120,7 +120,7 @@ def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[
     result = agent.run(prompt, images=image_paths)
     sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n")
     exit_code = result.exit_code if result.exit_code is not None else 1
-    usage_ok = result.total_tokens is not None or bool(result.models_usage)
+    usage_ok = bool(result.models_usage)
     if exit_code == 0 and not usage_ok:
         return 3
     return 0 if exit_code == 0 else 1

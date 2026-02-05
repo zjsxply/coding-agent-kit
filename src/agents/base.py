@@ -20,7 +20,7 @@ class CommandResult:
     @property
     def output(self) -> str:
         if self.stdout and self.stderr:
-            return f"{self.stdout}\n{self.stderr}"
+            return f"{self.stdout}\n\n----- STDERR -----\n{self.stderr}"
         return self.stdout or self.stderr
 
 
@@ -141,6 +141,30 @@ class CodeAgent(abc.ABC):
             if candidate.exists():
                 return str(candidate)
         return None
+
+    def _ensure_models_usage(
+        self,
+        models_usage: Dict[str, Dict[str, int]],
+        usage: Optional[Dict[str, int]],
+        default_model: Optional[str] = None,
+    ) -> Dict[str, Dict[str, int]]:
+        if models_usage:
+            return models_usage
+        if not usage:
+            return {}
+        name = default_model or "unknown"
+        prompt = usage.get("prompt_tokens") or 0
+        completion = usage.get("completion_tokens") or 0
+        total = usage.get("total_tokens")
+        if total is None:
+            total = prompt + completion
+        return {
+            name: {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": total,
+            }
+        }
 
     def _write_text(self, path: Path, content: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

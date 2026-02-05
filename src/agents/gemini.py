@@ -90,19 +90,16 @@ class GeminiAgent(CodeAgent):
         payloads = load_json_payloads(output)
         usage, models_usage, tool_calls = self._extract_usage(payloads)
         output_path = self._write_output(self.name, output)
-        prompt_tokens = usage.get("prompt_tokens") if usage else None
-        completion_tokens = usage.get("completion_tokens") if usage else None
-        total_tokens = usage.get("total_tokens") if usage else None
+        models_usage = self._ensure_models_usage(models_usage, usage, model)
+        response = self._extract_response(payloads, output)
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
             models_usage=models_usage,
             tool_calls=tool_calls,
             telemetry_log=str(telemetry_path),
+            response=response,
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
@@ -145,6 +142,67 @@ class GeminiAgent(CodeAgent):
                 totals["completion_tokens"] += usage.get("completion_tokens", 0) or 0
                 totals["total_tokens"] += usage.get("total_tokens", 0) or 0
         return totals, models_usage, tool_calls
+
+    def _extract_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
+        messages: List[str] = []
+
+        def add_text(value: Any) -> None:
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if cleaned:
+                    messages.append(cleaned)
+
+        def add_from_candidates(obj: Any) -> None:
+            if not isinstance(obj, dict):
+                return
+            candidates = obj.get("candidates")
+            if not isinstance(candidates, list):
+                return
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                content = candidate.get("content") or candidate.get("message")
+                if isinstance(content, dict):
+                    parts = content.get("parts")
+                    if isinstance(parts, list):
+                        pieces: List[str] = []
+                        for part in parts:
+                            if not isinstance(part, dict):
+                                continue
+                            text = part.get("text")
+                            if isinstance(text, str) and text.strip():
+                                pieces.append(text.strip())
+                        if pieces:
+                            messages.append("\n".join(pieces))
+                            continue
+                    add_text(content.get("text"))
+                add_text(candidate.get("text"))
+
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            add_from_candidates(payload)
+            add_from_candidates(payload.get("response"))
+            add_from_candidates(payload.get("result"))
+            for key in ("output", "final", "answer"):
+                if isinstance(payload.get(key), str):
+                    add_text(payload.get(key))
+            payload_type = payload.get("type")
+            if payload_type in {"final", "response", "output"}:
+                add_text(payload.get("text"))
+
+        if messages:
+            return messages[-1]
+
+        if output:
+            stdout = output
+            marker = "----- STDERR -----"
+            if marker in stdout:
+                stdout = stdout.split(marker, 1)[0]
+            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+            if lines:
+                return lines[-1]
+        return None
 
     def _extract_tokens_payload(self, payload: Any) -> Optional[Dict[str, int]]:
         if not isinstance(payload, dict):

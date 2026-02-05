@@ -29,11 +29,11 @@ Use `--scope global` to run `npm install -g` (may require sudo).
 | --- | --- | --- | --- |
 | codex | [OpenAI Codex](https://openai.com/codex) | [Codex CLI](https://developers.openai.com/codex/cli) | — |
 | claude | [Claude](https://www.anthropic.com/claude) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) | — |
-| copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/using-github-copilot-in-the-cli) | — |
+| copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — |
 | gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | — |
 | kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | — |
 | qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | — |
-| openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/cli/headless-mode/) | — |
+| openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | — |
 | swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | — |
 | trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | OSS Trae Agent to distinguish from other Trae products |
 | cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — |
@@ -81,12 +81,11 @@ If the agent is not installed, `cakit run` will auto-run `cakit install <agent>`
 Output fields:
 - `agent`, `agent_version`
 - `runtime_seconds`
-- `prompt_tokens`, `completion_tokens`, `total_tokens`
-- `models_usage` (per model, when available)
+- `models_usage` (per model, includes `prompt_tokens`, `completion_tokens`, `total_tokens` when available)
 - `tool_calls` (best effort)
 - `llm_calls`, `total_cost` (when provided by the agent)
 - `telemetry_log` (when enabled)
-- `exit_code`, `output_path`, `raw_output`
+- `response`, `exit_code`, `output_path`, `raw_output`
 
 Telemetry:
 - Qwen Code: local log `~/.qwen/telemetry.log`
@@ -147,5 +146,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 - [ ] Support network on/off toggle
 - [ ] Support skills and `AGENTS.md`
 - [ ] Support MCP
+- [ ] Support balanced mode
+- [ ] Support installing specific versions
 
 Note: currently only supports Linux amd64.

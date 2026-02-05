@@ -78,11 +78,9 @@ class TraeOssAgent(CodeAgent):
                 agent=self.name,
                 agent_version=self.get_version(),
                 runtime_seconds=0.0,
-                prompt_tokens=None,
-                completion_tokens=None,
-                total_tokens=None,
                 models_usage={},
                 tool_calls=None,
+                response=message,
                 exit_code=2,
                 output_path=str(output_path),
                 raw_output=message,
@@ -112,16 +110,16 @@ class TraeOssAgent(CodeAgent):
         output = result.output
         usage, tool_calls = self._parse_trajectory(trajectory_file)
         output_path = self._write_output(self.name, output)
-        prompt_tokens, completion_tokens, total_tokens = self._usage_totals(usage)
+        model_name = os.environ.get("TRAE_AGENT_MODEL") or "gpt-4.1"
+        models_usage = self._ensure_models_usage({}, usage, model_name)
+        response = self._extract_response(output, trajectory_file)
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            models_usage={},
+            models_usage=models_usage,
             tool_calls=tool_calls,
+            response=response,
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
@@ -144,6 +142,50 @@ class TraeOssAgent(CodeAgent):
         usage = self._find_usage(data)
         tool_calls = self._count_actions(data)
         return usage, tool_calls
+
+    def _extract_response(self, output: str, trajectory_file: Path) -> Optional[str]:
+        response = self._extract_response_from_trajectory(trajectory_file)
+        if response:
+            return response
+        if output:
+            stdout = output
+            marker = "----- STDERR -----"
+            if marker in stdout:
+                stdout = stdout.split(marker, 1)[0]
+            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+            if lines:
+                return lines[-1]
+        return None
+
+    def _extract_response_from_trajectory(self, path: Path) -> Optional[str]:
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+        def scan_steps(items: Any) -> Optional[str]:
+            if not isinstance(items, list):
+                return None
+            for item in reversed(items):
+                if not isinstance(item, dict):
+                    continue
+                for key in ("final_response", "final_answer", "answer", "output", "response"):
+                    value = item.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+                if item.get("role") == "assistant":
+                    value = item.get("content") or item.get("message") or item.get("text")
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+            return None
+
+        for key in ("trajectory", "steps", "messages", "actions"):
+            candidate = scan_steps(data.get(key))
+            if candidate:
+                return candidate
+        return None
 
     def _find_usage(self, payload: Any) -> Optional[Dict[str, int]]:
         if not isinstance(payload, dict):
