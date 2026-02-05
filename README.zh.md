@@ -12,7 +12,7 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 
 ## 命令
 
-### 安装并配置 agent
+### 安装 agent
 
 默认无限制模式（Yolo）。
 
@@ -40,7 +40,7 @@ cakit install <agent> [--scope user|global]
 
 #### 登录方式
 
-OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.template` 写 `.env`，然后在当前 shell 执行 `source .env`。
+OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.template` 写 `.env`，然后在当前 shell 执行 `set -a; source .env; set +a`。
 
 - codex：`codex login`
 - claude：运行 `claude`，在交互界面输入 `/login`，也支持 `ANTHROPIC_AUTH_TOKEN` 环境变量
@@ -61,10 +61,20 @@ cakit env --output .env
 
 用于生成环境变量模板文件，便于配置 API Key 与端点。
 
+### 配置 agent
+
+```bash
+cakit configure <agent>
+```
+
+用于根据当前环境变量重新生成 agent 配置。
+如更新了环境变量，请再次执行 `cakit configure <agent>`。
+
 ### 运行并输出 JSON 统计
 
 ```bash
 cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
+# 多图：重复传 --image 或用逗号分隔多个路径
 ```
 
 若未安装对应 agent，会自动执行 `cakit install <agent>`（user scope）并提示。
@@ -113,23 +123,27 @@ cakit tools
 - `CAKIT_OUTPUT_DIR`：覆盖日志输出目录。
 - `CAKIT_TRAE_TRAJECTORY`：覆盖 Trae trajectory 输出路径。
 - `CAKIT_NPM_PREFIX`：覆盖 npm 类 agent 的用户安装前缀（默认 `~/.npm-global`）。
+- `CODEX_USE_OAUTH`：若设置（如 `1`），Codex 使用 OAuth 登录而非 API Key。
 
 ## 测试覆盖矩阵
 
-本项目尚未完成全面测试，仅在下表勾选条件下完成验证并可用，未勾选代表未测试或不保证可用。
+本项目尚未完成全面测试。✓ 表示已测试，✗ 表示不支持，✗* 表示在 `cakit run` 中所采用的 headless 模式里不支持但交互/GUI 支持，留空表示未测试。
 
-| Agent | OAuth | API | 图像输入 | MCP | Skills | 测试版本 |
-| --- | --- | --- | --- | --- | --- | --- |
-| codex | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| claude | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| copilot | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| gemini | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| kimi | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| qwen | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| openhands | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| swe-agent | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| trae-oss | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
-| cursor | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 | 未测试 |
+| Agent | OAuth | API | 图像输入 | MCP | Skills | 遥测 | 联网 | 测试版本 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| codex |  | ✓ | ✓ |  |  |  |  | 0.95.0 |
+| claude |  |  | ✗* |  |  |  |  |  |
+| copilot |  |  |  |  |  |  |  |  |
+| gemini |  |  |  |  |  |  |  |  |
+| kimi |  |  | ✗* |  |  |  |  |  |
+| qwen |  |  |  |  |  |  |  |  |
+| openhands | ✗ |  |  |  |  |  |  |  |
+| swe-agent | ✗ |  |  |  |  |  |  |  |
+| trae-oss | ✗ |  |  |  |  |  |  |  |
+| cursor |  |  |  |  |  |  |  |  |
+
+说明：
+- ✗* 表示图像输入在 headless `cakit run` 中不支持，但交互/GUI 支持。
 
 ## 待办（Todo）
 

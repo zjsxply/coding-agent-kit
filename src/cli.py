@@ -27,11 +27,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Install scope for npm-based agents (default: user).",
     )
 
+    configure = subparsers.add_parser("configure", help="Configure a coding agent")
+    configure.add_argument("agent", choices=list_agents())
+
     run = subparsers.add_parser("run", help="Run a coding agent")
     run.add_argument("agent", choices=list_agents())
     run.add_argument("prompt", nargs="+")
     run.add_argument("--cwd", default=".", help="Working directory for the agent run (optional)")
-    run.add_argument("--image", action="append", default=[], help="Image file path (repeatable)")
+    run.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        help="Image file path (repeatable or comma-separated)",
+    )
 
     tools = subparsers.add_parser("tools", help="Install fast shell power tools (Linux only)")
 
@@ -54,13 +62,46 @@ def _run_install(agent_name: str, scope: str) -> int:
     return 0 if install_result.ok else 1
 
 
+def _run_configure(agent_name: str) -> int:
+    agent = create_agent(agent_name)
+    config_path = agent.configure()
+    ok = config_path is not None
+    payload = {
+        "agent": agent_name,
+        "ok": ok,
+        "config_path": config_path,
+    }
+    if not ok:
+        payload["details"] = "configure failed"
+    sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+    return 0 if ok else 1
+
+
+def _expand_image_args(images: list[str]) -> list[Path]:
+    expanded: list[Path] = []
+    for item in images:
+        if not item:
+            continue
+        if "," in item:
+            candidate = Path(item).expanduser().resolve()
+            if candidate.exists():
+                expanded.append(candidate)
+                continue
+            parts = [part.strip() for part in item.split(",") if part.strip()]
+            for part in parts:
+                expanded.append(Path(part).expanduser().resolve())
+            continue
+        expanded.append(Path(item).expanduser().resolve())
+    return expanded
+
+
 def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[str]) -> int:
     prompt = " ".join(part for part in prompt_parts if part)
     if not prompt:
         sys.stdout.write(json.dumps({"error": "prompt is required"}, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
         return 2
     workdir = Path(cwd).expanduser().resolve()
-    image_paths = [Path(item).expanduser().resolve() for item in images]
+    image_paths = _expand_image_args(images)
     missing = [str(path) for path in image_paths if not path.exists()]
     if missing:
         sys.stdout.write(
@@ -91,6 +132,8 @@ def main() -> int:
 
     if args.command == "install":
         return _run_install(args.agent, args.scope)
+    if args.command == "configure":
+        return _run_configure(args.agent)
     if args.command == "run":
         return _run_agent(args.agent, args.prompt, args.cwd, args.image)
     if args.command == "tools":

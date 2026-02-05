@@ -12,7 +12,7 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 
 ## Commands
 
-### Install and configure an agent
+### Install an agent
 
 Default is unrestricted mode (Yolo).
 
@@ -40,7 +40,7 @@ Use `--scope global` to run `npm install -g` (may require sudo).
 
 #### Login
 
-For OAuth, use the official CLI login. For API keys, copy `.env.template` to `.env`, then run `source .env` in the current shell.
+For OAuth, use the official CLI login. For API keys, copy `.env.template` to `.env`, then run `set -a; source .env; set +a` in the current shell.
 
 - codex: `codex login`
 - claude: run `claude`, then `/login` in the interactive UI; `ANTHROPIC_AUTH_TOKEN` is also supported
@@ -61,10 +61,20 @@ cakit env --output .env
 
 Writes the environment template file for configuring API keys and endpoints.
 
+### Configure an agent
+
+```bash
+cakit configure <agent>
+```
+
+This regenerates the agent config based on current environment variables.
+If you update environment variables later, rerun `cakit configure <agent>`.
+
 ### Run and output JSON stats
 
 ```bash
 cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
+# multiple images: repeat --image or use comma-separated paths
 ```
 
 If the agent is not installed, `cakit run` will auto-run `cakit install <agent>` (user scope) with a notice.
@@ -113,23 +123,24 @@ Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, 
 - `CAKIT_OUTPUT_DIR`: override log output directory.
 - `CAKIT_TRAE_TRAJECTORY`: override Trae trajectory output path.
 - `CAKIT_NPM_PREFIX`: override the user install prefix for npm-based agents (default: `~/.npm-global`).
+- `CODEX_USE_OAUTH`: if set (e.g., `1`), Codex uses OAuth login instead of API key.
 
 ## Test Coverage Matrix
 
-This project is not fully tested. Only checked boxes indicate verified, working configurations; unchecked entries are untested or not guaranteed.
+This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not supported in headless mode adopted by `cakit run` but supported in interactive/GUI, blank = untested.
 
-| Agent | OAuth | API | Image Input | MCP | Skills | Test Version |
-| --- | --- | --- | --- | --- | --- | --- |
-| codex | Untested | Untested | Untested | Untested | Untested | Untested |
-| claude | Untested | Untested | Untested | Untested | Untested | Untested |
-| copilot | Untested | Untested | Untested | Untested | Untested | Untested |
-| gemini | Untested | Untested | Untested | Untested | Untested | Untested |
-| kimi | Untested | Untested | Untested | Untested | Untested | Untested |
-| qwen | Untested | Untested | Untested | Untested | Untested | Untested |
-| openhands | Untested | Untested | Untested | Untested | Untested | Untested |
-| swe-agent | Untested | Untested | Untested | Untested | Untested | Untested |
-| trae-oss | Untested | Untested | Untested | Untested | Untested | Untested |
-| cursor | Untested | Untested | Untested | Untested | Untested | Untested |
+| Agent | OAuth | API | Image Input | MCP | Skills | Telemetry | Web Access | Test Version |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| codex |  | ✓ | ✓ |  |  |  |  | 0.95.0 |
+| claude |  |  | ✗* |  |  |  |  |  |
+| copilot |  |  |  |  |  |  |  |  |
+| gemini |  |  |  |  |  |  |  |  |
+| kimi |  |  | ✗* |  |  |  |  |  |
+| qwen |  |  |  |  |  |  |  |  |
+| openhands | ✗ |  |  |  |  |  |  |  |
+| swe-agent | ✗ |  |  |  |  |  |  |  |
+| trae-oss | ✗ |  |  |  |  |  |  |  |
+| cursor |  |  |  |  |  |  |  |  |
 
 ## Todo
 

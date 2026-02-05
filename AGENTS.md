@@ -9,7 +9,7 @@
 - Use `uv` to manage the Python environment and dependencies.
 - Install dependencies: `uv sync`
 - Before running any Python command, activate the environment: `source .venv/bin/activate`
-- For API auth, generate `.env` from `.env.template` and run `source .env` in the current shell.
+- For API auth, generate `.env` from `.env.template` and run `set -a; source .env; set +a` in the current shell.
 
 ## Common Commands
 - Generate `.env` template: `cakit env --output .env`

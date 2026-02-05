@@ -19,6 +19,9 @@ class CodexAgent(CodeAgent):
         config_path = self.configure()
         ok = result.exit_code == 0
         details = result.output
+        if ok and config_path is None:
+            ok = False
+            details = (details + "\n" if details else "") + "codex configure failed"
         return InstallResult(
             agent=self.name,
             version=self.get_version() if ok else None,
@@ -28,19 +31,26 @@ class CodexAgent(CodeAgent):
         )
 
     def configure(self) -> Optional[str]:
+        use_oauth = self._use_oauth()
         model = os.environ.get("CODEX_MODEL") or "gpt-5-codex"
-        base_url = os.environ.get("CODEX_API_BASE") or "https://api.openai.com/v1"
-        provider = "custom"
         lines = [
+            "project_root_markers = []",
             f"model = \"{model}\"",
-            f"model_provider = \"{provider}\"",
-            "",
-            f"[model_providers.{provider}]",
-            "name = \"custom\"",
-            f"base_url = \"{base_url}\"",
-            "env_key = \"OPENAI_API_KEY\"",
-            "wire_api = \"responses\"",
         ]
+        if not use_oauth:
+            base_url = os.environ.get("CODEX_API_BASE") or "https://api.openai.com/v1"
+            provider = "custom"
+            lines.extend(
+                [
+                    f"model_provider = \"{provider}\"",
+                    "",
+                    f"[model_providers.{provider}]",
+                    "name = \"custom\"",
+                    f"base_url = \"{base_url}\"",
+                    "env_key = \"OPENAI_API_KEY\"",
+                    "wire_api = \"responses\"",
+                ]
+            )
         otel_exporter = os.environ.get("CODEX_OTEL_EXPORTER")
         otel_endpoint = os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
         otel_protocol = os.environ.get("CODEX_OTEL_PROTOCOL")
@@ -70,11 +80,31 @@ class CodexAgent(CodeAgent):
 
     def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
         images = images or []
+        if self._use_oauth() and not self._auth_path().exists():
+            message = f"codex OAuth is enabled but auth file not found at {self._auth_path()}; run `codex login`."
+            output_path = self._write_output(self.name, message)
+            return RunResult(
+                agent=self.name,
+                agent_version=self.get_version(),
+                runtime_seconds=0.0,
+                prompt_tokens=None,
+                completion_tokens=None,
+                total_tokens=None,
+                models_usage={},
+                tool_calls=None,
+                llm_calls=None,
+                total_cost=None,
+                telemetry_log=None,
+                exit_code=2,
+                output_path=str(output_path),
+                raw_output=message,
+            )
         otel_endpoint = os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
         env = {
-            "OPENAI_API_KEY": os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY"),
             "OPENAI_API_BASE": os.environ.get("CODEX_API_BASE"),
         }
+        if not self._use_oauth():
+            env["OPENAI_API_KEY"] = os.environ.get("CODEX_API_KEY") or os.environ.get("OPENAI_API_KEY")
         cmd = [
             "codex",
             "exec",
@@ -84,8 +114,8 @@ class CodexAgent(CodeAgent):
         if images:
             image_arg = ",".join(str(path) for path in images)
             cmd.extend(["--image", image_arg])
-        cmd.append(prompt)
-        result = self._run(cmd, env)
+        cmd.append("-")
+        result = self._run(cmd, env, input_text=prompt)
         output = result.output
         payloads = load_json_payloads(output)
         usage, models_usage = self._extract_usage(payloads)
@@ -113,6 +143,18 @@ class CodexAgent(CodeAgent):
         if result.exit_code == 0 and text:
             return text
         return None
+
+    def _use_oauth(self) -> bool:
+        value = os.environ.get("CODEX_USE_OAUTH")
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+    def _auth_path(self) -> Path:
+        codex_home = os.environ.get("CODEX_HOME")
+        if codex_home:
+            return Path(codex_home).expanduser() / "auth.json"
+        return Path.home() / ".codex" / "auth.json"
 
     def _extract_usage(self, payloads: List[Dict[str, Any]]) -> Tuple[Optional[Dict[str, int]], Dict[str, Dict[str, int]]]:
         totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}

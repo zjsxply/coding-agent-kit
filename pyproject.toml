@@ -8,6 +8,10 @@ version = "0.1.0"
 description = "Unified CLI to install and run coding agents for research"
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0.2"]
 
 [project.scripts]
 cakit = "src.cli:main"

@@ -9,7 +9,7 @@
 - 使用 `uv` 管理 Python 环境与依赖。
 - 安装依赖：`uv sync`
 - 执行任何 Python 命令前，先激活环境：`source .venv/bin/activate`
-- API 鉴权请使用 `.env.template` 生成 `.env`，并在当前 shell 执行 `source .env`。
+- API 鉴权请使用 `.env.template` 生成 `.env`，并在当前 shell 执行 `set -a; source .env; set +a`。
 
 ## 常用命令
 - 生成 `.env` 模板：`cakit env --output .env`
