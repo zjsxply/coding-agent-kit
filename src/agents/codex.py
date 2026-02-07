@@ -124,6 +124,9 @@ class CodexAgent(CodeAgent):
             "--output-last-message",
             str(last_message_path),
         ]
+        model = os.environ.get("CODEX_MODEL")
+        if model:
+            cmd.extend(["--model", model])
         if images:
             image_arg = ",".join(str(path) for path in images)
             cmd.extend(["--image", image_arg])

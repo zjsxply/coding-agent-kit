@@ -75,11 +75,13 @@ cakit configure <agent>
 ### 运行并输出 JSON 统计
 
 ```bash
-cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
+cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>]
 # 多图：重复传 --image 或用逗号分隔多个路径
 ```
 
 若未安装对应 agent，会自动执行 `cakit install <agent>`（user scope）并提示。
+`--model` 会覆盖当前 run 的基础模型（通过各 agent 的模型环境变量和/或模型命令行参数）。
+具体到每个 agent 的覆盖方式见 `docs/model_override.zh.md`。
 输出字段包括：
 - `agent`, `agent_version`
 - `runtime_seconds`
@@ -118,8 +120,6 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
 
 Skills 是可复用的 coding agent 技能包/指令集（见 [agentskills.io](https://agentskills.io)）。安装某个 skill 仓库请使用：
 
-`npx skills` 文档： [skills.sh](https://skills.sh/) 和 [vercel-labs/skills](https://github.com/vercel-labs/skills)。
-
 ```bash
 npx skills add <skills> -g [-a <agent1> <agent2> ...]
 ```
@@ -131,6 +131,8 @@ npx skills add vercel-labs/agent-skills -g -a claude-code codex
 ```
 
 注意：`skills` 使用的“coding agent”命名可能与 `cakit` 的 agent 命名不一致（例如 `claude-code` vs `cakit` 的 `claude`）。如有问题可运行 `npx skills -h` 查看帮助。
+
+`npx skills` 文档： [skills.sh](https://skills.sh/) 和 [vercel-labs/skills](https://github.com/vercel-labs/skills)。
 
 在脚本/CI 中建议显式指定参数并加 `-y` 以避免交互，例如：
 

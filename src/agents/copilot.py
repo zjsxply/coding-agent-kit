@@ -49,6 +49,7 @@ class CopilotAgent(CodeAgent):
                 raw_output=message,
             )
         log_dir = self._prepare_log_dir()
+        model = os.environ.get("COPILOT_MODEL")
         env = {
             "GH_TOKEN": os.environ.get("GH_TOKEN"),
             "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN"),
@@ -64,6 +65,8 @@ class CopilotAgent(CodeAgent):
             "--log-dir",
             str(log_dir),
         ]
+        if model:
+            cmd.extend(["--model", model])
         result = self._run(cmd, env)
         output = result.output
         payloads = load_json_payloads(output)
@@ -73,7 +76,7 @@ class CopilotAgent(CodeAgent):
             usage = self._extract_usage_text(output)
         tool_calls = self._count_tool_calls(payloads)
         output_path = self._write_output(self.name, output)
-        models_usage = self._ensure_models_usage(models_usage, usage, None)
+        models_usage = self._ensure_models_usage(models_usage, usage, model)
         response = self._extract_response(payloads, output)
         return RunResult(
             agent=self.name,

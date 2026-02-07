@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.resources
 import json
 import os
 import platform
@@ -9,9 +8,29 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .agents import create_agent, list_agents
+
+
+FRAMEWORK_ENV_KEYS: Dict[str, tuple[str, ...]] = {
+    "claude": (
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    ),
+    "codex": ("CODEX_MODEL",),
+    "copilot": ("COPILOT_MODEL",),
+    "cursor": ("CURSOR_MODEL",),
+    "gemini": ("GEMINI_MODEL", "GOOGLE_GEMINI_MODEL"),
+    "kimi": ("KIMI_MODEL_NAME",),
+    "openhands": ("OPENHANDS_LLM_MODEL", "LLM_MODEL"),
+    "qwen": ("QWEN_OPENAI_MODEL", "QWEN_MODEL"),
+    "swe-agent": ("SWE_AGENT_MODEL",),
+    "trae-oss": ("TRAE_AGENT_MODEL",),
+}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -39,6 +58,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Image file path (repeatable or comma-separated)",
+    )
+    run.add_argument(
+        "--model",
+        help=(
+            "Override the base LLM model for this run by setting agent-specific model environment "
+            "variables and/or passing model flags where supported."
+        ),
     )
 
     tools = subparsers.add_parser("tools", help="Install fast shell power tools (Linux only)")
@@ -102,7 +128,26 @@ def _expand_image_args(images: list[str]) -> list[Path]:
     return expanded
 
 
-def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[str]) -> int:
+def _apply_model_override(agent_name: str, model: Optional[str]) -> dict[str, Optional[str]]:
+    if not model:
+        return {}
+    env_keys = FRAMEWORK_ENV_KEYS.get(agent_name, ())
+    previous_values: dict[str, Optional[str]] = {}
+    for key in env_keys:
+        previous_values[key] = os.environ.get(key)
+        os.environ[key] = model
+    return previous_values
+
+
+def _restore_env(previous_values: dict[str, Optional[str]]) -> None:
+    for key, value in previous_values.items():
+        if value is None:
+            os.environ.pop(key, None)
+            continue
+        os.environ[key] = value
+
+
+def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[str], model: Optional[str]) -> int:
     prompt = " ".join(part for part in prompt_parts if part)
     if not prompt:
         sys.stdout.write(json.dumps({"error": "prompt is required"}, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
@@ -116,21 +161,25 @@ def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[
             + "\n"
         )
         return 2
-    agent = create_agent(agent_name, workdir=workdir)
-    if not agent.is_installed():
-        print(f"[run] {agent_name} not installed; running cakit install {agent_name}.")
-        install_result = _install_agent(agent_name, scope="user")
-        if not install_result.ok:
-            print(f"[run] install failed: {install_result.details}")
-            return 1
+    previous_values = _apply_model_override(agent_name, model)
+    try:
         agent = create_agent(agent_name, workdir=workdir)
-    result = agent.run(prompt, images=image_paths)
-    sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n")
-    exit_code = result.exit_code if result.exit_code is not None else 1
-    usage_ok = bool(result.models_usage)
-    if exit_code == 0 and not usage_ok:
-        return 3
-    return 0 if exit_code == 0 else 1
+        if not agent.is_installed():
+            print(f"[run] {agent_name} not installed; running cakit install {agent_name}.")
+            install_result = _install_agent(agent_name, scope="user")
+            if not install_result.ok:
+                print(f"[run] install failed: {install_result.details}")
+                return 1
+            agent = create_agent(agent_name, workdir=workdir)
+        result = agent.run(prompt, images=image_paths)
+        sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        exit_code = result.exit_code if result.exit_code is not None else 1
+        usage_ok = bool(result.models_usage)
+        if exit_code == 0 and not usage_ok:
+            return 3
+        return 0 if exit_code == 0 else 1
+    finally:
+        _restore_env(previous_values)
 
 
 def main() -> int:
@@ -142,7 +191,7 @@ def main() -> int:
     if args.command == "configure":
         return _run_configure(args.agent)
     if args.command == "run":
-        return _run_agent(args.agent, args.prompt, args.cwd, args.image)
+        return _run_agent(args.agent, args.prompt, args.cwd, args.image, args.model)
     if args.command == "skills":
         return _run_skills(args.args)
     if args.command == "tools":
@@ -264,14 +313,11 @@ def _run_tools() -> int:
 
 
 def _run_env(output: str) -> int:
-    try:
-        template = importlib.resources.files("src").joinpath("assets/.env.template").read_text(encoding="utf-8")
-    except Exception:
-        template_path = Path(__file__).resolve().parents[1] / "assets/.env.template"
-        if not template_path.exists():
-            sys.stdout.write(json.dumps({"ok": False, "details": "env template not found"}, ensure_ascii=True) + "\n")
-            return 1
-        template = template_path.read_text(encoding="utf-8")
+    template_path = Path(__file__).resolve().parents[1] / ".env.template"
+    if not template_path.exists():
+        sys.stdout.write(json.dumps({"ok": False, "details": "env template not found"}, ensure_ascii=True) + "\n")
+        return 1
+    template = template_path.read_text(encoding="utf-8")
     output_path = Path(output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(template, encoding="utf-8")

@@ -75,11 +75,13 @@ Note: Claude Code reads environment variables directly; `cakit configure claude`
 ### Run and output JSON stats
 
 ```bash
-cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]
+cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>]
 # multiple images: repeat --image or use comma-separated paths
 ```
 
 If the agent is not installed, `cakit run` will auto-run `cakit install <agent>` (user scope) with a notice.
+`--model` overrides the base model for the current run (via agent model env vars and/or model CLI flags).
+See `docs/model_override.md` for per-agent details.
 Output fields:
 - `agent`, `agent_version`
 - `runtime_seconds`
@@ -118,8 +120,6 @@ Image input support:
 
 Skills are reusable instruction/tooling packs for coding agents (see [agentskills.io](https://agentskills.io)). Install a skill repo with:
 
-`npx skills` docs: [skills.sh](https://skills.sh/) and [vercel-labs/skills](https://github.com/vercel-labs/skills).
-
 ```bash
 npx skills add <skills> -g [-a <agent1> <agent2> ...]
 ```
@@ -131,6 +131,8 @@ npx skills add vercel-labs/agent-skills -g -a claude-code codex
 ```
 
 Note: the “coding agent” names used by `skills` may differ from `cakit` agent names (e.g., `claude-code` vs `cakit`’s `claude`). If something doesn’t work, run `npx skills -h`.
+
+`npx skills` docs: [skills.sh](https://skills.sh/) and [vercel-labs/skills](https://github.com/vercel-labs/skills).
 
 For scripts/CI, prefer non-interactive flags to avoid prompts, e.g.:
 
