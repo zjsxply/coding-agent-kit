@@ -14,22 +14,22 @@
 ## Common Commands
 - Generate `.env` template: `cakit env --output .env`
 - Install and configure an agent: `cakit install <agent>` (default is unrestricted mode/Yolo)
-- Run and output JSON stats: `cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]`
-- Generic availability test workflow: `python scripts/availability_test.py <agent...>`
+- Run and output JSON stats: `cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--video /path/to/video]`
+- Generic availability test workflow: `python tests/availability_test.py <agent...>`
 - Install fast shell power tools (recommended): `cakit tools`
-- Smoke test: `scripts/test_agents.sh [agent ...]`
 
 ## Agent Availability Test Workflow
 - Prefer running the consolidated script first:
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
-  - `python scripts/availability_test.py <agent...>`
+  - `python tests/availability_test.py <agent...>`
 - If manual validation is required, run tests in this order and in the same shell:
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`
   3. `cakit run <agent> "Reply with exactly this text and nothing else: CAKIT_HEALTHCHECK_OK" > /tmp/cakit-<agent>-basic.json` (basic reply check)
   4. `cakit run <agent> "What is in this image? What text is shown?" --image tests/image1.png > /tmp/cakit-<agent>-image.json` (image input check)
-  5. `cakit run <agent> "Visit https://github.com/algorithmicsuperintelligence/openevolve and summarize what is on that page." > /tmp/cakit-<agent>-web.json` (web access check)
+  5. `cakit run <agent> "What happens in this video? List any visible text." --video tests/video.mp4 > /tmp/cakit-<agent>-video.json` (video input check; use a small local mp4)
+  6. `cakit run <agent> "Visit https://github.com/algorithmicsuperintelligence/openevolve and summarize what is on that page." > /tmp/cakit-<agent>-web.json` (web access check)
 - Record whether each check passes based on the actual response content (not just process start).
 - Verify stats field extraction from JSON outputs:
   1. `response`: key exists and value is non-empty text.

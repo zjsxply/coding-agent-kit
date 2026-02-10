@@ -75,7 +75,7 @@ cakit configure <agent>
 ### 运行并输出 JSON 统计
 
 ```bash
-cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>] [--reasoning-effort <value>] [--env-file /path/to/extra.env]
+cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--video /path/to/video] [--model <base_llm_model>] [--reasoning-effort <value>] [--env-file /path/to/extra.env]
 # 多图：重复传 --image 或用逗号分隔多个路径
 ```
 
@@ -107,20 +107,20 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--m
 - Gemini CLI：本地日志 `~/.gemini/telemetry.log`
 - Qwen Code：本地日志 `~/.qwen/telemetry.log`
 
-图像输入支持：
+图像/视频输入支持：
 
-| Agent | 图像输入支持 |
-| --- | --- |
-| claude | 支持，使用 `--image`（cakit 注入图片路径，Claude Code 通过 `Read` 工具读取） |
-| codex | 支持，使用 `--image` 传入路径，可多图 |
-| cursor | 暂未在 CLI 文档中发现图像输入方式 |
-| copilot | CLI 文档未说明图像输入 |
-| gemini | 支持，`read_many_files` 可读取图片文件（cakit 会提示路径） |
-| kimi | 支持，使用 `--image`（cakit 在 prompt 注入本地图片路径并要求 Kimi 用 `ReadMediaFile` 读取；需模型具备 `image_in` 能力） |
-| qwen | 支持，使用 `@{path}` 方式注入图片 |
-| openhands | 暂未在 CLI 文档中发现图像输入方式 |
-| swe-agent | 暂未在 CLI 文档中发现图像输入方式 |
-| trae-oss | 暂未在 CLI 文档中发现图像输入方式 |
+| Agent | 图像输入 | 视频输入 | 说明 |
+| --- | --- | --- | --- |
+| claude | ✓ |  | `--image` + `Read` 工具 |
+| codex | ✓ |  | `--image`（支持多图） |
+| cursor |  |  |  |
+| copilot |  |  |  |
+| gemini | ✓ | ✓ | `read_many_files` |
+| kimi | ✓ | ✓ | `ReadMediaFile` + 模型能力（`image_in`/`video_in`） |
+| qwen | ✓ | ✓ | `@{path}` 注入 |
+| openhands |  |  |  |
+| swe-agent |  |  |  |
+| trae-oss |  |  |  |
 
 Kimi Agent Swarm：
 - Kimi 支持在一次 run 中启动多个 subagents。
@@ -177,18 +177,18 @@ cakit tools
 
 本项目尚未完成全面测试。✓ 表示已测试，✗ 表示不支持，✗* 表示在 `cakit run` 中所采用的 headless 模式里不支持但交互/GUI 支持，⚠ 表示测试失败或因鉴权/配置/运行时前置条件缺失而阻塞，留空表示未测试。
 
-| Agent | OAuth | API | 图像输入 | MCP | Skills | 遥测 | 联网 | 测试版本 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude |  | ✓ | ✓ |  |  |  | ⚠ | 2.1.37 |
-| codex | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.98.0 |
-| cursor |  |  |  |  |  |  |  |  |
-| copilot |  |  |  |  |  |  |  |  |
-| gemini |  |  |  |  |  |  |  |  |
-| kimi |  | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
-| qwen |  |  |  |  |  |  |  |  |
-| openhands | ✗ |  |  |  |  |  |  |  |
-| swe-agent | ✗ |  |  |  |  |  |  |  |
-| trae-oss | ✗ |  |  |  |  |  |  |  |
+| Agent | OAuth | API | 图像输入 | 视频输入 | MCP | Skills | 遥测 | 联网 | 测试版本 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| claude |  | ✓ | ✓ |  |  |  |  | ⚠ | 2.1.37 |
+| codex | ✓ | ✓ | ✓ |  |  |  |  | ✓ | 0.98.0 |
+| cursor |  |  |  |  |  |  |  |  |  |
+| copilot |  |  |  |  |  |  |  |  |  |
+| gemini |  |  |  | ⚠ |  |  |  |  | 0.27.3 |
+| kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
+| qwen |  |  |  | ⚠ |  |  |  |  | 0.10.0 |
+| openhands | ✗ |  |  |  |  |  |  |  |  |
+| swe-agent | ✗ |  |  |  |  |  |  |  |  |
+| trae-oss | ✗ |  |  |  |  |  |  |  |  |
 
 ## 待办（Todo）
 

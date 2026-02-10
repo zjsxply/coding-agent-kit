@@ -3,12 +3,12 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodeAgent
+from .base import CodingAgent
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
 
-class OpenHandsAgent(CodeAgent):
+class OpenHandsAgent(CodingAgent):
     name = "openhands"
     display_name = "OpenHands"
     binary = "openhands"
@@ -30,38 +30,21 @@ class OpenHandsAgent(CodeAgent):
     def configure(self) -> Optional[str]:
         return None
 
-    def run(
+    def _run_impl(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        images = images or []
-        if images:
-            message = "image input is not supported for openhands in cakit run."
-            output_path = self._write_output(self.name, message)
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                response=message,
-                exit_code=2,
-                output_path=str(output_path),
-                raw_output=message,
-            )
-        model = os.environ.get("OPENHANDS_LLM_MODEL") or os.environ.get("LLM_MODEL")
-        api_key = os.environ.get("OPENHANDS_LLM_API_KEY") or os.environ.get("LLM_API_KEY")
-        base_url = os.environ.get("OPENHANDS_LLM_BASE_URL") or os.environ.get("LLM_BASE_URL")
+        model = os.environ.get("OPENHANDS_LLM_MODEL")
+        api_key = os.environ.get("OPENHANDS_LLM_API_KEY")
+        base_url = os.environ.get("OPENHANDS_LLM_BASE_URL")
         env = {
             "OPENHANDS_LLM_MODEL": model,
             "OPENHANDS_LLM_API_KEY": api_key,
             "OPENHANDS_LLM_BASE_URL": base_url,
-            "LLM_MODEL": model,
-            "LLM_API_KEY": api_key,
-            "LLM_BASE_URL": base_url,
         }
         cmd = ["openhands", "--headless", "--json", "-t", prompt]
         result = self._run(cmd, env, base_env=base_env)
@@ -70,7 +53,7 @@ class OpenHandsAgent(CodeAgent):
         usage = self._extract_usage(payloads)
         tool_calls = self._count_tool_calls(payloads)
         output_path = self._write_output(self.name, output)
-        model_name = os.environ.get("OPENHANDS_LLM_MODEL") or os.environ.get("LLM_MODEL")
+        model_name = os.environ.get("OPENHANDS_LLM_MODEL")
         models_usage = self._ensure_models_usage({}, usage, model_name)
         response = self._extract_response(payloads, output)
         return RunResult(

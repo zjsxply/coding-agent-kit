@@ -4,15 +4,17 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .base import CodeAgent
+from .base import CodingAgent
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
 
-class ClaudeAgent(CodeAgent):
+class ClaudeAgent(CodingAgent):
     name = "claude"
     display_name = "Anthropic Claude Code"
     binary = "claude"
+    supports_images = True
+    supports_videos = False
 
     def install(self, *, scope: str = "user") -> InstallResult:
         result = self._npm_install("@anthropic-ai/claude-code", scope)
@@ -29,10 +31,11 @@ class ClaudeAgent(CodeAgent):
     def configure(self) -> Optional[str]:
         return None
 
-    def run(
+    def _run_impl(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:

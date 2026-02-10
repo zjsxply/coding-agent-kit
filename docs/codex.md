@@ -8,6 +8,12 @@ This document explains how cakit collects Codex CLI metadata.
 - Session JSONL file at `$CODEX_HOME/sessions/**/rollout-*<thread_id>.jsonl` when available.
 - Environment variables such as `CODEX_MODEL`, `CODEX_API_BASE`, `CAKIT_CODEX_USE_OAUTH`, `CODEX_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
+**Image Input**
+- `cakit run codex --image <path>` is supported by passing the image path(s) to the Codex CLI `--image` flag (multiple images allowed).
+
+**Video Input**
+- Codex CLI documentation does not describe video input; treat video input as unsupported.
+
 **Field Mapping**
 - `agent_version`: from `codex --version`.
 - `runtime_seconds`: wall time of the `codex exec` process.

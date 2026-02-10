@@ -10,6 +10,9 @@ This document explains how cakit runs Claude Code and extracts metadata.
 - `cakit run claude --image <path>` is supported by injecting the image file path(s) into the prompt and letting Claude Code open them via the built-in `Read` tool.
 - cakit passes `--add-dir <parent_dir>` so Claude Code can access the image paths, and uses `--` to terminate options (because `--add-dir` is variadic and would otherwise consume the prompt).
 
+**Video Input**
+- Claude Code CLI documentation does not describe video input; treat video input as unsupported.
+
 **Reasoning Effort**
 - `cakit run claude ... --reasoning-effort <value>` is supported with values: `low`, `medium`, `high`, `max`.
 - cakit forwards this to Claude Code CLI via `CLAUDE_CODE_EFFORT_LEVEL=<value>` (no prompt injection).

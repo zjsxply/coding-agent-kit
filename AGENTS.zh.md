@@ -14,22 +14,22 @@
 ## 常用命令
 - 生成 `.env` 模板：`cakit env --output .env`
 - 安装并配置 agent：`cakit install <agent>`（默认无限制模式/Yolo）
-- 运行并输出 JSON 统计：`cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]`
-- 通用可用性测试流程：`python scripts/availability_test.py <agent...>`
+- 运行并输出 JSON 统计：`cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--video /path/to/video]`
+- 通用可用性测试流程：`python tests/availability_test.py <agent...>`
 - 安装 Fast Shell Power Tools（推荐）：`cakit tools`
-- 冒烟测试：`scripts/test_agents.sh [agent ...]`
 
 ## Agent 可用性测试流程
 - 优先执行统一脚本：
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
-  - `python scripts/availability_test.py <agent...>`
+  - `python tests/availability_test.py <agent...>`
 - 若需要手工逐项验证，再在同一个 shell 中按以下顺序执行：
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`
   3. `cakit run <agent> "Reply with exactly this text and nothing else: CAKIT_HEALTHCHECK_OK" > /tmp/cakit-<agent>-basic.json`（基础回复检查，期望返回 `CAKIT_HEALTHCHECK_OK`）
   4. `cakit run <agent> "这幅图片的内容是什么？有什么文字？" --image tests/image1.png > /tmp/cakit-<agent>-image.json`（图像输入检查）
-  5. `cakit run <agent> "访问 https://github.com/algorithmicsuperintelligence/openevolve，并简要说明页面内容。" > /tmp/cakit-<agent>-web.json`（联网访问检查）
+  5. `cakit run <agent> "这个视频里发生了什么？有什么可见文字？" --video tests/video.mp4 > /tmp/cakit-<agent>-video.json`（视频输入检查，使用本地小体积 mp4）
+  6. `cakit run <agent> "访问 https://github.com/algorithmicsuperintelligence/openevolve，并简要说明页面内容。" > /tmp/cakit-<agent>-web.json`（联网访问检查）
 - 各项通过与否以返回内容是否正确为准，不能只看命令是否启动。
 - 必须校验 JSON 中统计字段提取结果：
   1. `response`：字段存在，且为非空文本。

@@ -10,6 +10,9 @@
 - `cakit run claude --image <path>`：cakit 会把图片路径注入到 prompt，并让 Claude Code 通过内置 `Read` 工具读取图片文件。
 - cakit 会传 `--add-dir <父目录>` 以允许 Claude Code 访问这些路径，并在 prompt 前加 `--` 结束参数（因为 `--add-dir` 是可变参数，可能把 prompt 当成目录吃掉）。
 
+**视频输入**
+- Claude Code CLI 文档未描述视频输入；按不支持处理。
+
 **推理强度参数**
 - `cakit run claude ... --reasoning-effort <value>` 支持：`low`、`medium`、`high`、`max`。
 - cakit 通过环境变量 `CLAUDE_CODE_EFFORT_LEVEL=<value>` 传给 Claude Code CLI（不做 prompt 注入）。

@@ -43,6 +43,14 @@ cakit 仅写 provider 配置：
 - 图像场景下，如果当前 shell 没有设置 `KIMI_MODEL_CAPABILITIES`，cakit 会在该次运行进程里临时设置为 `image_in`，以便 `ReadMediaFile` 工具可用。
 - 是否能真正读图仍取决于所选模型能力（`image_in`）。若模型不支持图像输入，Kimi 可能失败或直接返回不支持读图。
 
+## 视频输入
+
+`cakit run kimi --video <path>` 已支持。
+
+- 有视频场景：cakit 切换为 print mode 的 `--prompt` 输入，并在 prompt 中注入视频绝对路径，明确要求 Kimi 先对每个文件调用 `ReadMediaFile` 再回答。
+- 视频场景下，如果当前 shell 没有设置 `KIMI_MODEL_CAPABILITIES`，cakit 会在该次运行进程里临时设置为 `video_in`（同时传图+视频时为 `image_in,video_in`），以便 `ReadMediaFile` 工具可用。
+- 是否能真正读视频仍取决于所选模型能力（`video_in`）。若模型不支持视频输入，Kimi 可能失败或直接返回不支持读视频。
+
 ## Agent Swarm
 
 Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：

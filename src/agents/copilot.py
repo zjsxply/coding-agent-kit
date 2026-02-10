@@ -6,12 +6,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodeAgent
+from .base import CodingAgent
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
 
-class CopilotAgent(CodeAgent):
+class CopilotAgent(CodingAgent):
     name = "copilot"
     display_name = "GitHub Copilot CLI"
     binary = "copilot"
@@ -32,28 +32,14 @@ class CopilotAgent(CodeAgent):
     def configure(self) -> Optional[str]:
         return None
 
-    def run(
+    def _run_impl(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        images = images or []
-        if images:
-            message = "image input is not supported for GitHub Copilot CLI in cakit run."
-            output_path = self._write_output(self.name, message)
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                response=message,
-                exit_code=2,
-                output_path=str(output_path),
-                raw_output=message,
-            )
         log_dir = self._prepare_log_dir()
         model = os.environ.get("COPILOT_MODEL")
         env = {

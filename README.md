@@ -75,7 +75,7 @@ Note: Claude Code reads environment variables directly; `cakit configure claude`
 ### Run and output JSON stats
 
 ```bash
-cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>] [--reasoning-effort <value>] [--env-file /path/to/extra.env]
+cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--video /path/to/video] [--model <base_llm_model>] [--reasoning-effort <value>] [--env-file /path/to/extra.env]
 # multiple images: repeat --image or use comma-separated paths
 ```
 
@@ -107,20 +107,20 @@ Telemetry:
 - Gemini CLI: local log `~/.gemini/telemetry.log`
 - Qwen Code: local log `~/.qwen/telemetry.log`
 
-Image input support:
+Image and video input support:
 
-| Agent | Image input |
-| --- | --- |
-| claude | Supported via `--image` (cakit injects image paths and Claude Code reads them via the `Read` tool) |
-| codex | Supported via `--image` (multiple images allowed) |
-| cursor | No image input documented in CLI docs |
-| copilot | No image input documented in the CLI docs |
-| gemini | Supported via `read_many_files` for image files (cakit injects file paths) |
-| kimi | Supported via `--image` (cakit injects local image paths in prompt and asks Kimi to read them with `ReadMediaFile`; requires an `image_in` capable model) |
-| qwen | Supported via `@{path}` image injection in prompt |
-| openhands | No image input documented in CLI docs |
-| swe-agent | No image input documented in CLI docs |
-| trae-oss | No image input documented in CLI docs |
+| Agent | Image Input | Video Input | Notes |
+| --- | --- | --- | --- |
+| claude | ✓ |  | `--image` + `Read` tool |
+| codex | ✓ |  | `--image` (multi-image) |
+| cursor |  |  |  |
+| copilot |  |  |  |
+| gemini | ✓ | ✓ | `read_many_files` |
+| kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`) |
+| qwen | ✓ | ✓ | `@{path}` injection |
+| openhands |  |  |  |
+| swe-agent |  |  |  |
+| trae-oss |  |  |  |
 
 Kimi Agent Swarm:
 - Kimi supports launching multiple subagents in one run.
@@ -177,18 +177,18 @@ Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, 
 
 This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not supported in headless mode adopted by `cakit run` but supported in interactive/GUI, ⚠ = test failed or blocked by missing auth/config/runtime prerequisites, blank = untested.
 
-| Agent | OAuth | API | Image Input | MCP | Skills | Telemetry | Web Access | Test Version |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude |  | ✓ | ✓ |  |  |  | ⚠ | 2.1.37 |
-| codex | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.98.0 |
-| cursor |  |  |  |  |  |  |  |  |
-| copilot |  |  |  |  |  |  |  |  |
-| gemini |  |  |  |  |  |  |  |  |
-| kimi |  | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
-| qwen |  |  |  |  |  |  |  |  |
-| openhands | ✗ |  |  |  |  |  |  |  |
-| swe-agent | ✗ |  |  |  |  |  |  |  |
-| trae-oss | ✗ |  |  |  |  |  |  |  |
+| Agent | OAuth | API | Image Input | Video Input | MCP | Skills | Telemetry | Web Access | Test Version |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| claude |  | ✓ | ✓ |  |  |  |  | ⚠ | 2.1.37 |
+| codex | ✓ | ✓ | ✓ |  |  |  |  | ✓ | 0.98.0 |
+| cursor |  |  |  |  |  |  |  |  |  |
+| copilot |  |  |  |  |  |  |  |  |  |
+| gemini |  |  |  | ⚠ |  |  |  |  | 0.27.3 |
+| kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
+| qwen |  |  |  | ⚠ |  |  |  |  | 0.10.0 |
+| openhands | ✗ |  |  |  |  |  |  |  |  |
+| swe-agent | ✗ |  |  |  |  |  |  |  |  |
+| trae-oss | ✗ |  |  |  |  |  |  |  |  |
 
 ## Todo
 

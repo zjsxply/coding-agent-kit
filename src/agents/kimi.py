@@ -6,15 +6,17 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodeAgent
+from .base import CodingAgent
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
 
-class KimiAgent(CodeAgent):
+class KimiAgent(CodingAgent):
     name = "kimi"
     display_name = "Kimi Code CLI"
     binary = "kimi"
+    supports_images = True
+    supports_videos = True
     _ALLOWED_PROVIDER_TYPES = {"kimi", "openai_legacy", "openai_responses"}
 
     def install(self, *, scope: str = "user") -> InstallResult:
@@ -61,14 +63,16 @@ class KimiAgent(CodeAgent):
             return normalized
         return None
 
-    def run(
+    def _run_impl(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
+        videos = videos or []
         run_started = time.time()
         requested_model_name = os.environ.get("KIMI_MODEL_NAME")
         env = {
@@ -87,10 +91,8 @@ class KimiAgent(CodeAgent):
             str(self.workdir),
         ]
         run_prompt = prompt
-        if images:
-            if not os.environ.get("KIMI_MODEL_CAPABILITIES"):
-                env["KIMI_MODEL_CAPABILITIES"] = "image_in"
-            run_prompt = self._build_prompt_with_image_paths(prompt, images)
+        if images or videos:
+            run_prompt = self._build_prompt_with_media_paths(prompt, images, videos)
         cmd.extend(["--prompt", run_prompt])
         if requested_model_name:
             cmd.extend(["--model", requested_model_name])
@@ -512,18 +514,31 @@ class KimiAgent(CodeAgent):
             "total_tokens": prompt + completion,
         }
 
-    def _build_prompt_with_image_paths(self, prompt: str, images: list[Path]) -> str:
-        paths: List[str] = []
+    def _build_prompt_with_media_paths(self, prompt: str, images: list[Path], videos: list[Path]) -> str:
+        image_paths: List[str] = []
+        video_paths: List[str] = []
         for image in images:
             resolved = image.expanduser().resolve()
-            paths.append(str(resolved))
+            image_paths.append(str(resolved))
+        for video in videos:
+            resolved = video.expanduser().resolve()
+            video_paths.append(str(resolved))
         lines = [
             prompt,
             "",
-            "You are provided with these image files:",
+            "You are provided with these media files.",
+            "Use ReadMediaFile to open each file before answering.",
         ]
-        for path in paths:
-            lines.append(f"- {path}")
+        if image_paths:
+            lines.append("")
+            lines.append("Images:")
+            for path in image_paths:
+                lines.append(f"- {path}")
+        if video_paths:
+            lines.append("")
+            lines.append("Videos:")
+            for path in video_paths:
+                lines.append(f"- {path}")
         return "\n".join(lines)
 
     @staticmethod

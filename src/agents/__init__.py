@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Type
 
-from .base import CodeAgent
+from .base import CodingAgent
 from .claude import ClaudeAgent
 from .copilot import CopilotAgent
 from .codex import CodexAgent
@@ -14,7 +14,7 @@ from .qwen import QwenAgent
 from .swe_agent import SweAgent
 from .trae_oss import TraeOssAgent
 
-AGENT_REGISTRY: Dict[str, Type[CodeAgent]] = {
+AGENT_REGISTRY: Dict[str, Type[CodingAgent]] = {
     "codex": CodexAgent,
     "claude": ClaudeAgent,
     "copilot": CopilotAgent,
@@ -32,7 +32,7 @@ def list_agents() -> tuple[str, ...]:
     return tuple(AGENT_REGISTRY.keys())
 
 
-def create_agent(name: str, *, workdir=None) -> CodeAgent:
+def create_agent(name: str, *, workdir=None) -> CodingAgent:
     key = name.strip().lower()
     if key not in AGENT_REGISTRY:
         raise ValueError(f"Unsupported agent: {name}")

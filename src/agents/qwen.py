@@ -5,15 +5,17 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodeAgent
+from .base import CodingAgent
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
 
-class QwenAgent(CodeAgent):
+class QwenAgent(CodingAgent):
     name = "qwen"
     display_name = "Qwen Code"
     binary = "qwen"
+    supports_images = True
+    supports_videos = True
 
     def install(self, *, scope: str = "user") -> InstallResult:
         result = self._npm_install("@qwen-code/qwen-code", scope)
@@ -63,23 +65,25 @@ class QwenAgent(CodeAgent):
         self._write_text(path, json.dumps(settings, ensure_ascii=True, indent=2))
         return str(path)
 
-    def run(
+    def _run_impl(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
-        if images:
-            image_refs: List[str] = []
-            for path in images:
+        videos = videos or []
+        if images or videos:
+            media_refs: List[str] = []
+            for path in [*images, *videos]:
                 try:
                     ref = str(path.relative_to(self.workdir))
                 except Exception:
                     ref = str(path)
-                image_refs.append(f"@{{{ref}}}")
-            prompt = "\n".join(image_refs) + "\n\n" + prompt
+                media_refs.append(f"@{{{ref}}}")
+            prompt = "\n".join(media_refs) + "\n\n" + prompt
         telemetry_path = str(Path.home() / ".qwen" / "telemetry.log")
         qwen_key = os.environ.get("QWEN_OPENAI_API_KEY")
         qwen_base = os.environ.get("QWEN_OPENAI_BASE_URL")

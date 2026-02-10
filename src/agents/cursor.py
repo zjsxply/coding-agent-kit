@@ -3,12 +3,12 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodeAgent
+from .base import CodingAgent
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
 
-class CursorAgent(CodeAgent):
+class CursorAgent(CodingAgent):
     name = "cursor"
     display_name = "Cursor Agent"
     binary = "cursor-agent"
@@ -28,28 +28,14 @@ class CursorAgent(CodeAgent):
     def configure(self) -> Optional[str]:
         return None
 
-    def run(
+    def _run_impl(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        images = images or []
-        if images:
-            message = "image input is not supported for cursor-agent in cakit run."
-            output_path = self._write_output(self.name, message)
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                response=message,
-                exit_code=2,
-                output_path=str(output_path),
-                raw_output=message,
-            )
         model = os.environ.get("CURSOR_MODEL")
         endpoint = os.environ.get("CURSOR_API_BASE")
         env = {"CURSOR_API_KEY": os.environ.get("CURSOR_API_KEY")}

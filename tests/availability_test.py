@@ -13,10 +13,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 DEFAULT_WEB_URL = "https://github.com/algorithmicsuperintelligence/openevolve"
 DEFAULT_IMAGE_PROMPT = "What is shown in this image? What text can you read?"
+DEFAULT_VIDEO_PROMPT = "What happens in this video? List any visible text."
 DEFAULT_WEB_PROMPT = "Visit {url} and briefly describe what is on that page."
 DEFAULT_BASIC_EXPECTED = "CAKIT_HEALTHCHECK_OK"
+DEFAULT_VIDEO_EXPECTED = "CAKIT VIDEO TEST 123"
 DEFAULT_BASIC_PROMPT = f"Reply with exactly this text and nothing else: {DEFAULT_BASIC_EXPECTED}"
-CASE_ORDER = {"basic": 0, "image": 1, "web": 2}
+CASE_ORDER = {"basic": 0, "image": 1, "video": 2, "web": 3}
+TASK_CHOICES = ("basic", "image", "video", "web")
 
 
 def _extract_last_json(text: str) -> Dict[str, Any]:
@@ -124,6 +127,7 @@ def _run_case(
     label: str,
     prompt: str,
     image: Optional[Path],
+    video: Optional[Path],
     expected_keywords: Optional[List[str]],
     timeout_seconds: int,
     workdir: Path,
@@ -131,6 +135,8 @@ def _run_case(
     cmd = ["cakit", "run", agent, prompt, "--cwd", str(workdir)]
     if image is not None:
         cmd.extend(["--image", str(image)])
+    if video is not None:
+        cmd.extend(["--video", str(video)])
     rc, payload, stdout, stderr, parse_error = _run_cakit(cmd, timeout_seconds)
 
     stats_ok, stat_errors = _check_common_stats(payload)
@@ -171,22 +177,24 @@ def _build_case_specs(
     *,
     agent: str,
     image_path: Path,
+    video_path: Path,
     web_url: str,
-    skip_image: bool,
-    skip_web: bool,
+    tasks: List[str],
     run_root: Path,
 ) -> List[Dict[str, Any]]:
     specs: List[Dict[str, Any]] = []
-    specs.append(
-        {
-            "agent": agent,
-            "label": "basic",
-            "prompt": DEFAULT_BASIC_PROMPT,
-            "image": None,
-            "expected_keywords": [DEFAULT_BASIC_EXPECTED],
-        }
-    )
-    if not skip_image:
+    if "basic" in tasks:
+        specs.append(
+            {
+                "agent": agent,
+                "label": "basic",
+                "prompt": DEFAULT_BASIC_PROMPT,
+                "image": None,
+                "video": None,
+                "expected_keywords": [DEFAULT_BASIC_EXPECTED],
+            }
+        )
+    if "image" in tasks:
         image_keywords = ["unminimize", "ubuntu", "verteen/ubuntu-unminimize"]
         specs.append(
             {
@@ -194,10 +202,22 @@ def _build_case_specs(
                 "label": "image",
                 "prompt": DEFAULT_IMAGE_PROMPT,
                 "image": image_path,
+                "video": None,
                 "expected_keywords": image_keywords,
             }
         )
-    if not skip_web:
+    if "video" in tasks:
+        specs.append(
+            {
+                "agent": agent,
+                "label": "video",
+                "prompt": DEFAULT_VIDEO_PROMPT,
+                "image": None,
+                "video": video_path,
+                "expected_keywords": [DEFAULT_VIDEO_EXPECTED],
+            }
+        )
+    if "web" in tasks:
         web_keywords = ["openevolve", "algorithmicsuperintelligence", "evolutionary coding agent"]
         specs.append(
             {
@@ -205,6 +225,7 @@ def _build_case_specs(
                 "label": "web",
                 "prompt": DEFAULT_WEB_PROMPT.format(url=web_url),
                 "image": None,
+                "video": None,
                 "expected_keywords": web_keywords,
             }
         )
@@ -221,6 +242,7 @@ def _run_case_spec(spec: Dict[str, Any], timeout_seconds: int) -> Dict[str, Any]
         label=str(spec["label"]),
         prompt=str(spec["prompt"]),
         image=spec["image"],
+        video=spec["video"],
         expected_keywords=spec["expected_keywords"],
         timeout_seconds=timeout_seconds,
         workdir=Path(spec["workdir"]),
@@ -271,9 +293,9 @@ def _test_agents(
     *,
     agents: List[str],
     image_path: Path,
+    video_path: Path,
     web_url: str,
-    skip_image: bool,
-    skip_web: bool,
+    tasks: List[str],
     timeout_seconds: int,
     parallel: bool,
     max_workers: int,
@@ -285,9 +307,9 @@ def _test_agents(
             _build_case_specs(
                 agent=agent,
                 image_path=image_path,
+                video_path=video_path,
                 web_url=web_url,
-                skip_image=skip_image,
-                skip_web=skip_web,
+                tasks=tasks,
                 run_root=run_root,
             )
         )
@@ -311,17 +333,36 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generic availability test for cakit agents.")
     parser.add_argument("agents", nargs="+", help="Agents to test, e.g. kimi codex claude")
     parser.add_argument("--image", default="tests/image1.png", help="Image file path for image test")
+    parser.add_argument("--video", default="tests/video.mp4", help="Video file path for video test")
     parser.add_argument("--web-url", default=DEFAULT_WEB_URL, help="URL used for web access test")
-    parser.add_argument("--skip-image", action="store_true", help="Skip image test")
-    parser.add_argument("--skip-web", action="store_true", help="Skip web test")
+    parser.add_argument(
+        "--tasks",
+        default="basic,image,video,web",
+        help="Comma-separated tasks to run: basic,image,video,web (default: all)",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=300, help="Per-case timeout in seconds")
     parser.add_argument("--no-parallel", action="store_true", help="Run cases sequentially")
     parser.add_argument("--max-workers", type=int, default=6, help="Max workers for parallel execution")
     args = parser.parse_args()
 
     image_path = Path(args.image).expanduser().resolve()
-    if not args.skip_image and not image_path.exists():
+    video_path = Path(args.video).expanduser().resolve()
+    tasks = [item.strip().lower() for item in str(args.tasks).split(",") if item.strip()]
+    invalid_tasks = [item for item in tasks if item not in TASK_CHOICES]
+    if not tasks or invalid_tasks:
+        print(
+            json.dumps(
+                {"error": f"invalid tasks: {invalid_tasks}", "allowed": list(TASK_CHOICES)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 2
+    if "image" in tasks and not image_path.exists():
         print(json.dumps({"error": f"image not found: {image_path}"}, ensure_ascii=False, indent=2))
+        return 2
+    if "video" in tasks and not video_path.exists():
+        print(json.dumps({"error": f"video not found: {video_path}"}, ensure_ascii=False, indent=2))
         return 2
     if not _is_positive_int(args.max_workers):
         print(json.dumps({"error": "--max-workers must be a positive integer"}, ensure_ascii=False, indent=2))
@@ -333,9 +374,9 @@ def main() -> int:
     agents_reports = _test_agents(
         agents=args.agents,
         image_path=image_path,
+        video_path=video_path,
         web_url=args.web_url,
-        skip_image=args.skip_image,
-        skip_web=args.skip_web,
+        tasks=tasks,
         timeout_seconds=args.timeout_seconds,
         parallel=not args.no_parallel,
         max_workers=args.max_workers,

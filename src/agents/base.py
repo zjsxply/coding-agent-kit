@@ -24,10 +24,12 @@ class CommandResult:
         return self.stdout or self.stderr
 
 
-class CodeAgent(abc.ABC):
+class CodingAgent(abc.ABC):
     name: str
     display_name: str
     binary: Optional[str] = None
+    supports_images: bool = False
+    supports_videos: bool = False
 
     def __init__(self, *, workdir: Optional[Path] = None) -> None:
         self.workdir = (workdir or Path.cwd()).expanduser().resolve()
@@ -40,14 +42,36 @@ class CodeAgent(abc.ABC):
     def configure(self) -> Optional[str]:
         raise NotImplementedError
 
-    @abc.abstractmethod
     def run(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> "RunResult":
+        """Template method: handles shared pre-checks, then delegates to _run_impl."""
+        rejected = self._reject_unsupported_media(images=images, videos=videos)
+        if rejected:
+            return rejected
+        return self._run_impl(
+            prompt,
+            images=images,
+            videos=videos,
+            reasoning_effort=reasoning_effort,
+            base_env=base_env,
+        )
+
+    @abc.abstractmethod
+    def _run_impl(
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
+    ) -> "RunResult":
+        """Agent-specific run implementation. Assumes shared checks already ran."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -197,6 +221,42 @@ class CodeAgent(abc.ABC):
         path = output_dir / f"{agent}-{stamp}.log"
         path.write_text(output, encoding="utf-8")
         return path
+
+    def _reject_unsupported_media(
+        self,
+        *,
+        images: Optional[list[Path]],
+        videos: Optional[list[Path]],
+    ) -> Optional["RunResult"]:
+        image_list = images or []
+        video_list = videos or []
+        unsupported: list[str] = []
+        if image_list and not self.supports_images:
+            unsupported.append("image")
+        if video_list and not self.supports_videos:
+            unsupported.append("video")
+        if not unsupported:
+            return None
+        if len(unsupported) == 1:
+            subject = f"{unsupported[0]} input"
+        else:
+            subject = f"{unsupported[0]} and {unsupported[1]} input"
+        message = f"{subject} is not supported by {self.display_name} CLI."
+        output_path = self._write_output(self.name, message)
+        return RunResult(
+            agent=self.name,
+            agent_version=self.get_version(),
+            runtime_seconds=0.0,
+            models_usage={},
+            tool_calls=None,
+            llm_calls=None,
+            total_cost=None,
+            telemetry_log=None,
+            response=message,
+            exit_code=2,
+            output_path=str(output_path),
+            raw_output=message,
+        )
 
 
 from ..models import InstallResult, RunResult  # noqa: E402

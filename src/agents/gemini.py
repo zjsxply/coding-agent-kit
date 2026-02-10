@@ -5,15 +5,17 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodeAgent
+from .base import CodingAgent
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
 
-class GeminiAgent(CodeAgent):
+class GeminiAgent(CodingAgent):
     name = "gemini"
     display_name = "Google Gemini CLI"
     binary = "gemini"
+    supports_images = True
+    supports_videos = True
 
     def install(self, *, scope: str = "user") -> InstallResult:
         result = self._npm_install("@google/gemini-cli", scope)
@@ -49,26 +51,28 @@ class GeminiAgent(CodeAgent):
         settings_path.write_text(json.dumps(data, ensure_ascii=True, indent=2), encoding="utf-8")
         return str(settings_path)
 
-    def run(
+    def _run_impl(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         model = os.environ.get("GEMINI_MODEL") or os.environ.get("GOOGLE_GEMINI_MODEL")
         images = images or []
-        if images:
-            image_paths: List[str] = []
-            for path in images:
+        videos = videos or []
+        if images or videos:
+            media_paths: List[str] = []
+            for path in [*images, *videos]:
                 try:
                     ref = str(path.relative_to(self.workdir))
                 except Exception:
                     ref = str(path)
-                image_paths.append(ref)
-            quoted = ", ".join(json.dumps(item) for item in image_paths)
+                media_paths.append(ref)
+            quoted = ", ".join(json.dumps(item) for item in media_paths)
             prompt = (
-                f"Please call read_many_files(paths=[{quoted}]) to load these image files before answering.\n\n{prompt}"
+                f"Please call read_many_files(paths=[{quoted}]) to load these media files before answering.\n\n{prompt}"
             )
         telemetry_path = Path.home() / ".gemini" / "telemetry.log"
         telemetry_path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,6 +87,7 @@ class GeminiAgent(CodeAgent):
         cmd = [
             "gemini",
             "-p",
+            prompt,
             "--output-format",
             "json",
             "--approval-mode",
@@ -90,7 +95,6 @@ class GeminiAgent(CodeAgent):
         ]
         if model:
             cmd.extend(["--model", model])
-        cmd.append(prompt)
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
         payloads = load_json_payloads(output)

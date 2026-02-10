@@ -67,6 +67,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Image file path (repeatable or comma-separated)",
     )
     run.add_argument(
+        "--video",
+        action="append",
+        default=[],
+        help="Video file path (repeatable or comma-separated)",
+    )
+    run.add_argument(
         "--model",
         help=(
             "Override the base LLM model for this run by setting agent-specific model environment "
@@ -131,9 +137,9 @@ def _run_configure(agent_name: str) -> int:
     return 0
 
 
-def _expand_image_args(images: list[str]) -> list[Path]:
+def _expand_media_args(items: list[str]) -> list[Path]:
     expanded: list[Path] = []
-    for item in images:
+    for item in items:
         if not item:
             continue
         if "," in item:
@@ -215,6 +221,7 @@ def _run_agent(
     prompt_parts: list[str],
     cwd: str,
     images: list[str],
+    videos: list[str],
     model: Optional[str],
     reasoning_effort: Optional[str],
     env_file: Optional[str],
@@ -227,11 +234,19 @@ def _run_agent(
     base_env = _build_base_env(env_file)
     if base_env is None:
         return 2
-    image_paths = _expand_image_args(images)
+    image_paths = _expand_media_args(images)
     missing = [str(path) for path in image_paths if not path.exists()]
     if missing:
         sys.stdout.write(
             json.dumps({"error": "image file not found", "missing": missing}, ensure_ascii=True, indent=2, sort_keys=True)
+            + "\n"
+        )
+        return 2
+    video_paths = _expand_media_args(videos)
+    missing_videos = [str(path) for path in video_paths if not path.exists()]
+    if missing_videos:
+        sys.stdout.write(
+            json.dumps({"error": "video file not found", "missing": missing_videos}, ensure_ascii=True, indent=2, sort_keys=True)
             + "\n"
         )
         return 2
@@ -257,6 +272,7 @@ def _run_agent(
         result = agent.run(
             prompt,
             images=image_paths,
+            videos=video_paths,
             reasoning_effort=resolved_reasoning_effort,
             base_env=base_env,
         )
@@ -284,6 +300,7 @@ def main() -> int:
             args.prompt,
             args.cwd,
             args.image,
+            args.video,
             args.model,
             args.reasoning_effort,
             args.env_file,

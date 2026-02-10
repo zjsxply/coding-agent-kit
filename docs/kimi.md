@@ -43,6 +43,14 @@ Reference:
 - For image runs, if `KIMI_MODEL_CAPABILITIES` is not set in the shell, cakit sets it to `image_in` for that run process so `ReadMediaFile` can be available.
 - Image understanding still depends on the selected model capability (`image_in`). If the model does not support image input, Kimi may fail or return that image reading is unsupported.
 
+## Video Input
+
+`cakit run kimi --video <path>` is supported.
+
+- With videos: cakit switches to print mode `--prompt` input and injects absolute video paths into the prompt, explicitly asking Kimi to read each file via `ReadMediaFile` before answering.
+- For video runs, if `KIMI_MODEL_CAPABILITIES` is not set in the shell, cakit sets it to `video_in` (or `image_in,video_in` when both image and video inputs are provided) so `ReadMediaFile` can be available.
+- Video understanding depends on the selected model capability (`video_in`). If the model does not support video input, Kimi may fail or return that video reading is unsupported.
+
 ## Agent Swarm
 
 Kimi supports Agent Swarm style workflows. You can trigger it directly in prompt text, for example:

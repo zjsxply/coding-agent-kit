@@ -7,15 +7,17 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodeAgent
+from .base import CodingAgent
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
 
-class CodexAgent(CodeAgent):
+class CodexAgent(CodingAgent):
     name = "codex"
     display_name = "OpenAI Codex"
     binary = "codex"
+    supports_images = True
+    supports_videos = False
 
     def install(self, *, scope: str = "user") -> InstallResult:
         result = self._npm_install("@openai/codex", scope)
@@ -84,10 +86,11 @@ class CodexAgent(CodeAgent):
         self._write_text(config_path, config)
         return str(config_path)
 
-    def run(
+    def _run_impl(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:

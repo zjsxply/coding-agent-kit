@@ -8,6 +8,12 @@
 - `$CODEX_HOME/sessions/**/rollout-*<thread_id>.jsonl` 的会话 JSONL（若存在）。
 - 环境变量，例如 `CODEX_MODEL`、`CODEX_API_BASE`、`CAKIT_CODEX_USE_OAUTH`、`CODEX_OTEL_ENDPOINT`、`OTEL_EXPORTER_OTLP_ENDPOINT`。
 
+**图像输入**
+- `cakit run codex --image <path>`：直接传给 Codex CLI 的 `--image` 参数（支持多图）。
+
+**视频输入**
+- Codex CLI 文档未描述视频输入；按不支持处理。
+
 **字段映射**
 - `agent_version`：来自 `codex --version`。
 - `runtime_seconds`：`codex exec` 进程的墙钟耗时。
