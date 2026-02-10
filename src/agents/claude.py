@@ -30,7 +30,11 @@ class ClaudeAgent(CodeAgent):
         return None
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         injected_prompt = prompt
@@ -86,7 +90,7 @@ class ClaudeAgent(CodeAgent):
             cmd.extend(["--add-dir", directory])
         cmd.append("--")
         cmd.append(injected_prompt)
-        result = self._run(cmd, env, unset_env=unset_env)
+        result = self._run(cmd, env, unset_env=unset_env, base_env=base_env)
         output = result.output
         payloads = load_json_payloads(output)
         try:

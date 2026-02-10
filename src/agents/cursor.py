@@ -29,7 +29,11 @@ class CursorAgent(CodeAgent):
         return None
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         if images:
@@ -62,7 +66,7 @@ class CursorAgent(CodeAgent):
             cmd.extend(["--model", model])
         if endpoint:
             cmd.extend(["--endpoint", endpoint])
-        result = self._run(cmd, env)
+        result = self._run(cmd, env, base_env=base_env)
         output = result.output
         payloads = load_json_payloads(output)
         usage = self._extract_usage(payloads)

@@ -64,7 +64,11 @@ class QwenAgent(CodeAgent):
         return str(path)
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         if images:
@@ -109,7 +113,7 @@ class QwenAgent(CodeAgent):
         ]
         if qwen_model:
             cmd.extend(["--model", qwen_model])
-        result = self._run(cmd, env)
+        result = self._run(cmd, env, base_env=base_env)
         output = result.output
         telemetry = self._read_text(Path(telemetry_path))
         usage = self._extract_usage_from_telemetry(telemetry) or self._extract_usage_from_output(output)

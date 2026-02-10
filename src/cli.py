@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .agents import create_agent, list_agents
+from .utils import load_env_file
 
 
 FRAMEWORK_ENV_KEYS: Dict[str, tuple[str, ...]] = {
@@ -79,6 +80,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "See docs/reasoning_effort.md for per-agent options."
         ),
     )
+    run.add_argument(
+        "--env-file",
+        help=(
+            "Path to an extra .env-style file. Only variables from this file and cakit-managed "
+            "keys will be passed to the coding agent."
+        ),
+    )
 
     tools = subparsers.add_parser("tools", help="Install fast shell power tools (Linux only)")
 
@@ -141,23 +149,14 @@ def _expand_image_args(images: list[str]) -> list[Path]:
     return expanded
 
 
-def _apply_model_override(agent_name: str, model: Optional[str]) -> dict[str, Optional[str]]:
+def _apply_model_override(agent_name: str, model: Optional[str], base_env: Optional[Dict[str, str]]) -> None:
     if not model:
-        return {}
+        return
     env_keys = FRAMEWORK_ENV_KEYS.get(agent_name, ())
-    previous_values: dict[str, Optional[str]] = {}
     for key in env_keys:
-        previous_values[key] = os.environ.get(key)
-        os.environ[key] = model
-    return previous_values
-
-
-def _restore_env(previous_values: dict[str, Optional[str]]) -> None:
-    for key, value in previous_values.items():
-        if value is None:
-            os.environ.pop(key, None)
-            continue
-        os.environ[key] = value
+        if base_env is not None:
+            base_env[key] = model
+    return
 
 
 def _normalize_reasoning_effort(agent_name: str, reasoning_effort: Optional[str]) -> Optional[str]:
@@ -218,12 +217,16 @@ def _run_agent(
     images: list[str],
     model: Optional[str],
     reasoning_effort: Optional[str],
+    env_file: Optional[str],
 ) -> int:
     prompt = " ".join(part for part in prompt_parts if part)
     if not prompt:
         sys.stdout.write(json.dumps({"error": "prompt is required"}, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
         return 2
     workdir = Path(cwd).expanduser().resolve()
+    base_env = _build_base_env(env_file)
+    if base_env is None:
+        return 2
     image_paths = _expand_image_args(images)
     missing = [str(path) for path in image_paths if not path.exists()]
     if missing:
@@ -241,7 +244,7 @@ def _run_agent(
             payload["supported_reasoning_effort"] = list(options)
         sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
         return 2
-    previous_values = _apply_model_override(agent_name, model)
+    _apply_model_override(agent_name, model, base_env)
     try:
         agent = create_agent(agent_name, workdir=workdir)
         if not agent.is_installed():
@@ -251,7 +254,12 @@ def _run_agent(
                 print(f"[run] install failed: {install_result.details}")
                 return 1
             agent = create_agent(agent_name, workdir=workdir)
-        result = agent.run(prompt, images=image_paths, reasoning_effort=resolved_reasoning_effort)
+        result = agent.run(
+            prompt,
+            images=image_paths,
+            reasoning_effort=resolved_reasoning_effort,
+            base_env=base_env,
+        )
         sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n")
         exit_code = result.exit_code if result.exit_code is not None else 1
         usage_ok = bool(result.models_usage)
@@ -259,7 +267,7 @@ def _run_agent(
             return 3
         return 0 if exit_code == 0 else 1
     finally:
-        _restore_env(previous_values)
+        pass
 
 
 def main() -> int:
@@ -271,7 +279,15 @@ def main() -> int:
     if args.command == "configure":
         return _run_configure(args.agent)
     if args.command == "run":
-        return _run_agent(args.agent, args.prompt, args.cwd, args.image, args.model, args.reasoning_effort)
+        return _run_agent(
+            args.agent,
+            args.prompt,
+            args.cwd,
+            args.image,
+            args.model,
+            args.reasoning_effort,
+            args.env_file,
+        )
     if args.command == "skills":
         return _run_skills(args.args)
     if args.command == "tools":
@@ -309,6 +325,55 @@ def _run_skills(passthrough_args: list[str]) -> int:
     print(f"[skills] {' '.join(cmd)}")
     result = subprocess.run(cmd, check=False)
     return result.returncode
+
+
+def _build_base_env(env_file: Optional[str]) -> Optional[Dict[str, str]]:
+    base_env: Dict[str, str] = {}
+    base_env["PATH"] = os.environ.get("PATH") or os.defpath
+    base_env["HOME"] = os.environ.get("HOME") or str(Path.home())
+    for key in _load_managed_env_keys():
+        value = os.environ.get(key)
+        if value:
+            base_env[key] = value
+    if env_file:
+        env_file_values = _load_extra_env(env_file)
+        if env_file_values is None:
+            return None
+        base_env.update(env_file_values)
+    return base_env
+
+
+def _load_extra_env(env_file: str) -> Optional[Dict[str, str]]:
+    path = Path(env_file).expanduser().resolve()
+    if not path.exists():
+        payload = {"error": "env file not found", "env_file": str(path)}
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        return None
+    if not path.is_file():
+        payload = {"error": "env file is not a file", "env_file": str(path)}
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        return None
+    return load_env_file(path)
+
+def _load_managed_env_keys() -> list[str]:
+    template_path = Path(__file__).resolve().parents[1] / ".env.template"
+    if not template_path.exists():
+        return []
+    keys: list[str] = []
+    for raw_line in template_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("##"):
+            continue
+        if line.startswith("#"):
+            line = line.lstrip("#").strip()
+        if not line:
+            continue
+        if "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key and key not in keys:
+            keys.append(key)
+    return keys
 
 
 def _ensure_dependencies(agent_name: str) -> bool:

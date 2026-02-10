@@ -31,7 +31,11 @@ class OpenHandsAgent(CodeAgent):
         return None
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         if images:
@@ -60,7 +64,7 @@ class OpenHandsAgent(CodeAgent):
             "LLM_BASE_URL": base_url,
         }
         cmd = ["openhands", "--headless", "--json", "-t", prompt]
-        result = self._run(cmd, env)
+        result = self._run(cmd, env, base_env=base_env)
         output = result.output
         payloads = load_json_payloads(output)
         usage = self._extract_usage(payloads)

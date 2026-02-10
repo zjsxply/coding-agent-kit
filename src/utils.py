@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -31,6 +32,28 @@ def load_json_payloads(text: str) -> List[Dict[str, Any]]:
         elif isinstance(data, list):
             payloads.extend([item for item in data if isinstance(item, dict)])
     return payloads
+
+
+def load_env_file(path: Path) -> Dict[str, str]:
+    content = path.read_text(encoding="utf-8")
+    env: Dict[str, str] = {}
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        env[key] = value
+    return env
 
 
 def extract_last_response(payloads: List[Dict[str, Any]], raw_output: str) -> Optional[str]:

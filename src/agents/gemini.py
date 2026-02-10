@@ -50,7 +50,11 @@ class GeminiAgent(CodeAgent):
         return str(settings_path)
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         model = os.environ.get("GEMINI_MODEL") or os.environ.get("GOOGLE_GEMINI_MODEL")
         images = images or []
@@ -87,7 +91,7 @@ class GeminiAgent(CodeAgent):
         if model:
             cmd.extend(["--model", model])
         cmd.append(prompt)
-        result = self._run(cmd, env)
+        result = self._run(cmd, env, base_env=base_env)
         output = result.output
         payloads = load_json_payloads(output)
         usage, models_usage, tool_calls = self._extract_usage(payloads)

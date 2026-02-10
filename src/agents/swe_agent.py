@@ -45,7 +45,11 @@ class SweAgent(CodeAgent):
         return str(path)
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         if images:
@@ -82,7 +86,7 @@ class SweAgent(CodeAgent):
         ]
         if model:
             cmd.extend(["--agent.model.name", model])
-        result = self._run(cmd, env)
+        result = self._run(cmd, env, base_env=base_env)
         output = result.output
         if result.exit_code != 0 and "--output_dir" in output and "unrecognized" in output:
             cmd = [
@@ -95,7 +99,7 @@ class SweAgent(CodeAgent):
             ]
             if model:
                 cmd.extend(["--agent.model.name", model])
-            result = self._run(cmd, env)
+            result = self._run(cmd, env, base_env=base_env)
             output = result.output
         usage = self._extract_usage_from_output(output)
         tool_calls = self._count_tool_calls_from_text(output)

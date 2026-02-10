@@ -75,7 +75,7 @@ cakit configure <agent>
 ### 运行并输出 JSON 统计
 
 ```bash
-cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>] [--reasoning-effort <value>]
+cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>] [--reasoning-effort <value>] [--env-file /path/to/extra.env]
 # 多图：重复传 --image 或用逗号分隔多个路径
 ```
 
@@ -84,6 +84,10 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--m
 具体到每个 agent 的覆盖方式见 `docs/model_override.zh.md`。
 `--reasoning-effort` 是统一的按次运行推理强度/思考开关参数。
 各 agent 的可选值与映射见 `docs/reasoning_effort.zh.md`。
+环境传递说明：
+- cakit 只会把它“受管控”的环境变量传给 coding agent（即 `.env.template` 里的变量以及 cakit 显式设置的值）。
+- 当前 shell 的其他环境变量不会被继承给 coding agent 进程。
+- 如需额外变量，请写入文件并使用 `--env-file` 传入。
 输出字段包括：
 - `agent`, `agent_version`
 - `runtime_seconds`
@@ -122,6 +126,7 @@ Kimi Agent Swarm：
 - Kimi 支持在一次 run 中启动多个 subagents。
 - 在 prompt 中使用类似 `launch multiple subagents` 的表述即可（例如：“Can you launch multiple subagents to solve this task and summarize the results?”）。
 - 对 Kimi 而言，在 session 日志可用时，`models_usage`/`llm_calls`/`tool_calls` 会聚合 subagent 事件。
+注意：经测试，Kimi CLI 在并发多会话时可能出现竞态导致失败，建议避免同时运行多个 Kimi 会话。
 
 ### Skills（技能）
 
@@ -179,7 +184,7 @@ cakit tools
 | cursor |  |  |  |  |  |  |  |  |
 | copilot |  |  |  |  |  |  |  |  |
 | gemini |  |  |  |  |  |  |  |  |
-| kimi |  | ✓ | ⚠ |  |  |  | ✓ | 1.9.0 |
+| kimi |  | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
 | qwen |  |  |  |  |  |  |  |  |
 | openhands | ✗ |  |  |  |  |  |  |  |
 | swe-agent | ✗ |  |  |  |  |  |  |  |

@@ -42,7 +42,11 @@ class CodeAgent(abc.ABC):
 
     @abc.abstractmethod
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> "RunResult":
         raise NotImplementedError
 
@@ -57,8 +61,9 @@ class CodeAgent(abc.ABC):
         input_text: Optional[str] = None,
         timeout: Optional[int] = None,
         unset_env: Optional[Iterable[str]] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> CommandResult:
-        merged_env = os.environ.copy()
+        merged_env = dict(base_env) if base_env is not None else os.environ.copy()
         if unset_env:
             for key in unset_env:
                 merged_env.pop(key, None)

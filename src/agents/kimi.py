@@ -62,7 +62,11 @@ class KimiAgent(CodeAgent):
         return None
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         run_started = time.time()
@@ -94,7 +98,7 @@ class KimiAgent(CodeAgent):
             cmd.append("--thinking")
         elif reasoning_effort == "none":
             cmd.append("--no-thinking")
-        result = self._run(cmd, env)
+        result = self._run(cmd, env, base_env=base_env)
         output = result.output
         payloads = load_json_payloads(output)
         usage: Optional[Dict[str, int]] = None

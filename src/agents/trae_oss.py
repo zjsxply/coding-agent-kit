@@ -72,7 +72,11 @@ class TraeOssAgent(CodeAgent):
         return str(path)
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         if images:
@@ -110,7 +114,7 @@ class TraeOssAgent(CodeAgent):
             "--trajectory-file",
             str(trajectory_file),
         ]
-        result = self._run(cmd, env)
+        result = self._run(cmd, env, base_env=base_env)
         output = result.output
         usage, tool_calls = self._parse_trajectory(trajectory_file)
         output_path = self._write_output(self.name, output)

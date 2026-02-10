@@ -85,7 +85,11 @@ class CodexAgent(CodeAgent):
         return str(config_path)
 
     def run(
-        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+        self,
+        prompt: str,
+        images: Optional[list[Path]] = None,
+        reasoning_effort: Optional[str] = None,
+        base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         if self._use_oauth() and not self._auth_path().exists():
@@ -136,7 +140,7 @@ class CodexAgent(CodeAgent):
         unset_env = None
         if use_oauth or (not api_key):
             unset_env = ["OPENAI_API_KEY", "CODEX_API_KEY"]
-        result = self._run(cmd, env, input_text=prompt, unset_env=unset_env)
+        result = self._run(cmd, env, input_text=prompt, unset_env=unset_env, base_env=base_env)
         output = result.output
         payloads = load_json_payloads(output)
         models_usage, llm_calls = self._extract_models_usage(payloads)

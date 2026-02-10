@@ -75,7 +75,7 @@ Note: Claude Code reads environment variables directly; `cakit configure claude`
 ### Run and output JSON stats
 
 ```bash
-cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>] [--reasoning-effort <value>]
+cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>] [--reasoning-effort <value>] [--env-file /path/to/extra.env]
 # multiple images: repeat --image or use comma-separated paths
 ```
 
@@ -84,6 +84,10 @@ If the agent is not installed, `cakit run` will auto-run `cakit install <agent>`
 See `docs/model_override.md` for per-agent details.
 `--reasoning-effort` is a unified per-run reasoning/thinking control.
 See `docs/reasoning_effort.md` for per-agent options and mappings.
+Environment isolation:
+- cakit only passes cakit-managed environment variables to the coding agent (the variables listed in `.env.template` and any values it sets explicitly).
+- The rest of the current shell environment is not inherited by the coding agent process.
+- If you need to pass additional variables, put them in a file and use `--env-file`.
 Output fields:
 - `agent`, `agent_version`
 - `runtime_seconds`
@@ -122,6 +126,7 @@ Kimi Agent Swarm:
 - Kimi supports launching multiple subagents in one run.
 - In prompt text, use wording like `launch multiple subagents` (for example: "Can you launch multiple subagents to solve this task and summarize the results?").
 - For Kimi runs, `models_usage`/`llm_calls`/`tool_calls` aggregate subagent events from session logs when available.
+Note: In our testing, Kimi CLI may hit a race condition when multiple sessions run concurrently, leading to failures. Avoid running multiple Kimi sessions at the same time.
 
 ### Skills
 
@@ -179,7 +184,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 | cursor |  |  |  |  |  |  |  |  |
 | copilot |  |  |  |  |  |  |  |  |
 | gemini |  |  |  |  |  |  |  |  |
-| kimi |  | ✓ | ⚠ |  |  |  | ✓ | 1.9.0 |
+| kimi |  | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
 | qwen |  |  |  |  |  |  |  |  |
 | openhands | ✗ |  |  |  |  |  |  |  |
 | swe-agent | ✗ |  |  |  |  |  |  |  |
