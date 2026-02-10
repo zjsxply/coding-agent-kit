@@ -15,8 +15,37 @@
 - Generate `.env` template: `cakit env --output .env`
 - Install and configure an agent: `cakit install <agent>` (default is unrestricted mode/Yolo)
 - Run and output JSON stats: `cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image]`
+- Generic availability test workflow: `python scripts/availability_test.py <agent...>`
 - Install fast shell power tools (recommended): `cakit tools`
 - Smoke test: `scripts/test_agents.sh [agent ...]`
+
+## Agent Availability Test Workflow
+- Prefer running the consolidated script first:
+  - `source .venv/bin/activate`
+  - `set -a; source .env; set +a`
+  - `python scripts/availability_test.py <agent...>`
+- If manual validation is required, run tests in this order and in the same shell:
+  1. `source .venv/bin/activate`
+  2. `set -a; source .env; set +a`
+  3. `cakit run <agent> "Reply with exactly this text and nothing else: CAKIT_HEALTHCHECK_OK" > /tmp/cakit-<agent>-basic.json` (basic reply check)
+  4. `cakit run <agent> "What is in this image? What text is shown?" --image tests/image1.png > /tmp/cakit-<agent>-image.json` (image input check)
+  5. `cakit run <agent> "Visit https://github.com/algorithmicsuperintelligence/openevolve and summarize what is on that page." > /tmp/cakit-<agent>-web.json` (web access check)
+- Record whether each check passes based on the actual response content (not just process start).
+- Verify stats field extraction from JSON outputs:
+  1. `response`: key exists and value is non-empty text.
+  2. `models_usage`: key exists and must be a non-empty object with integer token fields for successful runs.
+  3. `llm_calls`: key exists and must be an integer (`>= 1`) for successful runs.
+  4. `tool_calls`: key exists and must be an integer (`>= 0`).
+- If `models_usage` is `{}` or `llm_calls`/`tool_calls` is missing/`null` on a successful run, treat it as extraction failure.
+- Do not write guessed values for missing stats. If extraction is not possible, keep `None` (`null`) instead of writing placeholder values like `0`.
+- For session/log fallback parsing, use exact session matching (for example by exact `session_id` path match). Do not use fuzzy matching by mtime or nearest file.
+- Model name in `models_usage` must come from run artifacts (stdout payload/session logs). Do not fill it from config/env/`--model` input.
+- Parsing must be strict and format-aware: read only exact, documented fields; if structure is unexpected, return `None` immediately instead of stacking fallback parsers.
+- On extraction failure, inspect:
+  1. `output_path` / `raw_output` from `cakit run`.
+  2. Upstream coding agent logs/sessions (for example Kimi: `~/.kimi/logs`, `~/.kimi/sessions/*/*/wire.jsonl`, `~/.kimi/sessions/*/*/context.jsonl`).
+  3. Agent extraction code in `src/agents/<agent>.py`, then fix parsing.
+- Update `README.md` and `README.zh.md` Test Coverage Matrix after testing, and record `Test Version` from `agent_version` in `cakit run` output.
 
 ## Code Structure and Style
 - `src/agents/`: one file per agent, one class per agent. All agent-specific logic (install, run, usage extraction, etc.) must live in the corresponding class.
@@ -33,6 +62,9 @@
 - For debugging, store temporary files under `/tmp` instead of writing into the project directory.
 - No output truncation (no `_preview`); output field is `raw_output`.
 - `get_version` must not use fallbacks.
+- Do not set hardcoded default values for environment variables in code (for example, avoid `os.environ.get("X") or "default"`). Read env vars as-is; if a required value is missing, fail clearly or skip writing config.
+- Keep upstream coding agent environment variable names unchanged. If an upstream name is duplicated across different coding agents, add a coding-agent-specific prefix to disambiguate.
+- Any environment variable defined only by cakit (not by upstream coding agents) must use the `CAKIT_` prefix.
 
 ## Auth and Stats Output Requirements
 - Both OAuth and API auth must be supported, and each agent’s login method must be documented in README.

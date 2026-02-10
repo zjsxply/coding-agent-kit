@@ -29,7 +29,9 @@ class ClaudeAgent(CodeAgent):
     def configure(self) -> Optional[str]:
         return None
 
-    def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
+    def run(
+        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+    ) -> RunResult:
         images = images or []
         injected_prompt = prompt
         add_dirs: list[str] = []
@@ -50,8 +52,8 @@ class ClaudeAgent(CodeAgent):
             telemetry_enabled = "1"
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        use_oauth_raw = (os.environ.get("CLAUDE_USE_OAUTH") or "").strip().lower()
-        use_oauth = use_oauth_raw in {"1", "true", "yes", "y", "on"}
+        use_oauth_raw = os.environ.get("CAKIT_CLAUDE_USE_OAUTH")
+        use_oauth = bool(use_oauth_raw and use_oauth_raw.strip().lower() in {"1", "true", "yes", "y", "on"})
         unset_env: list[str] = []
         if api_key and auth_token:
             if use_oauth:
@@ -65,6 +67,8 @@ class ClaudeAgent(CodeAgent):
             "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL"),
             "ANTHROPIC_AUTH_TOKEN": auth_token,
             "CLAUDE_CODE_ENABLE_TELEMETRY": telemetry_enabled,
+            "CLAUDE_CODE_EFFORT_LEVEL": reasoning_effort,
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "OTEL_EXPORTER_OTLP_ENDPOINT": otel_endpoint,
             "IS_SANDBOX": "1",
         }

@@ -32,6 +32,12 @@ FRAMEWORK_ENV_KEYS: Dict[str, tuple[str, ...]] = {
     "trae-oss": ("TRAE_AGENT_MODEL",),
 }
 
+REASONING_EFFORT_OPTIONS: Dict[str, tuple[str, ...]] = {
+    "codex": ("minimal", "low", "medium", "high", "xhigh"),
+    "claude": ("low", "medium", "high", "max"),
+    "kimi": ("thinking", "none"),
+}
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cakit", description="Coding Agent Kit CLI")
@@ -64,6 +70,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Override the base LLM model for this run by setting agent-specific model environment "
             "variables and/or passing model flags where supported."
+        ),
+    )
+    run.add_argument(
+        "--reasoning-effort",
+        help=(
+            "Unified reasoning/thinking control for the selected coding agent. "
+            "See docs/reasoning_effort.md for per-agent options."
         ),
     )
 
@@ -147,7 +160,65 @@ def _restore_env(previous_values: dict[str, Optional[str]]) -> None:
         os.environ[key] = value
 
 
-def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[str], model: Optional[str]) -> int:
+def _normalize_reasoning_effort(agent_name: str, reasoning_effort: Optional[str]) -> Optional[str]:
+    if reasoning_effort is None:
+        return None
+    effort = reasoning_effort.strip().lower()
+    effort_slug = effort.replace(" ", "-")
+    if not effort:
+        return None
+    if agent_name == "kimi":
+        aliases = {
+            "thinking": "thinking",
+            "on": "thinking",
+            "true": "thinking",
+            "yes": "thinking",
+            "none": "none",
+            "off": "none",
+            "false": "none",
+            "no": "none",
+            "no-thinking": "none",
+        }
+        normalized = aliases.get(effort) or aliases.get(effort_slug)
+        if normalized:
+            return normalized
+        raise ValueError(
+            "unsupported reasoning effort for kimi: "
+            f"{reasoning_effort!r}; available: {', '.join(REASONING_EFFORT_OPTIONS['kimi'])}"
+        )
+    if agent_name == "claude":
+        aliases = {
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "max": "max",
+        }
+        normalized = aliases.get(effort) or aliases.get(effort_slug)
+        if normalized:
+            return normalized
+        raise ValueError(
+            "unsupported reasoning effort for claude: "
+            f"{reasoning_effort!r}; available: {', '.join(REASONING_EFFORT_OPTIONS['claude'])}"
+        )
+    allowed = REASONING_EFFORT_OPTIONS.get(agent_name)
+    if not allowed:
+        raise ValueError(f"reasoning effort is not supported for {agent_name}")
+    if effort not in allowed:
+        raise ValueError(
+            f"unsupported reasoning effort for {agent_name}: {reasoning_effort!r}; "
+            f"available: {', '.join(allowed)}"
+        )
+    return effort
+
+
+def _run_agent(
+    agent_name: str,
+    prompt_parts: list[str],
+    cwd: str,
+    images: list[str],
+    model: Optional[str],
+    reasoning_effort: Optional[str],
+) -> int:
     prompt = " ".join(part for part in prompt_parts if part)
     if not prompt:
         sys.stdout.write(json.dumps({"error": "prompt is required"}, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
@@ -161,6 +232,15 @@ def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[
             + "\n"
         )
         return 2
+    try:
+        resolved_reasoning_effort = _normalize_reasoning_effort(agent_name, reasoning_effort)
+    except ValueError as exc:
+        payload = {"error": str(exc)}
+        options = REASONING_EFFORT_OPTIONS.get(agent_name)
+        if options:
+            payload["supported_reasoning_effort"] = list(options)
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        return 2
     previous_values = _apply_model_override(agent_name, model)
     try:
         agent = create_agent(agent_name, workdir=workdir)
@@ -171,7 +251,7 @@ def _run_agent(agent_name: str, prompt_parts: list[str], cwd: str, images: list[
                 print(f"[run] install failed: {install_result.details}")
                 return 1
             agent = create_agent(agent_name, workdir=workdir)
-        result = agent.run(prompt, images=image_paths)
+        result = agent.run(prompt, images=image_paths, reasoning_effort=resolved_reasoning_effort)
         sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n")
         exit_code = result.exit_code if result.exit_code is not None else 1
         usage_ok = bool(result.models_usage)
@@ -191,7 +271,7 @@ def main() -> int:
     if args.command == "configure":
         return _run_configure(args.agent)
     if args.command == "run":
-        return _run_agent(args.agent, args.prompt, args.cwd, args.image, args.model)
+        return _run_agent(args.agent, args.prompt, args.cwd, args.image, args.model, args.reasoning_effort)
     if args.command == "skills":
         return _run_skills(args.args)
     if args.command == "tools":
@@ -233,7 +313,7 @@ def _run_skills(passthrough_args: list[str]) -> int:
 
 def _ensure_dependencies(agent_name: str) -> bool:
     needs_node = agent_name in {"codex", "claude", "copilot", "gemini", "qwen"}
-    needs_uv = agent_name in {"openhands", "kimi"}
+    needs_uv = agent_name in {"openhands"}
     ok = True
 
     if needs_node and not _ensure_node_tools():

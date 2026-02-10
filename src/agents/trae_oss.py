@@ -15,7 +15,7 @@ class TraeOssAgent(CodeAgent):
     binary = "trae-cli"
 
     def install(self, *, scope: str = "user") -> InstallResult:
-        commit = os.environ.get("TRAE_AGENT_COMMIT")
+        commit = os.environ.get("CAKIT_TRAE_OSS_COMMIT")
         url = "git+https://github.com/bytedance/trae-agent.git"
         if commit:
             url = f"{url}@{commit}"
@@ -33,10 +33,12 @@ class TraeOssAgent(CodeAgent):
     def configure(self) -> Optional[str]:
         api_key = os.environ.get("TRAE_AGENT_API_KEY")
         api_base = os.environ.get("TRAE_AGENT_API_BASE")
-        model = os.environ.get("TRAE_AGENT_MODEL") or "gpt-4.1"
+        model = os.environ.get("TRAE_AGENT_MODEL")
+        if not api_key or not api_base or not model:
+            return None
 
         def yaml_quote(value: Optional[str]) -> str:
-            return json.dumps(value or "")
+            return json.dumps(value)
 
         config = (
             "agents:\n"
@@ -69,7 +71,9 @@ class TraeOssAgent(CodeAgent):
         self._write_text(path, config)
         return str(path)
 
-    def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
+    def run(
+        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+    ) -> RunResult:
         images = images or []
         if images:
             message = "image input is not supported for trae-oss in cakit run."
@@ -110,7 +114,7 @@ class TraeOssAgent(CodeAgent):
         output = result.output
         usage, tool_calls = self._parse_trajectory(trajectory_file)
         output_path = self._write_output(self.name, output)
-        model_name = os.environ.get("TRAE_AGENT_MODEL") or "gpt-4.1"
+        model_name = os.environ.get("TRAE_AGENT_MODEL")
         models_usage = self._ensure_models_usage({}, usage, model_name)
         response = self._extract_response(output, trajectory_file)
         return RunResult(

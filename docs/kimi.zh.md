@@ -1,0 +1,93 @@
+# Kimi Agent（cakit）
+
+本文说明 cakit 如何安装和配置 Kimi Code CLI。
+
+## 安装
+
+`cakit install kimi` 使用 Kimi 官方安装脚本：
+
+```bash
+curl -LsSf https://code.kimi.com/install.sh | bash
+```
+
+上游安装脚本会处理运行时依赖初始化（包括在缺少 `uv` 时自动安装）。
+
+## API 配置（`cakit configure kimi`）
+
+当设置了 `KIMI_API_KEY` 时，cakit 会按 Kimi CLI 的 provider/model 配置格式写入 `~/.kimi/config.toml`。
+
+环境变量映射如下：
+
+| 环境变量 | 含义 | 要求 |
+| --- | --- | --- |
+| `KIMI_API_KEY` | Provider API Key | 必填 |
+| `KIMI_BASE_URL` | Provider base URL | 必填 |
+| `KIMI_MODEL_NAME` | 上游模型名（`model`），用于运行时 `--model` | 可选 |
+| `CAKIT_KIMI_PROVIDER_TYPE` | Kimi 配置中的 provider `type` | 必填（`kimi`、`openai_legacy`、`openai_responses`） |
+
+若上表中的必填变量有任意缺失，或 `CAKIT_KIMI_PROVIDER_TYPE` 不在允许集合中，`cakit configure kimi` 会返回 `config_path: null`，并且不会写配置文件。
+
+cakit 仅写 provider 配置：
+- provider key：`kimi`
+- `cakit configure kimi` 不写 `default_model`，也不写 `[models.*]` 区块
+
+参考：
+- 环境变量覆盖：https://moonshotai.github.io/kimi-cli/zh/configuration/overrides.html#%E7%8E%AF%E5%A2%83%E5%8F%98%E9%87%8F%E8%A6%86%E7%9B%96
+
+## 图像输入
+
+`cakit run kimi --image <path>` 已支持。
+
+- 无图场景：cakit 使用 print mode 的 `stream-json` 输入。
+- 有图场景：cakit 切换为 print mode 的 `--prompt` 输入，并在 prompt 中注入图片绝对路径，明确要求 Kimi 先对每个文件调用 `ReadMediaFile` 再回答。
+- 图像场景下，如果当前 shell 没有设置 `KIMI_MODEL_CAPABILITIES`，cakit 会在该次运行进程里临时设置为 `image_in`，以便 `ReadMediaFile` 工具可用。
+- 是否能真正读图仍取决于所选模型能力（`image_in`）。若模型不支持图像输入，Kimi 可能失败或直接返回不支持读图。
+
+## Agent Swarm
+
+Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：
+
+- `Can you launch multiple subagents to solve this and summarize the results?`
+
+## 运行时模型与更新行为
+
+- cakit 会始终通过命令行参数传模型：`kimi ... --model <KIMI_MODEL_NAME>`。
+- `cakit run kimi --model <name>` 在该次运行中优先（会在 run 进程内覆盖 `KIMI_MODEL_NAME`，运行后恢复）。
+- cakit 在运行 Kimi 时始终设置 `KIMI_CLI_NO_AUTO_UPDATE=1`。
+
+## SearchWeb 与 FetchURL 行为
+
+根据 Kimi CLI 对 provider 的说明：
+
+- 原生 Kimi provider 模式（`type = "kimi"`）：`SearchWeb` 和 `FetchURL` 都由 Kimi 服务支持。
+- 第三方 OpenAI 兼容模式（`type = "openai_legacy"` 或 `type = "openai_responses"`）：`SearchWeb` 不支持；`FetchURL` 仍可用（本地 URL 抓取）。
+
+参考：
+- 搜索与抓取服务行为：https://moonshotai.github.io/kimi-cli/zh/configuration/providers.html#%E6%90%9C%E7%B4%A2%E5%92%8C%E6%8A%93%E5%8F%96%E6%9C%8D%E5%8A%A1
+
+## 统计字段提取
+
+`cakit run kimi` 对 `response`、`models_usage`、`llm_calls`、`tool_calls` 采用严格解析，顺序如下：
+
+1. 优先按精确 `session_id` 读取 `~/.kimi/sessions/*/<session_id>/wire.jsonl`：
+   - `StatusUpdate.payload.token_usage` -> token usage（`models_usage`）
+   - `SubagentEvent.event.type == "StatusUpdate"` 的 token usage 也会聚合进总量
+   - `StatusUpdate` + subagent `StatusUpdate` 条数 -> `llm_calls`
+   - `ToolCall` + subagent `ToolCall` 条数 -> `tool_calls`
+   - 如存在 `payload.model` / `payload.model_name` / `payload.modelName`，则读取模型名
+2. 若 session 数据仍不完整，再解析 stdout `stream-json`，且只读取明确字段。
+3. 若 session wire 里有 usage 但没有模型字段，再按精确 `session_id` 在 `~/.kimi/logs/kimi.log` 中定位 `Created new session: <session_id>` 区段，并读取同区段的 `Using LLM model: ... model='...'`。
+4. 不写模型名占位值；若运行产物中提取不到模型名，`models_usage` 保持为空对象。
+
+模型名仅从本次运行产物提取（stdout payload / session 日志），不从配置或输入参数回填。
+`prompt_tokens` 由 Kimi 的输入 usage 字段（`input_other`、`input_cache_read`、`input_cache_creation`）汇总得到。
+若上游这些字段返回 `0`，则 `prompt_tokens` 可能为 `0`。
+
+若提取异常，优先排查 `output_path` / `raw_output` 以及 Kimi 的 session/log 文件。
+
+## 推理强度参数映射
+
+在 `cakit run kimi ... --reasoning-effort <value>` 中：
+
+- `thinking` -> 追加 `--thinking`
+- `none` -> 追加 `--no-thinking`

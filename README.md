@@ -27,8 +27,9 @@ Use `--scope global` to run `npm install -g` (may require sudo).
 
 | Name | Website | Docs | Notes |
 | --- | --- | --- | --- |
-| codex | [OpenAI Codex](https://openai.com/codex) | [Codex CLI](https://developers.openai.com/codex/cli) | — |
 | claude | [Claude](https://www.anthropic.com/claude) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) | — |
+| codex | [OpenAI Codex](https://openai.com/codex) | [Codex CLI](https://developers.openai.com/codex/cli) | — |
+| cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — |
 | copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — |
 | gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | — |
 | kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | — |
@@ -36,22 +37,21 @@ Use `--scope global` to run `npm install -g` (may require sudo).
 | openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | — |
 | swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | — |
 | trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | OSS Trae Agent to distinguish from other Trae products |
-| cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — |
 
 #### Login
 
 For OAuth, use the official CLI login. For API keys, copy `.env.template` to `.env`, then run `set -a; source .env; set +a` in the current shell (and rerun it after changing `.env`).
 
-- codex: `codex login`
 - claude: run `claude`, then `/login` in the interactive UI; `ANTHROPIC_AUTH_TOKEN` is also supported
+- codex: `codex login`
+- cursor: `cursor-agent login`
 - copilot: run `copilot`, then `/login`; `GH_TOKEN`/`GITHUB_TOKEN` are also supported
 - gemini: run `gemini` and choose Login with Google
-- kimi: run `kimi`, then `/login` in the CLI
+- kimi: OAuth via `kimi` then `/login`, or API via `KIMI_API_KEY` + `cakit configure kimi`
 - qwen: run `qwen` and follow the browser login flow
 - openhands: API only (see `.env.template`)
 - swe-agent: API only (see `.env.template`)
 - trae-oss: API only (see `.env.template`)
-- cursor: `cursor-agent login`
 
 ### Generate .env template
 
@@ -75,13 +75,15 @@ Note: Claude Code reads environment variables directly; `cakit configure claude`
 ### Run and output JSON stats
 
 ```bash
-cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>]
+cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--model <base_llm_model>] [--reasoning-effort <value>]
 # multiple images: repeat --image or use comma-separated paths
 ```
 
 If the agent is not installed, `cakit run` will auto-run `cakit install <agent>` (user scope) with a notice.
 `--model` overrides the base model for the current run (via agent model env vars and/or model CLI flags).
 See `docs/model_override.md` for per-agent details.
+`--reasoning-effort` is a unified per-run reasoning/thinking control.
+See `docs/reasoning_effort.md` for per-agent options and mappings.
 Output fields:
 - `agent`, `agent_version`
 - `runtime_seconds`
@@ -96,25 +98,30 @@ Output fields:
 - `raw_output` (captured raw output from the coding agent CLI)
 
 Telemetry:
-- Qwen Code: local log `~/.qwen/telemetry.log`
-- Gemini CLI: local log `~/.gemini/telemetry.log`
-- Codex / Claude Code: exported via OpenTelemetry (OTEL, requires OTEL endpoint); log address is the OTEL endpoint
+- Claude Code / Codex: exported via OpenTelemetry (OTEL, requires OTEL endpoint); log address is the OTEL endpoint
 - Copilot CLI: local logs in `~/.copilot/logs/` by default (cakit uses `--log-dir` when running)
+- Gemini CLI: local log `~/.gemini/telemetry.log`
+- Qwen Code: local log `~/.qwen/telemetry.log`
 
 Image input support:
 
 | Agent | Image input |
 | --- | --- |
-| codex | Supported via `--image` (multiple images allowed) |
-| qwen | Supported via `@{path}` image injection in prompt |
-| gemini | Supported via `read_many_files` for image files (cakit injects file paths) |
 | claude | Supported via `--image` (cakit injects image paths and Claude Code reads them via the `Read` tool) |
+| codex | Supported via `--image` (multiple images allowed) |
+| cursor | No image input documented in CLI docs |
 | copilot | No image input documented in the CLI docs |
-| kimi | No image input documented in CLI docs |
+| gemini | Supported via `read_many_files` for image files (cakit injects file paths) |
+| kimi | Supported via `--image` (cakit injects local image paths in prompt and asks Kimi to read them with `ReadMediaFile`; requires an `image_in` capable model) |
+| qwen | Supported via `@{path}` image injection in prompt |
 | openhands | No image input documented in CLI docs |
 | swe-agent | No image input documented in CLI docs |
 | trae-oss | No image input documented in CLI docs |
-| cursor | No image input documented in CLI docs |
+
+Kimi Agent Swarm:
+- Kimi supports launching multiple subagents in one run.
+- In prompt text, use wording like `launch multiple subagents` (for example: "Can you launch multiple subagents to solve this task and summarize the results?").
+- For Kimi runs, `models_usage`/`llm_calls`/`tool_calls` aggregate subagent events from session logs when available.
 
 ### Skills
 
@@ -156,24 +163,27 @@ Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, 
 - `CAKIT_OUTPUT_DIR`: override log output directory.
 - `CAKIT_TRAE_TRAJECTORY`: override Trae trajectory output path.
 - `CAKIT_NPM_PREFIX`: override the user install prefix for npm-based agents (default: `~/.npm-global`).
-- `CODEX_USE_OAUTH`: if set (e.g., `1`), Codex uses OAuth login instead of API key.
+- `CAKIT_CODEX_USE_OAUTH`: if set (e.g., `1`), Codex uses OAuth login instead of API key.
+- `CAKIT_CLAUDE_USE_OAUTH`: if set (e.g., `1`) and both Claude API key/token are present, prefer OAuth token.
+- `CAKIT_KIMI_PROVIDER_TYPE`: Kimi provider `type` (`kimi`, `openai_legacy`, or `openai_responses`).
+- `CAKIT_GEMINI_GOOGLE_API_KEY` / `CAKIT_QWEN_GOOGLE_API_KEY`: per-agent overrides to avoid `GOOGLE_API_KEY` collisions.
 
 ## Test Coverage Matrix
 
-This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not supported in headless mode adopted by `cakit run` but supported in interactive/GUI, blank = untested.
+This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not supported in headless mode adopted by `cakit run` but supported in interactive/GUI, ⚠ = test failed or blocked by missing auth/config/runtime prerequisites, blank = untested.
 
 | Agent | OAuth | API | Image Input | MCP | Skills | Telemetry | Web Access | Test Version |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| codex | ✓ | ✓ | ✓ |  |  |  |  | 0.95.0 |
-| claude |  | ✓ | ✓ |  |  |  |  | 2.1.31 |
+| claude |  | ✓ | ✓ |  |  |  | ⚠ | 2.1.37 |
+| codex | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.98.0 |
+| cursor |  |  |  |  |  |  |  |  |
 | copilot |  |  |  |  |  |  |  |  |
 | gemini |  |  |  |  |  |  |  |  |
-| kimi |  |  | ✗* |  |  |  |  |  |
+| kimi |  | ✓ | ⚠ |  |  |  | ✓ | 1.9.0 |
 | qwen |  |  |  |  |  |  |  |  |
 | openhands | ✗ |  |  |  |  |  |  |  |
 | swe-agent | ✗ |  |  |  |  |  |  |  |
 | trae-oss | ✗ |  |  |  |  |  |  |  |
-| cursor |  |  |  |  |  |  |  |  |
 
 ## Todo
 
@@ -183,5 +193,6 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 - [ ] Support MCP
 - [ ] Support balanced mode
 - [ ] Support installing specific versions
+- [ ] Validate Kimi token accounting semantics (including subagent aggregation)
 
 Note: currently only supports Linux amd64.

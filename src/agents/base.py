@@ -41,7 +41,9 @@ class CodeAgent(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def run(self, prompt: str, images: Optional[list[Path]] = None) -> "RunResult":
+    def run(
+        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+    ) -> "RunResult":
         raise NotImplementedError
 
     @abc.abstractmethod

@@ -40,7 +40,7 @@ def _run_and_assert_codex(use_oauth: bool) -> None:
         elif use_oauth:
             assert real_auth_path.exists(), f"missing OAuth auth file at {real_auth_path}; run `codex login`."
         env_updates = {
-            "CODEX_USE_OAUTH": "1" if use_oauth else "0",
+            "CAKIT_CODEX_USE_OAUTH": "1" if use_oauth else "0",
             "CODEX_HOME": str(codex_home),
         }
         if use_oauth:

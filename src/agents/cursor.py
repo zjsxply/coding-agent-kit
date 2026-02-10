@@ -28,7 +28,9 @@ class CursorAgent(CodeAgent):
     def configure(self) -> Optional[str]:
         return None
 
-    def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
+    def run(
+        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+    ) -> RunResult:
         images = images or []
         if images:
             message = "image input is not supported for cursor-agent in cakit run."

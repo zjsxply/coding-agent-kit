@@ -49,7 +49,9 @@ class GeminiAgent(CodeAgent):
         settings_path.write_text(json.dumps(data, ensure_ascii=True, indent=2), encoding="utf-8")
         return str(settings_path)
 
-    def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
+    def run(
+        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+    ) -> RunResult:
         model = os.environ.get("GEMINI_MODEL") or os.environ.get("GOOGLE_GEMINI_MODEL")
         images = images or []
         if images:
@@ -70,7 +72,7 @@ class GeminiAgent(CodeAgent):
             self.configure()
         env = {
             "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY"),
-            "GOOGLE_API_KEY": os.environ.get("GOOGLE_API_KEY"),
+            "GOOGLE_API_KEY": os.environ.get("CAKIT_GEMINI_GOOGLE_API_KEY"),
             "GOOGLE_GEMINI_BASE_URL": os.environ.get("GOOGLE_GEMINI_BASE_URL"),
             "GOOGLE_CLOUD_PROJECT": os.environ.get("GOOGLE_CLOUD_PROJECT"),
         }

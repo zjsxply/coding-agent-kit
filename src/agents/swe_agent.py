@@ -44,7 +44,9 @@ class SweAgent(CodeAgent):
         self._write_text(path, config)
         return str(path)
 
-    def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
+    def run(
+        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+    ) -> RunResult:
         images = images or []
         if images:
             message = "image input is not supported for swe-agent in cakit run."
@@ -126,7 +128,7 @@ class SweAgent(CodeAgent):
         return None
 
     def _resolve_version(self) -> str:
-        configured = os.environ.get("SWE_AGENT_VERSION")
+        configured = os.environ.get("CAKIT_SWE_AGENT_VERSION")
         if configured:
             return configured
         url = "https://api.github.com/repos/SWE-agent/SWE-agent/releases/latest"
@@ -136,12 +138,12 @@ class SweAgent(CodeAgent):
         tag = (payload.get("tag_name") or "").strip()
         if not tag:
             raise RuntimeError("Failed to resolve latest SWE-agent release tag from GitHub.")
-        os.environ["SWE_AGENT_VERSION"] = tag
+        os.environ["CAKIT_SWE_AGENT_VERSION"] = tag
         return tag
 
     def _github_headers(self) -> Dict[str, str]:
         headers = {"Accept": "application/vnd.github+json"}
-        token = os.environ.get("GITHUB_TOKEN")
+        token = os.environ.get("CAKIT_SWE_AGENT_GITHUB_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
         return headers

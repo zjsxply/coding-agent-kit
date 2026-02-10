@@ -17,7 +17,7 @@ PROMPT = (
     "For each of the two images above: (1) briefly describe what you see, and (2) list any visible words/text."
 )
 
-IMAGE_SUPPORT = {"claude", "codex"}
+IMAGE_SUPPORT = {"claude", "codex", "kimi"}
 
 
 def _run_cli(agent: str) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -56,7 +56,13 @@ class TestImageInput(unittest.TestCase):
                     os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
                 ):
                     continue
+                if name == "kimi":
+                    kimi_config = Path.home() / ".kimi" / "config.toml"
+                    if not (os.environ.get("KIMI_API_KEY") or kimi_config.exists()):
+                        continue
                 agent = create_agent(name, workdir=TEST_DIR)
+                if name == "kimi" and not agent.is_installed():
+                    continue
                 if name in IMAGE_SUPPORT:
                     self.assertTrue(agent.is_installed(), f"{name} CLI is not installed")
                 run_result = agent.run(PROMPT, images=[IMAGE_1, IMAGE_2])

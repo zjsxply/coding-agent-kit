@@ -60,8 +60,6 @@ class CodexAgent(CodeAgent):
         otel_protocol = os.environ.get("CODEX_OTEL_PROTOCOL")
         otel_env = os.environ.get("CODEX_OTEL_ENVIRONMENT")
         otel_log_prompt = os.environ.get("CODEX_OTEL_LOG_USER_PROMPT")
-        if otel_endpoint and not otel_exporter:
-            otel_exporter = "otlp-http"
         if otel_exporter:
             lines.append("")
             lines.append("[otel]")
@@ -86,7 +84,9 @@ class CodexAgent(CodeAgent):
         self._write_text(config_path, config)
         return str(config_path)
 
-    def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
+    def run(
+        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+    ) -> RunResult:
         images = images or []
         if self._use_oauth() and not self._auth_path().exists():
             message = f"codex OAuth is enabled but auth file not found at {self._auth_path()}; run `codex login`."
@@ -127,6 +127,8 @@ class CodexAgent(CodeAgent):
         model = os.environ.get("CODEX_MODEL")
         if model:
             cmd.extend(["--model", model])
+        if reasoning_effort:
+            cmd.extend(["-c", f"model_reasoning_effort={reasoning_effort}"])
         if images:
             image_arg = ",".join(str(path) for path in images)
             cmd.extend(["--image", image_arg])
@@ -163,7 +165,7 @@ class CodexAgent(CodeAgent):
         return None
 
     def _use_oauth(self) -> bool:
-        value = os.environ.get("CODEX_USE_OAUTH")
+        value = os.environ.get("CAKIT_CODEX_USE_OAUTH")
         if value is None:
             return False
         return str(value).strip().lower() in {"1", "true", "yes", "y"}

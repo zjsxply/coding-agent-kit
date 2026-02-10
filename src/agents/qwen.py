@@ -30,7 +30,7 @@ class QwenAgent(CodeAgent):
 
     def configure(self) -> Optional[str]:
         tavily_key = os.environ.get("TAVILY_API_KEY")
-        google_key = os.environ.get("GOOGLE_API_KEY")
+        google_key = os.environ.get("CAKIT_QWEN_GOOGLE_API_KEY")
         google_se_id = os.environ.get("GOOGLE_SEARCH_ENGINE_ID")
         providers = [{"type": "dashscope"}]
         default_provider = "dashscope"
@@ -63,7 +63,9 @@ class QwenAgent(CodeAgent):
         self._write_text(path, json.dumps(settings, ensure_ascii=True, indent=2))
         return str(path)
 
-    def run(self, prompt: str, images: Optional[list[Path]] = None) -> RunResult:
+    def run(
+        self, prompt: str, images: Optional[list[Path]] = None, reasoning_effort: Optional[str] = None
+    ) -> RunResult:
         images = images or []
         if images:
             image_refs: List[str] = []
@@ -78,13 +80,14 @@ class QwenAgent(CodeAgent):
         qwen_key = os.environ.get("QWEN_OPENAI_API_KEY")
         qwen_base = os.environ.get("QWEN_OPENAI_BASE_URL")
         qwen_model = os.environ.get("QWEN_OPENAI_MODEL") or os.environ.get("QWEN_MODEL")
+        qwen_google_api_key = os.environ.get("CAKIT_QWEN_GOOGLE_API_KEY")
         env = {
             "OPENAI_API_KEY": qwen_key,
             "OPENAI_API_BASE": qwen_base,
             "OPENAI_BASE_URL": qwen_base,
             "OPENAI_MODEL": qwen_model,
             "TAVILY_API_KEY": os.environ.get("TAVILY_API_KEY"),
-            "GOOGLE_API_KEY": os.environ.get("GOOGLE_API_KEY"),
+            "GOOGLE_API_KEY": qwen_google_api_key,
             "GOOGLE_SEARCH_ENGINE_ID": os.environ.get("GOOGLE_SEARCH_ENGINE_ID"),
         }
         cmd = [
