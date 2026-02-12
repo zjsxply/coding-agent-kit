@@ -74,7 +74,9 @@
 - No output truncation (no `_preview`); output field is `raw_output`.
 - `get_version` must not use fallbacks.
 - Do not set hardcoded default values for environment variables in code (for example, avoid `os.environ.get("X") or "default"`). Read env vars as-is; if a required value is missing, fail clearly or skip writing config.
-- `--model` override must not mutate current process `os.environ`; only apply overrides in cakit-managed child process environment.
+- `--model` override must not mutate current process `os.environ`.
+- Model selection for `cakit run` must use this precedence: `--model` first, then `os.environ`.
+- `base_env` is only for child process environment passthrough; do not rely on writing model overrides into `base_env` for model resolution.
 - Keep upstream coding agent environment variable names unchanged. If an upstream name is duplicated across different coding agents, add a coding-agent-specific prefix to disambiguate.
 - OpenHands must use upstream env names `LLM_API_KEY`, `LLM_MODEL`, and `LLM_BASE_URL` only. Do not add or support `OPENHANDS_*` aliases.
 - Any environment variable defined only by cakit (not by upstream coding agents) must use the `CAKIT_` prefix.

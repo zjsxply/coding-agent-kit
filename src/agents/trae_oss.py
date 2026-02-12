@@ -80,6 +80,7 @@ class TraeOssAgent(CodingAgent):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         env = {
@@ -103,11 +104,14 @@ class TraeOssAgent(CodingAgent):
             "--trajectory-file",
             str(trajectory_file),
         ]
+        model = model_override or os.environ.get("TRAE_AGENT_MODEL")
+        if model:
+            cmd.extend(["--model", model])
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
         usage, tool_calls = self._parse_trajectory(trajectory_file)
         output_path = self._write_output(self.name, output)
-        model_name = os.environ.get("TRAE_AGENT_MODEL")
+        model_name = model
         models_usage = self._ensure_models_usage({}, usage, model_name)
         response = self._extract_response(output, trajectory_file)
         return RunResult(

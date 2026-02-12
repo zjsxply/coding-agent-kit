@@ -37,6 +37,7 @@ class ClaudeAgent(CodingAgent):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
@@ -52,11 +53,17 @@ class ClaudeAgent(CodingAgent):
                 "Use the Read tool to open each image file, then answer the user question:\n"
                 f"{prompt}"
             )
-        model = os.environ.get("ANTHROPIC_MODEL")
-        telemetry_enabled = os.environ.get("CLAUDE_CODE_ENABLE_TELEMETRY")
+        model = model_override or os.environ.get("ANTHROPIC_MODEL")
+        telemetry_enabled_raw = os.environ.get("CLAUDE_CODE_ENABLE_TELEMETRY")
         otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-        if otel_endpoint and telemetry_enabled is None:
-            telemetry_enabled = "1"
+        telemetry_enabled = bool(otel_endpoint)
+        telemetry_enabled_env: Optional[str] = None
+        if telemetry_enabled_raw is None:
+            if telemetry_enabled:
+                telemetry_enabled_env = "1"
+        else:
+            telemetry_enabled_env = telemetry_enabled_raw
+            telemetry_enabled = telemetry_enabled_raw.strip().lower() in {"1", "true", "yes", "y", "on"}
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
         use_oauth_raw = os.environ.get("CAKIT_CLAUDE_USE_OAUTH")
@@ -73,7 +80,7 @@ class ClaudeAgent(CodingAgent):
             "ANTHROPIC_API_KEY": api_key,
             "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL"),
             "ANTHROPIC_AUTH_TOKEN": auth_token,
-            "CLAUDE_CODE_ENABLE_TELEMETRY": telemetry_enabled,
+            "CLAUDE_CODE_ENABLE_TELEMETRY": telemetry_enabled_env,
             "CLAUDE_CODE_EFFORT_LEVEL": reasoning_effort,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "OTEL_EXPORTER_OTLP_ENDPOINT": otel_endpoint,

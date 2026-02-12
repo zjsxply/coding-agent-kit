@@ -57,9 +57,10 @@ class GeminiAgent(CodingAgent):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        model = os.environ.get("GEMINI_MODEL")
+        model = model_override or os.environ.get("GEMINI_MODEL")
         images = images or []
         videos = videos or []
         if images or videos:

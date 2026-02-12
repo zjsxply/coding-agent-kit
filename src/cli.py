@@ -14,25 +14,6 @@ from .agents import create_agent, list_agents
 from .utils import load_env_file
 
 
-FRAMEWORK_ENV_KEYS: Dict[str, tuple[str, ...]] = {
-    "claude": (
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "CLAUDE_CODE_SUBAGENT_MODEL",
-    ),
-    "codex": ("CODEX_MODEL",),
-    "copilot": ("COPILOT_MODEL",),
-    "cursor": ("CURSOR_MODEL",),
-    "gemini": ("GEMINI_MODEL",),
-    "kimi": ("KIMI_MODEL_NAME",),
-    "openhands": ("LLM_MODEL",),
-    "qwen": ("QWEN_OPENAI_MODEL",),
-    "swe-agent": ("SWE_AGENT_MODEL",),
-    "trae-oss": ("TRAE_AGENT_MODEL",),
-}
-
 REASONING_EFFORT_OPTIONS: Dict[str, tuple[str, ...]] = {
     "codex": ("minimal", "low", "medium", "high", "xhigh"),
     "claude": ("low", "medium", "high", "max"),
@@ -82,8 +63,8 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--model",
         help=(
-            "Override the base LLM model for this run by setting agent-specific model environment "
-            "variables and/or passing model flags where supported."
+            "Override the base LLM model for this run. `--model` takes precedence over "
+            "agent-specific model values from the current shell environment."
         ),
     )
     run.add_argument(
@@ -162,14 +143,13 @@ def _expand_media_args(items: list[str]) -> list[Path]:
     return expanded
 
 
-def _apply_model_override(agent_name: str, model: Optional[str], base_env: Optional[Dict[str, str]]) -> None:
-    if not model:
-        return
-    env_keys = FRAMEWORK_ENV_KEYS.get(agent_name, ())
-    for key in env_keys:
-        if base_env is not None:
-            base_env[key] = model
-    return
+def _normalize_model_override(model: Optional[str]) -> Optional[str]:
+    if model is None:
+        return None
+    normalized = model.strip()
+    if not normalized:
+        return None
+    return normalized
 
 
 def _normalize_reasoning_effort(agent_name: str, reasoning_effort: Optional[str]) -> Optional[str]:
@@ -266,7 +246,7 @@ def _run_agent(
             payload["supported_reasoning_effort"] = list(options)
         sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
         return 2
-    _apply_model_override(agent_name, model, base_env)
+    resolved_model_override = _normalize_model_override(model)
     try:
         agent = create_agent(agent_name, workdir=workdir)
         if not agent.is_installed():
@@ -281,6 +261,7 @@ def _run_agent(
             images=image_paths,
             videos=video_paths,
             reasoning_effort=resolved_reasoning_effort,
+            model_override=resolved_model_override,
             base_env=base_env,
         )
         sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n")

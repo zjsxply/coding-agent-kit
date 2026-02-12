@@ -71,6 +71,7 @@ class QwenAgent(CodingAgent):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
@@ -82,7 +83,7 @@ class QwenAgent(CodingAgent):
         telemetry_path = str(Path.home() / ".qwen" / "telemetry.log")
         qwen_key = os.environ.get("QWEN_OPENAI_API_KEY")
         qwen_base = os.environ.get("QWEN_OPENAI_BASE_URL")
-        qwen_model = os.environ.get("QWEN_OPENAI_MODEL")
+        qwen_model = model_override or os.environ.get("QWEN_OPENAI_MODEL")
         if isinstance(qwen_model, str):
             qwen_model = qwen_model.strip() or None
         qwen_google_api_key = os.environ.get("CAKIT_QWEN_GOOGLE_API_KEY")

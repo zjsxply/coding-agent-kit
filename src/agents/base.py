@@ -50,6 +50,7 @@ class CodingAgent(abc.ABC):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> "RunResult":
         """Template method: handles shared pre-checks, then delegates to _run_impl."""
@@ -61,6 +62,7 @@ class CodingAgent(abc.ABC):
             images=images,
             videos=videos,
             reasoning_effort=reasoning_effort,
+            model_override=model_override,
             base_env=base_env,
         )
 
@@ -71,6 +73,7 @@ class CodingAgent(abc.ABC):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> "RunResult":
         """Agent-specific run implementation. Assumes shared checks already ran."""

@@ -93,6 +93,7 @@ class CodexAgent(CodingAgent):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
@@ -134,7 +135,7 @@ class CodexAgent(CodingAgent):
             "--output-last-message",
             str(last_message_path),
         ]
-        model = os.environ.get("CODEX_MODEL")
+        model = model_override or os.environ.get("CODEX_MODEL")
         if model:
             cmd.extend(["--model", model])
         if reasoning_effort:

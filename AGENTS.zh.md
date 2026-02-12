@@ -74,7 +74,9 @@
 - 不做输出截断（无需 `_preview`）；输出字段为 `raw_output`。
 - `get_version` 不做 fallback。
 - 代码中不要为环境变量设置硬编码默认值（例如避免 `os.environ.get("X") or "default"`）。环境变量应按原值读取；若必填项缺失，应明确失败或跳过写配置。
-- `--model` 覆盖不得修改当前进程的 `os.environ`；只允许在 cakit 管理的子进程环境中生效。
+- `--model` 覆盖不得修改当前进程的 `os.environ`。
+- `cakit run` 的模型选择优先级必须是：先 `--model`，再 `os.environ`。
+- `base_env` 仅用于子进程环境透传；不要依赖把 model override 写进 `base_env` 来做模型决策。
 - 所有被原始 coding agent 采用的环境变量名称都保持原样；如有在不同 coding agent 里重复的，则加上 coding agent 前缀以消歧。
 - OpenHands 仅使用上游环境变量 `LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`。禁止新增或兼容 `OPENHANDS_*` 别名。
 - 所有只在 cakit 里定义、用于 cakit 的环境变量都加上 `CAKIT_` 前缀。

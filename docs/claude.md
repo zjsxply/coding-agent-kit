@@ -6,7 +6,7 @@ This document explains how cakit runs Claude Code and extracts metadata.
 - `cakit install claude --version <npm_version_or_tag>` installs `@anthropic-ai/claude-code@<version>`.
 
 **Sources**
-- CLI stdout from `~/.npm-global/bin/claude -p --output-format stream-json --verbose ...` (JSONL-like events, one JSON object per line).
+- CLI stdout from `claude -p --output-format stream-json --verbose ...` (JSONL-like events, one JSON object per line).
 - Environment variables such as `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CAKIT_CLAUDE_USE_OAUTH`, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`/`ANTHROPIC_DEFAULT_SONNET_MODEL`/`ANTHROPIC_DEFAULT_HAIKU_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 **Image Input**
@@ -22,20 +22,21 @@ This document explains how cakit runs Claude Code and extracts metadata.
 - `max` availability depends on the selected Claude model; unsupported models may return an upstream error.
 
 **Field Mapping**
-- `agent_version`: from `~/.npm-global/bin/claude --version`.
+- `agent_version`: from `claude --version`.
 - `runtime_seconds`: from the final `{"type":"result", ...}` payload field `duration_ms / 1000`.
 - `response`: from the `result` payload field `result`.
 - `models_usage`: from the `result` payload field `modelUsage` (per-model `inputTokens`/`outputTokens` plus `cacheReadInputTokens`/`cacheCreationInputTokens`, which are required and summed into `prompt_tokens`).
 - `tool_calls`: count of `{"type":"assistant", "message": {"content": [{"type":"tool_use", ...}, ...]}}` blocks.
 - `llm_calls`: from the `result` payload field `num_turns`.
 - `total_cost`: from the `result` payload field `total_cost_usd`.
-- `telemetry_log`: `OTEL_EXPORTER_OTLP_ENDPOINT` when both `CLAUDE_CODE_ENABLE_TELEMETRY` and `OTEL_EXPORTER_OTLP_ENDPOINT` are set.
+- `telemetry_log`: `OTEL_EXPORTER_OTLP_ENDPOINT` when telemetry is enabled and the endpoint is present.
 - `output_path`/`raw_output`: captured stdout/stderr from the Claude Code run.
 - `trajectory_path`: formatted, human-readable trace built from the Claude Code stdout/stderr stream JSON and rendered as YAML (no truncation).
 
 **Notes**
 - cakit sets `IS_SANDBOX=1` for Claude Code runs so `--dangerously-skip-permissions` can be used in root/sudo environments.
 - `CAKIT_CLAUDE_USE_OAUTH` is the cakit switch for choosing OAuth when both API key and auth token are present.
+- Telemetry behavior: if `CLAUDE_CODE_ENABLE_TELEMETRY` is unset and `OTEL_EXPORTER_OTLP_ENDPOINT` is set, cakit enables telemetry for the run; if `CLAUDE_CODE_ENABLE_TELEMETRY` is explicitly set, that value is respected.
 - cakit always sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` for Claude runs.
 - Standard network actions (for example `curl`) generally work when the runtime/network policy allows them.
 - With third-party Anthropic-compatible APIs, Web Search tool support is typically unavailable even if basic network access works.

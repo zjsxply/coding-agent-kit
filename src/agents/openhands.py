@@ -45,9 +45,10 @@ class OpenHandsAgent(CodingAgent):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        env, env_error = self._build_run_env()
+        env, env_error = self._build_run_env(model_override=model_override)
         if env_error is not None:
             output_path = self._write_output(self.name, env_error)
             trajectory_path = self._write_trajectory(
@@ -128,9 +129,9 @@ class OpenHandsAgent(CodingAgent):
             return text
         return None
 
-    def _build_run_env(self) -> tuple[Dict[str, str], Optional[str]]:
+    def _build_run_env(self, *, model_override: Optional[str] = None) -> tuple[Dict[str, str], Optional[str]]:
         api_key = os.environ.get("LLM_API_KEY")
-        model = os.environ.get("LLM_MODEL")
+        model = model_override or os.environ.get("LLM_MODEL")
         base_url = os.environ.get("LLM_BASE_URL")
 
         missing: list[str] = []

@@ -78,12 +78,13 @@ class KimiAgent(CodingAgent):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
         videos = videos or []
         run_started = time.time()
-        requested_model_name = os.environ.get("KIMI_MODEL_NAME")
+        requested_model_name = model_override or os.environ.get("KIMI_MODEL_NAME")
         session_id = str(uuid.uuid4())
         env = {
             "KIMI_API_KEY": os.environ.get("KIMI_API_KEY"),

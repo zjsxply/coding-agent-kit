@@ -6,7 +6,7 @@
 - `cakit install claude --version <npm_version_or_tag>` 会安装 `@anthropic-ai/claude-code@<version>`。
 
 **数据来源**
-- `~/.npm-global/bin/claude -p --output-format stream-json --verbose ...` 的 stdout（每行一个 JSON 对象，类似 JSONL）。
+- `claude -p --output-format stream-json --verbose ...` 的 stdout（每行一个 JSON 对象，类似 JSONL）。
 - 环境变量：`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`CAKIT_CLAUDE_USE_OAUTH`、`ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`/`ANTHROPIC_DEFAULT_SONNET_MODEL`/`ANTHROPIC_DEFAULT_HAIKU_MODEL`、`CLAUDE_CODE_SUBAGENT_MODEL`、`OTEL_EXPORTER_OTLP_ENDPOINT` 等。
 
 **图像输入**
@@ -22,20 +22,21 @@
 - `max` 是否可用取决于所选 Claude 模型；模型不支持时会返回上游错误。
 
 **字段映射**
-- `agent_version`：来自 `~/.npm-global/bin/claude --version`。
+- `agent_version`：来自 `claude --version`。
 - `runtime_seconds`：来自最终 `{"type":"result", ...}` 的 `duration_ms / 1000`。
 - `response`：来自 `result` 负载的 `result` 字段。
 - `models_usage`：来自 `result` 负载的 `modelUsage`（逐模型的 `inputTokens`/`outputTokens`，以及必须存在的 `cacheReadInputTokens`/`cacheCreationInputTokens`，会加到 `prompt_tokens` 里）。
 - `tool_calls`：统计 `{"type":"assistant", "message": {"content": [{"type":"tool_use", ...}, ...]}}` 的 `tool_use` 块数量。
 - `llm_calls`：来自 `result` 负载的 `num_turns`。
 - `total_cost`：来自 `result` 负载的 `total_cost_usd`。
-- `telemetry_log`：当同时设置 `CLAUDE_CODE_ENABLE_TELEMETRY` 和 `OTEL_EXPORTER_OTLP_ENDPOINT` 时，返回该 endpoint。
+- `telemetry_log`：当 telemetry 处于启用状态且存在 `OTEL_EXPORTER_OTLP_ENDPOINT` 时，返回该 endpoint。
 - `output_path`/`raw_output`：本次运行捕获的 stdout/stderr。
 - `trajectory_path`：基于 Claude Code stdout/stderr 的 stream-json，输出为结构化 YAML 格式的人类可读轨迹文件（不做截断）。
 
 **备注**
 - cakit 会为 Claude Code 运行设置 `IS_SANDBOX=1`，以便在 root/sudo 环境下使用 `--dangerously-skip-permissions`。
 - `CAKIT_CLAUDE_USE_OAUTH` 用于在同时存在 API key 和 auth token 时选择 OAuth。
+- telemetry 行为：若未设置 `CLAUDE_CODE_ENABLE_TELEMETRY` 且设置了 `OTEL_EXPORTER_OTLP_ENDPOINT`，cakit 会在本次运行中自动启用 telemetry；若显式设置了 `CLAUDE_CODE_ENABLE_TELEMETRY`，则以该值为准。
 - cakit 在运行 Claude 时会固定设置 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`。
 - 在运行环境和网络策略允许时，常规联网动作（例如 `curl`）通常可用。
 - 使用第三方 Anthropic 兼容 API 时，即使基础联网可用，Web Search 工具通常也不可用。

@@ -53,6 +53,7 @@ class SweAgent(CodingAgent):
         images: Optional[list[Path]] = None,
         videos: Optional[list[Path]] = None,
         reasoning_effort: Optional[str] = None,
+        model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         env = {
@@ -62,7 +63,7 @@ class SweAgent(CodingAgent):
             "OPENAI_API_BASE": os.environ.get("SWE_AGENT_API_BASE"),
             "OPENAI_BASE_URL": os.environ.get("SWE_AGENT_API_BASE"),
         }
-        model = os.environ.get("SWE_AGENT_MODEL")
+        model = model_override or os.environ.get("SWE_AGENT_MODEL")
         output_dir = Path(tempfile.mkdtemp(prefix="cakit-sweagent-"))
         cmd = [
             "sweagent",
@@ -98,7 +99,7 @@ class SweAgent(CodingAgent):
         if trajectory_tool_calls is not None:
             tool_calls = trajectory_tool_calls
         output_path = self._write_output(self.name, output)
-        model_name = os.environ.get("SWE_AGENT_MODEL")
+        model_name = model
         models_usage = self._ensure_models_usage({}, usage, model_name)
         response = self._extract_response(output, output_dir)
         return RunResult(
