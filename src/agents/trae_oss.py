@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
+from ..utils import format_trace_text
 
 
 class TraeOssAgent(CodingAgent):
@@ -14,15 +15,37 @@ class TraeOssAgent(CodingAgent):
     display_name = "Trae Agent (OSS)"
     binary = "trae-cli"
 
+    def is_installed(self) -> bool:
+        if not super().is_installed():
+            return False
+        result = self._run(["trae-cli", "--version"])
+        return result.exit_code == 0 and bool(result.output.strip())
+
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
         commit = version.strip() if version and version.strip() else os.environ.get("CAKIT_TRAE_OSS_COMMIT")
         url = "git+https://github.com/bytedance/trae-agent.git"
         if commit:
             url = f"{url}@{commit}"
         if self._ensure_uv():
-            result = self._run(["uv", "tool", "install", "--python", "3.12", url])
+            result = self._run(
+                [
+                    "uv",
+                    "tool",
+                    "install",
+                    "--force",
+                    "--python",
+                    "3.12",
+                    "--with",
+                    "docker",
+                    "--with",
+                    "pexpect",
+                    "--with",
+                    "unidiff",
+                    url,
+                ]
+            )
         else:
-            result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url])
+            result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url, "docker", "pexpect", "unidiff"])
         config_path = self.configure()
         ok = result.exit_code == 0
         return InstallResult(
@@ -104,26 +127,51 @@ class TraeOssAgent(CodingAgent):
             "--trajectory-file",
             str(trajectory_file),
         ]
+        config_path = Path.home() / ".config" / "trae" / "config.yaml"
+        if config_path.exists():
+            cmd.extend(["--config-file", str(config_path)])
         model = model_override or os.environ.get("TRAE_AGENT_MODEL")
+        if isinstance(model, str):
+            model = model.strip() or None
         if model:
             cmd.extend(["--model", model])
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        usage, tool_calls = self._parse_trajectory(trajectory_file)
+
+        trajectory_payload = self._load_trajectory_payload(trajectory_file)
+        usage = self._extract_usage_from_trajectory(trajectory_payload)
+        llm_calls = self._extract_llm_calls_from_trajectory(trajectory_payload)
+        tool_calls = self._extract_tool_calls_from_trajectory(trajectory_payload)
+        model_name = self._extract_model_name_from_trajectory(trajectory_payload)
+        response = self._extract_response(output, trajectory_payload)
+
         output_path = self._write_output(self.name, output)
-        model_name = model
         models_usage = self._ensure_models_usage({}, usage, model_name)
-        response = self._extract_response(output, trajectory_file)
+        trajectory_content = self._format_trajectory_trace(
+            trajectory_file=trajectory_file,
+            raw_output=output,
+            output_path=output_path,
+        )
+        trajectory_path = self._write_trajectory(self.name, trajectory_content)
+        run_exit_code = self._resolve_strict_run_exit_code(
+            command_exit_code=result.exit_code,
+            models_usage=models_usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            response=response,
+        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
             models_usage=models_usage,
             tool_calls=tool_calls,
+            llm_calls=llm_calls,
             response=response,
-            exit_code=result.exit_code,
+            exit_code=run_exit_code,
             output_path=str(output_path),
             raw_output=output,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
@@ -133,105 +181,138 @@ class TraeOssAgent(CodingAgent):
             return text
         return None
 
-    def _parse_trajectory(self, path: Path) -> Tuple[Optional[Dict[str, int]], Optional[int]]:
+    def _load_trajectory_payload(self, path: Path) -> Optional[Dict[str, Any]]:
         if not path.exists():
-            return None, None
+            return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
-            return None, None
-        usage = self._find_usage(data)
-        tool_calls = self._count_actions(data)
-        return usage, tool_calls
-
-    def _extract_response(self, output: str, trajectory_file: Path) -> Optional[str]:
-        response = self._extract_response_from_trajectory(trajectory_file)
-        if response:
-            return response
-        if output:
-            stdout = output
-            marker = "----- STDERR -----"
-            if marker in stdout:
-                stdout = stdout.split(marker, 1)[0]
-            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-            if lines:
-                return lines[-1]
+            return None
+        if isinstance(data, dict):
+            return data
         return None
 
-    def _extract_response_from_trajectory(self, path: Path) -> Optional[str]:
-        if not path.exists():
+    def _extract_usage_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
+        interactions = self._extract_llm_interactions(payload)
+        if interactions is None:
             return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-
-        def scan_steps(items: Any) -> Optional[str]:
-            if not isinstance(items, list):
+        prompt_tokens = 0
+        completion_tokens = 0
+        for interaction in interactions:
+            response = interaction.get("response")
+            if not isinstance(response, dict):
                 return None
-            for item in reversed(items):
-                if not isinstance(item, dict):
-                    continue
-                for key in ("final_response", "final_answer", "answer", "output", "response"):
-                    value = item.get(key)
-                    if isinstance(value, str) and value.strip():
-                        return value.strip()
-                if item.get("role") == "assistant":
-                    value = item.get("content") or item.get("message") or item.get("text")
-                    if isinstance(value, str) and value.strip():
-                        return value.strip()
-            return None
-
-        for key in ("trajectory", "steps", "messages", "actions"):
-            candidate = scan_steps(data.get(key))
-            if candidate:
-                return candidate
-        return None
-
-    def _find_usage(self, payload: Any) -> Optional[Dict[str, int]]:
-        if not isinstance(payload, dict):
-            return None
-        if "usage" in payload and isinstance(payload["usage"], dict):
-            return self._normalize_usage(payload["usage"])
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"):
-            if key in payload:
-                return self._normalize_usage(payload)
-        for value in payload.values():
-            if isinstance(value, dict):
-                nested = self._find_usage(value)
-                if nested:
-                    return nested
-            if isinstance(value, list):
-                for item in value:
-                    nested = self._find_usage(item)
-                    if nested:
-                        return nested
-        return None
-
-    def _normalize_usage(self, raw: Dict[str, Any]) -> Dict[str, int]:
-        prompt = self._as_int(raw.get("prompt_tokens"))
-        completion = self._as_int(raw.get("completion_tokens"))
-        total = self._as_int(raw.get("total_tokens"))
-        if prompt is None and "input_tokens" in raw:
-            prompt = self._as_int(raw.get("input_tokens"))
-        if completion is None and "output_tokens" in raw:
-            completion = self._as_int(raw.get("output_tokens"))
-        if total is None:
-            total = (prompt or 0) + (completion or 0)
+            usage = response.get("usage")
+            if not isinstance(usage, dict):
+                return None
+            input_tokens = self._as_int(usage.get("input_tokens"))
+            output_tokens = self._as_int(usage.get("output_tokens"))
+            if input_tokens is None or output_tokens is None:
+                return None
+            prompt_tokens += input_tokens
+            completion_tokens += output_tokens
         return {
-            "prompt_tokens": prompt or 0,
-            "completion_tokens": completion or 0,
-            "total_tokens": total or 0,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
         }
 
-    def _count_actions(self, data: Dict[str, Any]) -> Optional[int]:
-        for key in ("trajectory", "steps", "actions"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return sum(1 for item in value if isinstance(item, dict) and ("action" in item or "tool" in item))
+    def _extract_llm_calls_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
+        interactions = self._extract_llm_interactions(payload)
+        if interactions is None:
+            return None
+        return len(interactions)
+
+    def _extract_tool_calls_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
+        if not isinstance(payload, dict):
+            return None
+        agent_steps = payload.get("agent_steps")
+        if not isinstance(agent_steps, list):
+            return None
+        total = 0
+        for step in agent_steps:
+            if not isinstance(step, dict):
+                return None
+            tool_calls = step.get("tool_calls")
+            if tool_calls is None:
+                continue
+            if not isinstance(tool_calls, list):
+                return None
+            total += len(tool_calls)
+        return total
+
+    def _extract_llm_interactions(self, payload: Optional[Dict[str, Any]]) -> Optional[list[Dict[str, Any]]]:
+        if not isinstance(payload, dict):
+            return None
+        llm_interactions = payload.get("llm_interactions")
+        if not isinstance(llm_interactions, list) or not llm_interactions:
+            return None
+        interactions: list[Dict[str, Any]] = []
+        for item in llm_interactions:
+            if not isinstance(item, dict):
+                return None
+            interactions.append(item)
+        return interactions
+
+    def _extract_response(self, output: str, payload: Optional[Dict[str, Any]]) -> Optional[str]:
+        response = self._extract_response_from_trajectory(payload)
+        if response:
+            return response
+        stdout = self._stdout_only(output)
+        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
         return None
 
-    def _usage_totals(self, usage: Optional[Dict[str, int]]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    def _extract_response_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not isinstance(payload, dict):
+            return None
+
+        final_result = payload.get("final_result")
+        if isinstance(final_result, str):
+            cleaned = final_result.strip()
+            if cleaned:
+                return cleaned
+
+        interactions = payload.get("llm_interactions")
+        if not isinstance(interactions, list):
+            return None
+        for interaction in reversed(interactions):
+            if not isinstance(interaction, dict):
+                continue
+            response = interaction.get("response")
+            if not isinstance(response, dict):
+                continue
+            content = response.get("content")
+            if not isinstance(content, str):
+                continue
+            cleaned = content.strip()
+            if cleaned:
+                return cleaned
+        return None
+
+    def _extract_model_name_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not isinstance(payload, dict):
+            return None
+        model_name = payload.get("model")
+        if not isinstance(model_name, str):
+            return None
+        cleaned = model_name.strip()
+        if not cleaned:
+            return None
+        return cleaned
+
+    def _format_trajectory_trace(self, *, trajectory_file: Path, raw_output: str, output_path: Path) -> str:
+        if trajectory_file.exists():
+            try:
+                trajectory_raw = trajectory_file.read_text(encoding="utf-8")
+            except Exception:
+                trajectory_raw = ""
+            if trajectory_raw.strip():
+                return format_trace_text(trajectory_raw, source=str(trajectory_file))
+        return format_trace_text(raw_output, source=str(output_path))
+
+    def _usage_totals(self, usage: Optional[Dict[str, int]]) -> tuple[Optional[int], Optional[int], Optional[int]]:
         if not usage:
             return None, None, None
         return (
@@ -239,3 +320,10 @@ class TraeOssAgent(CodingAgent):
             usage.get("completion_tokens"),
             usage.get("total_tokens"),
         )
+
+    def _count_actions(self, data: Dict[str, Any]) -> Optional[int]:
+        for key in ("trajectory", "steps", "actions"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return sum(1 for item in value if isinstance(item, dict) and ("action" in item or "tool" in item))
+        return None

@@ -196,8 +196,8 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 | kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
 | qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.0 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
-| swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  |  |
-| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  |  |
+| swe-agent | ✗ | ⚠ | ✗ | ✗ |  |  |  | ⚠ | 1.1.0 |
+| trae-oss | ✗ | ⚠ | ✗ | ✗ |  |  |  | ⚠ | 0.1.0 |
 
 ## Todo
 
