@@ -219,13 +219,6 @@ class CursorAgent(CodingAgent):
             usage.get("total_tokens"),
         )
 
-    @staticmethod
-    def _as_int(value: Any) -> Optional[int]:
-        try:
-            return int(value)
-        except Exception:
-            return None
-
     def _install_specific_version(self, version: str) -> CommandResult:
         started = time.monotonic()
         logs: List[str] = []

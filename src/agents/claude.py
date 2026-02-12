@@ -41,18 +41,13 @@ class ClaudeAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
-        injected_prompt = prompt
-        add_dirs: list[str] = []
-        if images:
-            resolved_images = [image.expanduser().resolve() for image in images]
-            add_dirs = sorted({str(image.parent) for image in resolved_images})
-            image_paths = "\n".join(f"- {image}" for image in resolved_images)
-            injected_prompt = (
-                "You are given image files at these paths:\n"
-                f"{image_paths}\n\n"
-                "Use the Read tool to open each image file, then answer the user question:\n"
-                f"{prompt}"
-            )
+        injected_prompt, resolved_images, _ = self._build_natural_media_prompt(
+            prompt,
+            images=images,
+            videos=None,
+            tool_name="Read",
+        )
+        add_dirs = sorted({str(image.parent) for image in resolved_images})
         model = model_override or os.environ.get("ANTHROPIC_MODEL")
         telemetry_enabled_raw = os.environ.get("CLAUDE_CODE_ENABLE_TELEMETRY")
         otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")

@@ -105,7 +105,12 @@ class KimiAgent(CodingAgent):
         ]
         run_prompt = prompt
         if images or videos:
-            run_prompt = self._build_prompt_with_media_paths(prompt, images, videos)
+            run_prompt, _, _ = self._build_natural_media_prompt(
+                prompt,
+                images=images,
+                videos=videos,
+                tool_name="ReadMediaFile",
+            )
         cmd.extend(["--prompt", run_prompt])
         if requested_model_name:
             cmd.extend(["--model", requested_model_name])
@@ -517,37 +522,3 @@ class KimiAgent(CodingAgent):
             "completion_tokens": completion,
             "total_tokens": prompt + completion,
         }
-
-    def _build_prompt_with_media_paths(self, prompt: str, images: list[Path], videos: list[Path]) -> str:
-        image_paths: List[str] = []
-        video_paths: List[str] = []
-        for image in images:
-            resolved = image.expanduser().resolve()
-            image_paths.append(str(resolved))
-        for video in videos:
-            resolved = video.expanduser().resolve()
-            video_paths.append(str(resolved))
-        lines = [
-            prompt,
-            "",
-            "You are provided with these media files.",
-            "Use ReadMediaFile to open each file before answering.",
-        ]
-        if image_paths:
-            lines.append("")
-            lines.append("Images:")
-            for path in image_paths:
-                lines.append(f"- {path}")
-        if video_paths:
-            lines.append("")
-            lines.append("Videos:")
-            for path in video_paths:
-                lines.append(f"- {path}")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _as_int(value: Any) -> Optional[int]:
-        try:
-            return int(value)
-        except Exception:
-            return None

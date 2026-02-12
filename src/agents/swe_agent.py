@@ -311,10 +311,3 @@ class SweAgent(CodingAgent):
             usage.get("completion_tokens"),
             usage.get("total_tokens"),
         )
-
-    @staticmethod
-    def _as_int(value: Any) -> Optional[int]:
-        try:
-            return int(value)
-        except Exception:
-            return None

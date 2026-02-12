@@ -119,16 +119,16 @@ Image and video input support:
 
 | Agent | Image Input | Video Input | Notes |
 | --- | --- | --- | --- |
-| claude | ✓ |  | `--image` + `Read` tool |
-| codex | ✓ |  | `--image` (multi-image) |
-| cursor |  |  |  |
-| copilot |  |  |  |
-| gemini | ✓ | ✓ | staged media + `@path` injection |
+| claude | ✓ | ✗ | `--image` + `Read` tool |
+| codex | ✓ | ✗ | `--image` (multi-image) |
+| cursor | ✗ | ✗ |  |
+| copilot | ✓ | ✗ | `--image` uses natural-language file-path injection |
+| gemini | ✓ | ✓ | staged media + `@{path}` injection |
 | kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`) |
 | qwen | ✓ | ✓ | `@{path}` injection; depends on model capabilities |
 | openhands | ✗ | ✗ | headless CLI has no documented `--image` / `--video` flags |
-| swe-agent |  |  |  |
-| trae-oss |  |  |  |
+| swe-agent | ✗ | ✗ | upstream multimodal path supports issue-image URLs (`swe_bench_multimodal`), but `sweagent run` has no generic `--image` / `--video` flags |
+| trae-oss | ✗ | ✗ | `trae-cli run` has no `--image` / `--video` flags |
 
 Kimi Agent Swarm:
 - Kimi supports launching multiple subagents in one run.
@@ -188,16 +188,16 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 
 | Agent | OAuth | API | Image Input | Video Input | MCP | Skills | Telemetry | Web Access | Test Version |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude |  | ✓ | ✓ |  |  |  |  | ⚠ | 2.1.37 |
-| codex | ✓ | ✓ | ✓ |  |  |  |  | ✓ | 0.98.0 |
-| cursor |  |  |  |  |  |  |  |  |  |
-| copilot |  |  |  |  |  |  |  |  |  |
+| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.37 |
+| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.98.0 |
+| cursor |  |  | ✗ | ✗ |  |  |  |  |  |
+| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 0.0.408 |
 | gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.27.3 |
 | kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
 | qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.0 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
-| swe-agent | ✗ |  |  |  |  |  |  |  |  |
-| trae-oss | ✗ |  |  |  |  |  |  |  |  |
+| swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  |  |
+| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  |  |
 
 ## Todo
 

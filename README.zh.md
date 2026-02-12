@@ -119,16 +119,16 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 
 | Agent | 图像输入 | 视频输入 | 说明 |
 | --- | --- | --- | --- |
-| claude | ✓ |  | `--image` + `Read` 工具 |
-| codex | ✓ |  | `--image`（支持多图） |
-| cursor |  |  |  |
-| copilot |  |  |  |
-| gemini | ✓ | ✓ | staged 媒体 + `@path` 注入 |
+| claude | ✓ | ✗ | `--image` + `Read` 工具 |
+| codex | ✓ | ✗ | `--image`（支持多图） |
+| cursor | ✗ | ✗ |  |
+| copilot | ✓ | ✗ | `--image` 通过自然语言路径注入实现 |
+| gemini | ✓ | ✓ | staged 媒体 + `@{path}` 注入 |
 | kimi | ✓ | ✓ | `ReadMediaFile` + 模型能力（`image_in`/`video_in`） |
 | qwen | ✓ | ✓ | `@{path}` 注入；是否有效取决于模型能力 |
 | openhands | ✗ | ✗ | headless CLI 未提供已文档化的 `--image` / `--video` 参数 |
-| swe-agent |  |  |  |
-| trae-oss |  |  |  |
+| swe-agent | ✗ | ✗ | 上游多模态仅支持 `swe_bench_multimodal` 的 issue 图片 URL；`sweagent run` 无通用 `--image` / `--video` 参数 |
+| trae-oss | ✗ | ✗ | `trae-cli run` 无 `--image` / `--video` 参数 |
 
 Kimi Agent Swarm：
 - Kimi 支持在一次 run 中启动多个 subagents。
@@ -188,16 +188,16 @@ cakit tools
 
 | Agent | OAuth | API | 图像输入 | 视频输入 | MCP | Skills | 遥测 | 联网 | 测试版本 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude |  | ✓ | ✓ |  |  |  |  | ⚠ | 2.1.37 |
-| codex | ✓ | ✓ | ✓ |  |  |  |  | ✓ | 0.98.0 |
-| cursor |  |  |  |  |  |  |  |  |  |
-| copilot |  |  |  |  |  |  |  |  |  |
+| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.37 |
+| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.98.0 |
+| cursor |  |  | ✗ | ✗ |  |  |  |  |  |
+| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 0.0.408 |
 | gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.27.3 |
 | kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
 | qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.0 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
-| swe-agent | ✗ |  |  |  |  |  |  |  |  |
-| trae-oss | ✗ |  |  |  |  |  |  |  |  |
+| swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  |  |
+| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  |  |
 
 ## 待办（Todo）
 

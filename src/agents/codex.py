@@ -344,10 +344,3 @@ class CodexAgent(CodingAgent):
                 return None
             tool_item_ids.add(item_id)
         return len(tool_item_ids)
-
-    @staticmethod
-    def _as_int(value: Any) -> Optional[int]:
-        try:
-            return int(value)
-        except Exception:
-            return None

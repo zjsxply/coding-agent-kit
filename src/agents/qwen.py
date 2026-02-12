@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
@@ -77,8 +77,10 @@ class QwenAgent(CodingAgent):
         images = images or []
         videos = videos or []
         if images or videos:
-            media_refs = self._build_media_refs([*images, *videos])
-            prompt = "\n".join(media_refs) + "\n\n" + prompt
+            prompt, _ = self._build_symbolic_media_prompt(
+                prompt,
+                [*images, *videos],
+            )
 
         telemetry_path = str(Path.home() / ".qwen" / "telemetry.log")
         qwen_key = os.environ.get("QWEN_OPENAI_API_KEY")
@@ -277,14 +279,3 @@ class QwenAgent(CodingAgent):
         if not lines:
             return None
         return "\n".join(lines)
-
-    def _build_media_refs(self, media_paths: List[Path]) -> List[str]:
-        refs: List[str] = []
-        staged_paths = self._stage_media_files(media_paths, stage_dir_name=".cakit-media")
-        for staged in staged_paths:
-            try:
-                rel_path = staged.relative_to(self.workdir)
-                refs.append(f"@{{{rel_path.as_posix()}}}")
-            except Exception:
-                refs.append(f"@{{{staged.as_posix()}}}")
-        return refs

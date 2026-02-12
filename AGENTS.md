@@ -64,6 +64,11 @@
 - Use the standard library to parse JSON; if custom parsing is unavoidable, put it in `src/utils.py`.
 - Use the term “coding agent” consistently.
 - Use the name `trae-oss` to distinguish from other Trae products.
+- Keep media prompt-injection helpers in `src/agents/base.py`:
+  - natural-language local-path injection: `_build_natural_media_prompt` (for tool-driven file reading flows)
+  - symbolic path injection: `_build_symbolic_media_prompt` (for `@{path}` style flows)
+- If `cakit run --image` / `--video` works by injecting local paths into prompt text and the coding agent can read the target media directly through its available tool/model behavior, count it as support and document the concrete behavior in README.
+- For video, frame-extraction-only behavior (extracting frames first, then reading still images) does not count as formal `--video` support.
 
 ## Behavioral Constraints
 - If an agent is not installed, `cakit run` must auto-run `cakit install <agent>` with a notice.

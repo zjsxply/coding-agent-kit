@@ -64,6 +64,11 @@
 - 使用标准库解析 JSON；若必须自定义解析，放到 `src/utils.py`。
 - 术语统一使用 “coding agent”。
 - 命名使用 `trae-oss` 以区分其他 Trae 产品。
+- 媒体 prompt 注入通用能力统一放在 `src/agents/base.py`：
+  - 自然语言本地路径注入：`_build_natural_media_prompt`（用于依赖工具读文件的流程）
+  - 符号路径注入：`_build_symbolic_media_prompt`（用于 `@{path}` 风格）
+- 若 `cakit run --image` / `--video` 通过向 prompt 注入本地路径并由 coding agent 依赖可用工具/模型能力直接读取目标媒体，则计入支持，并在 README 说明具体行为。
+- 对视频而言，若仅能先抽帧再按图片读取，不计入正式 `--video` 支持。
 
 ## 行为约束
 - `cakit run` 若发现未安装对应 agent，需要自动执行 `cakit install <agent>` 并提示。

@@ -392,11 +392,3 @@ class OpenHandsAgent(CodingAgent):
             payload_text = json.dumps(payload, ensure_ascii=True)
             return format_trace_text(payload_text, source=str(conversation_dir))
         return format_trace_text(output, source=str(output_path))
-
-    @staticmethod
-    def _as_int(value: Any) -> Optional[int]:
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        return None

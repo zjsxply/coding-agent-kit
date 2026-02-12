@@ -354,9 +354,9 @@ class CodingAgent(abc.ABC):
             return 1
         return 0
 
-    def _stage_media_files(self, media_paths: list[Path], *, stage_dir_name: str = ".cakit-media") -> list[Path]:
+    def _stage_media_files(self, media_paths: list[Path]) -> list[Path]:
         staged: list[Path] = []
-        stage_dir = self.workdir / stage_dir_name
+        stage_dir = self.workdir / ".cakit-media"
         stage_dir.mkdir(parents=True, exist_ok=True)
         for index, media_path in enumerate(media_paths):
             src = media_path.expanduser().resolve()
@@ -371,6 +371,59 @@ class CodingAgent(abc.ABC):
             except Exception:
                 staged.append(src)
         return staged
+
+    def _build_natural_media_prompt(
+        self,
+        prompt: str,
+        *,
+        images: Optional[list[Path]] = None,
+        videos: Optional[list[Path]] = None,
+        tool_name: str,
+    ) -> tuple[str, list[Path], list[Path]]:
+        resolved_images = [path.expanduser().resolve() for path in (images or [])]
+        resolved_videos = [path.expanduser().resolve() for path in (videos or [])]
+        if not resolved_images and not resolved_videos:
+            return prompt, [], []
+
+        lines: list[str] = [
+            "You are provided with these local media files.",
+            f"Use the {tool_name} tool to open each file before answering.",
+        ]
+        if resolved_images:
+            lines.append("")
+            lines.append("Images:")
+            for image_path in resolved_images:
+                lines.append(f"- {image_path}")
+        if resolved_videos:
+            lines.append("")
+            lines.append("Videos:")
+            for video_path in resolved_videos:
+                lines.append(f"- {video_path}")
+        lines.append("")
+        lines.append("User request:")
+        lines.append(prompt)
+        return "\n".join(lines), resolved_images, resolved_videos
+
+    def _build_symbolic_media_prompt(
+        self,
+        prompt: str,
+        media_paths: list[Path],
+    ) -> tuple[str, list[Path]]:
+        if not media_paths:
+            return prompt, []
+        staged_paths = self._stage_media_files(media_paths)
+        refs: list[str] = []
+        for staged in staged_paths:
+            try:
+                rel_path = staged.relative_to(self.workdir).as_posix()
+            except Exception:
+                rel_path = staged.as_posix()
+            refs.append(f"@{{{rel_path}}}")
+        lines: list[str] = []
+        lines.extend(refs)
+        lines.append("")
+        lines.append(prompt)
+        return "\n".join(lines), staged_paths
 
 
 from ..models import InstallResult, RunResult  # noqa: E402

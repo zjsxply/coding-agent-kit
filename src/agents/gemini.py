@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
@@ -64,8 +64,10 @@ class GeminiAgent(CodingAgent):
         images = images or []
         videos = videos or []
         if images or videos:
-            staged_paths = self._stage_media_files([*images, *videos], stage_dir_name=".cakit-media")
-            prompt = self._build_media_reference_prompt(prompt, staged_paths)
+            prompt, _ = self._build_symbolic_media_prompt(
+                prompt,
+                [*images, *videos],
+            )
         telemetry_path = Path.home() / ".gemini" / "telemetry.log"
         telemetry_path.parent.mkdir(parents=True, exist_ok=True)
         if not (Path.home() / ".gemini" / "settings.json").exists():
@@ -198,15 +200,3 @@ class GeminiAgent(CodingAgent):
         if not isinstance(api, dict):
             return None
         return self._as_int(api.get("totalRequests"))
-
-    def _build_media_reference_prompt(self, prompt: str, media_paths: List[Path]) -> str:
-        lines = ["Use these local media files as additional context before answering:"]
-        for path in media_paths:
-            try:
-                rel_path = path.relative_to(self.workdir).as_posix()
-            except Exception:
-                rel_path = path.as_posix()
-            lines.append(f"@{rel_path}")
-        lines.append("")
-        lines.append(prompt)
-        return "\n".join(lines)
