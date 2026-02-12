@@ -41,6 +41,10 @@
 - 使用 session/log 回退提取时，必须做精确匹配（例如按 `session_id` 精确匹配对应路径），禁止按 mtime 或“最近文件”做模糊匹配。
 - `models_usage` 中的模型名必须来自本次运行产物（stdout payload/session 日志），不能从配置、环境变量或 `--model` 输入回填。
 - 提取逻辑必须严格按格式读取：仅解析明确、文档化字段；结构异常时应立即返回 `None`，不要叠加多层 fallback 解析器。
+- 字段名必须精确且稳定。不要对同一信号尝试多个字段名或回退链；必需字段缺失时直接返回 `None`。
+- 用量统计必须基于源码确认。若 coding agent CLI 有开源仓库，应先阅读源码确认 usage 产生方式，再实现或调整 token 统计逻辑。
+- Token usage 定义为 agent 运行过程中所有 LLM call 的 prompt tokens 与 completion tokens 的总和（包含 subagents 时一并计入）。
+- 代码与文档必须保持一致。行为有变更时需在同一提交/修改中同步更新文档，且文档应与实现完全一致（不要出现不匹配的 fallback 或字段描述）。
 - 发生提取失败时必须排查：
   1. `cakit run` 输出中的 `output_path` / `raw_output`。
   2. 上游 coding agent 的日志与会话文件（例如 Kimi：`~/.kimi/logs`、`~/.kimi/sessions/*/*/wire.jsonl`、`~/.kimi/sessions/*/*/context.jsonl`）。

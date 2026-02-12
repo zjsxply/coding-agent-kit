@@ -41,6 +41,10 @@
 - For session/log fallback parsing, use exact session matching (for example by exact `session_id` path match). Do not use fuzzy matching by mtime or nearest file.
 - Model name in `models_usage` must come from run artifacts (stdout payload/session logs). Do not fill it from config/env/`--model` input.
 - Parsing must be strict and format-aware: read only exact, documented fields; if structure is unexpected, return `None` immediately instead of stacking fallback parsers.
+- Field names must be exact and stable. Do not try multiple alternative field names or fallback chains for the same signal; if a required field is missing, return `None`.
+- Usage extraction must be source-verified. When a coding agent CLI has an open-source repository, read the source to confirm how usage is produced before implementing or changing token accounting.
+- Token usage is defined as the sum of prompt tokens and completion tokens across all LLM calls made during the agent run (including subagents when applicable).
+- Code and documentation must stay consistent. When behavior changes, update docs in the same PR/patch and ensure they reflect the exact implementation (no mismatched fallbacks or fields).
 - On extraction failure, inspect:
   1. `output_path` / `raw_output` from `cakit run`.
   2. Upstream coding agent logs/sessions (for example Kimi: `~/.kimi/logs`, `~/.kimi/sessions/*/*/wire.jsonl`, `~/.kimi/sessions/*/*/context.jsonl`).

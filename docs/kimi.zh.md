@@ -38,8 +38,7 @@ cakit 仅写 provider 配置：
 
 `cakit run kimi --image <path>` 已支持。
 
-- 无图场景：cakit 使用 print mode 的 `stream-json` 输入。
-- 有图场景：cakit 切换为 print mode 的 `--prompt` 输入，并在 prompt 中注入图片绝对路径，明确要求 Kimi 先对每个文件调用 `ReadMediaFile` 再回答。
+- cakit 使用 print mode 的 `--prompt` 输入，并在 prompt 中注入图片绝对路径，供 Kimi 读取文件。
 - 图像场景下，如果当前 shell 没有设置 `KIMI_MODEL_CAPABILITIES`，cakit 会在该次运行进程里临时设置为 `image_in`，以便 `ReadMediaFile` 工具可用。
 - 是否能真正读图仍取决于所选模型能力（`image_in`）。若模型不支持图像输入，Kimi 可能失败或直接返回不支持读图。
 
@@ -47,7 +46,7 @@ cakit 仅写 provider 配置：
 
 `cakit run kimi --video <path>` 已支持。
 
-- 有视频场景：cakit 切换为 print mode 的 `--prompt` 输入，并在 prompt 中注入视频绝对路径，明确要求 Kimi 先对每个文件调用 `ReadMediaFile` 再回答。
+- 有视频场景：cakit 使用 print mode 的 `--prompt` 输入，并在 prompt 中注入视频绝对路径。
 - 视频场景下，如果当前 shell 没有设置 `KIMI_MODEL_CAPABILITIES`，cakit 会在该次运行进程里临时设置为 `video_in`（同时传图+视频时为 `image_in,video_in`），以便 `ReadMediaFile` 工具可用。
 - 是否能真正读视频仍取决于所选模型能力（`video_in`）。若模型不支持视频输入，Kimi 可能失败或直接返回不支持读视频。
 
@@ -77,18 +76,20 @@ Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：
 
 `cakit run kimi` 对 `response`、`models_usage`、`llm_calls`、`tool_calls` 采用严格解析，顺序如下：
 
-1. 优先按精确 `session_id` 读取 `~/.kimi/sessions/*/<session_id>/wire.jsonl`：
+1. cakit 每次运行生成 UUID 并通过 `--session` 传入，然后按 `work_dir` + Kimi metadata 计算出的精确路径读取 `wire.jsonl`：
+   - `~/.kimi/sessions/<kaos_or_md5>/<session_id>/wire.jsonl`
+2. 从 session 的 `wire.jsonl` 中读取：
    - `StatusUpdate.payload.token_usage` -> token usage（`models_usage`）
    - `SubagentEvent.event.type == "StatusUpdate"` 的 token usage 也会聚合进总量
    - `StatusUpdate` + subagent `StatusUpdate` 条数 -> `llm_calls`
    - `ToolCall` + subagent `ToolCall` 条数 -> `tool_calls`
-   - 如存在 `payload.model` / `payload.model_name` / `payload.modelName`，则读取模型名
-2. 若 session 数据仍不完整，再解析 stdout `stream-json`，且只读取明确字段。
-3. 若 session wire 里有 usage 但没有模型字段，再按精确 `session_id` 在 `~/.kimi/logs/kimi.log` 中定位 `Created new session: <session_id>` 区段，并读取同区段的 `Using LLM model: ... model='...'`。
-4. 不写模型名占位值；若运行产物中提取不到模型名，`models_usage` 保持为空对象。
+   - 如存在 `payload.model` 则读取模型名
+3. 若 session 数据仍不完整，再解析 stdout `stream-json`，且只读取明确字段（仅用于 usage/response）。
+4. 若 session wire 里有 usage 但没有模型字段，再按精确 `session_id` 在 `~/.kimi/logs/kimi.log` 中定位 `Created new session:` / `Switching to session:` / `Session ... not found` 区段，并读取同区段的 `Using LLM model: ... model='...'`。
+5. 不写模型名占位值；若运行产物中提取不到模型名，`models_usage` 保持为空对象。
 
-模型名仅从本次运行产物提取（stdout payload / session 日志），不从配置或输入参数回填。
-`prompt_tokens` 由 Kimi 的输入 usage 字段（`input_other`、`input_cache_read`、`input_cache_creation`）汇总得到。
+模型名仅从本次运行产物提取（session wire / session 日志），不从配置或输入参数回填。
+`prompt_tokens` 由 Kimi 的输入 usage 字段（`input_other`、`input_cache_read`、`input_cache_creation`）汇总得到，并对单项负值做截断以避免负增量。
 若上游这些字段返回 `0`，则 `prompt_tokens` 可能为 `0`。
 
 若提取异常，优先排查 `output_path` / `raw_output` 以及 Kimi 的 session/log 文件。

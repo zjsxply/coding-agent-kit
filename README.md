@@ -192,9 +192,11 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 
 ## Todo
 
+- [ ] Add `cakit run` flag: disable web search vs fully disable network
 - [ ] Support network on/off toggle
 - [x] Support skills
 - [ ] Support `AGENTS.md`
+- [ ] Namespace agent config/cache paths (e.g. `KIMI_SHARE_DIR`) to avoid conflicts with host agents
 - [ ] Support MCP
 - [ ] Support balanced mode
 - [ ] Support installing specific versions

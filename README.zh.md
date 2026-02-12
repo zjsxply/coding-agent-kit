@@ -192,9 +192,11 @@ cakit tools
 
 ## 待办（Todo）
 
+- [ ] `cakit run` 增加参数：禁用联网搜索 / 完全禁用联网
 - [ ] 支持开关联网
 - [x] 支持 skills
 - [ ] 支持 `AGENTS.md`
+- [ ] 调整所有 agent 配置/数据路径（如 `KIMI_SHARE_DIR`），避免与主机其他 agent 冲突
 - [ ] 支持 MCP
 - [ ] 支持 balanced 模式
 - [ ] 支持安装指定版本

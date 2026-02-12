@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -75,6 +77,7 @@ class KimiAgent(CodingAgent):
         videos = videos or []
         run_started = time.time()
         requested_model_name = os.environ.get("KIMI_MODEL_NAME")
+        session_id = str(uuid.uuid4())
         env = {
             "KIMI_API_KEY": os.environ.get("KIMI_API_KEY"),
             "KIMI_BASE_URL": os.environ.get("KIMI_BASE_URL"),
@@ -89,6 +92,8 @@ class KimiAgent(CodingAgent):
             "--yolo",
             "--work-dir",
             str(self.workdir),
+            "--session",
+            session_id,
         ]
         run_prompt = prompt
         if images or videos:
@@ -108,9 +113,8 @@ class KimiAgent(CodingAgent):
         llm_calls: Optional[int] = None
         model_name: Optional[str] = None
 
-        current_session_id = self._load_last_session_id_for_workdir()
         session_usage, session_tool_calls, session_llm_calls, session_model_name = self._extract_session_stats(
-            current_session_id, run_prompt, run_started
+            session_id, run_prompt, run_started
         )
         if session_usage is not None:
             usage = session_usage
@@ -127,9 +131,7 @@ class KimiAgent(CodingAgent):
         if tool_calls is None:
             tool_calls = self._count_tool_calls(payloads)
         if model_name is None:
-            model_name = self._extract_model_name(payloads)
-        if model_name is None:
-            model_name = self._extract_model_name_from_log(current_session_id, run_prompt)
+            model_name = self._extract_model_name_from_log(session_id, run_prompt)
 
         output_path = self._write_output(self.name, output)
         models_usage: Dict[str, Dict[str, int]] = {}
@@ -271,41 +273,31 @@ class KimiAgent(CodingAgent):
     def _find_session_wire_path(self, session_id: Optional[str]) -> Optional[Path]:
         if not session_id:
             return None
-        matches = sorted((Path.home() / ".kimi" / "sessions").glob(f"*/{session_id}/wire.jsonl"))
-        if len(matches) != 1:
-            return None
-        return matches[0]
-
-    def _load_last_session_id_for_workdir(self) -> Optional[str]:
-        kimi_meta_path = Path.home() / ".kimi" / "kimi.json"
-        text = self._read_text(kimi_meta_path)
-        if not text:
-            return None
-        try:
-            data = json.loads(text)
-        except Exception:
-            return None
-        work_dirs = data.get("work_dirs")
-        if not isinstance(work_dirs, list):
-            return None
-        workdir_str = str(self.workdir)
-        for item in work_dirs:
-            if not isinstance(item, dict):
-                continue
-            if item.get("path") != workdir_str:
-                continue
-            session_id = item.get("last_session_id")
-            if isinstance(session_id, str) and session_id:
-                return session_id
-        return None
-
-    def _extract_model_name(self, payloads: List[Dict[str, Any]]) -> Optional[str]:
-        for payload in payloads:
-            if not isinstance(payload, dict):
-                continue
-            model_name = payload.get("model") or payload.get("model_name") or payload.get("modelName")
-            if isinstance(model_name, str) and model_name:
-                return model_name
+        workdir = str(self.workdir)
+        workdir_md5 = hashlib.md5(workdir.encode("utf-8")).hexdigest()
+        kaos_name = "local"
+        meta_text = self._read_text(Path.home() / ".kimi" / "kimi.json")
+        if meta_text:
+            try:
+                meta = json.loads(meta_text)
+            except Exception:
+                meta = None
+            if isinstance(meta, dict):
+                work_dirs = meta.get("work_dirs")
+                if isinstance(work_dirs, list):
+                    for item in work_dirs:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("path") != workdir:
+                            continue
+                        candidate = item.get("kaos")
+                        if isinstance(candidate, str) and candidate:
+                            kaos_name = candidate
+                        break
+        dir_basename = workdir_md5 if kaos_name == "local" else f"{kaos_name}_{workdir_md5}"
+        wire_path = Path.home() / ".kimi" / "sessions" / dir_basename / session_id / "wire.jsonl"
+        if wire_path.exists():
+            return wire_path
         return None
 
     def _extract_turn_user_input_text(self, raw: Any) -> Optional[str]:
@@ -333,9 +325,15 @@ class KimiAgent(CodingAgent):
         if not text:
             return None
         lines = text.splitlines()
-        session_marker = f"Created new session: {session_id}"
-        session_indexes = [idx for idx, line in enumerate(lines) if session_marker in line]
-        if len(session_indexes) != 1:
+        session_markers = (
+            f"Created new session: {session_id}",
+            f"Switching to session: {session_id}",
+            f"Session {session_id} not found, creating new session",
+        )
+        session_indexes = [
+            idx for idx, line in enumerate(lines) if any(marker in line for marker in session_markers)
+        ]
+        if not session_indexes:
             return None
         start_idx = session_indexes[0]
 
@@ -375,20 +373,14 @@ class KimiAgent(CodingAgent):
     ) -> Tuple[Optional[Dict[str, int]], Optional[int], Optional[int], Optional[str]]:
         usage_by_message_id: Dict[str, Dict[str, int]] = {}
         status_without_message_id: List[Dict[str, int]] = []
-        tool_calls = 0
         status_message_ids: set[str] = set()
+        tool_calls = 0
         model_name: Optional[str] = None
-        in_target_turn = False
-        turn_seen = False
 
-        def add_status(payload: Any) -> bool:
+        def apply_status(payload: Any) -> bool:
             nonlocal model_name
             if not isinstance(payload, dict):
                 return False
-            if model_name is None:
-                candidate = payload.get("model") or payload.get("model_name") or payload.get("modelName")
-                if isinstance(candidate, str) and candidate:
-                    model_name = candidate
             token_usage = payload.get("token_usage")
             normalized = self._normalize_status_usage(token_usage)
             if normalized is None:
@@ -401,8 +393,14 @@ class KimiAgent(CodingAgent):
                 status_message_ids.add(message_id)
             else:
                 status_without_message_id.append(normalized)
+            if model_name is None:
+                candidate = payload.get("model")
+                if isinstance(candidate, str) and candidate:
+                    model_name = candidate
             return True
 
+        in_target_turn = False
+        turn_seen = False
         try:
             for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
                 if not line:
@@ -432,23 +430,21 @@ class KimiAgent(CodingAgent):
                     if not isinstance(payload, dict):
                         return None, None, None, None
                     user_input = self._extract_turn_user_input_text(payload.get("user_input"))
-                    if user_input is None:
-                        return None, None, None, None
-                    if user_input != prompt:
+                    if user_input is None or user_input != prompt:
                         continue
                     in_target_turn = True
                     turn_seen = True
                     continue
 
-                payload = message.get("payload")
                 if message_type == "TurnEnd":
                     break
 
+                payload = message.get("payload")
                 if message_type == "ToolCall":
                     tool_calls += 1
                     continue
                 if message_type == "StatusUpdate":
-                    if not add_status(payload):
+                    if not apply_status(payload):
                         return None, None, None, None
                     continue
                 if message_type != "SubagentEvent":
@@ -467,7 +463,7 @@ class KimiAgent(CodingAgent):
                     continue
                 if event_type != "StatusUpdate":
                     continue
-                if not add_status(event_payload):
+                if not apply_status(event_payload):
                     return None, None, None, None
         except Exception:
             return None, None, None, None
@@ -475,26 +471,22 @@ class KimiAgent(CodingAgent):
         if not turn_seen:
             return None, None, None, None
 
-        prompt_total = 0
-        completion_total = 0
-        total_tokens = 0
         usage_values = list(usage_by_message_id.values()) + status_without_message_id
-        for value in usage_values:
-            prompt_total += value["prompt_tokens"]
-            completion_total += value["completion_tokens"]
-            total_tokens += value["total_tokens"]
-        usage: Optional[Dict[str, int]] = None
         if usage_values:
+            prompt_total = sum(value["prompt_tokens"] for value in usage_values)
+            completion_total = sum(value["completion_tokens"] for value in usage_values)
+            total_tokens = sum(value["total_tokens"] for value in usage_values)
             usage = {
                 "prompt_tokens": prompt_total,
                 "completion_tokens": completion_total,
                 "total_tokens": total_tokens,
             }
+        else:
+            usage = None
 
         llm_calls = len(status_message_ids) + len(status_without_message_id)
-        tool_calls_value = tool_calls
         llm_calls_value = llm_calls or None
-        return usage, tool_calls_value, llm_calls_value, model_name
+        return usage, tool_calls, llm_calls_value, model_name
 
     def _normalize_status_usage(self, raw: Any) -> Optional[Dict[str, int]]:
         if not isinstance(raw, dict):
