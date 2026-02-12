@@ -14,29 +14,36 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 
 ### Install an agent
 
-Default is unrestricted mode (Yolo).
+The default is unrestricted mode (YOLO).
 
 ```bash
-cakit install <agent> [--scope user|global]
+cakit install <agent> [--scope user|global] [--version <value>]
 ```
 
 By default, `--scope user` installs npm-based agents under `~/.npm-global` (no sudo). Ensure `~/.npm-global/bin` is on `PATH`.
 Use `--scope global` to run `npm install -g` (may require sudo).
+Use `--version` to install a specific version or reference:
+- `codex` / `claude` / `copilot` / `gemini` / `qwen`: npm version or tag (for example `0.98.0`).
+- `cursor`: Cursor build ID (for example `2026.01.28-fd13201`).
+- `kimi`: `kimi-cli` package version (for example `1.9.0`).
+- `openhands`: `openhands` package version (for example `1.12.1`).
+- `swe-agent`: upstream release tag (for example `v1.0.0`).
+- `trae-oss`: git ref (tag / branch / commit).
 
 #### Supported Agents
 
-| Name | Website | Docs | Notes |
-| --- | --- | --- | --- |
-| claude | [Claude](https://www.anthropic.com/claude) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) | — |
-| codex | [OpenAI Codex](https://openai.com/codex) | [Codex CLI](https://developers.openai.com/codex/cli) | — |
-| cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — |
-| copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — |
-| gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | — |
-| kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | — |
-| qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | — |
-| openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | — |
-| swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | — |
-| trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | OSS Trae Agent to distinguish from other Trae products |
+| Name | Website | Docs | OSS Repository | Notes |
+| --- | --- | --- | --- | --- |
+| claude | [Claude](https://www.anthropic.com/claude) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) | — | — |
+| codex | [OpenAI Codex](https://openai.com/codex) | [Codex CLI](https://developers.openai.com/codex/cli) | [openai/codex](https://github.com/openai/codex) | — |
+| cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — | — |
+| copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — | — |
+| gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) | — |
+| kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | [moonshotai/kimi-cli](https://github.com/moonshotai/kimi-cli) | — |
+| qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) | — |
+| openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | — |
+| swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) | — |
+| trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | [bytedance/trae-agent](https://github.com/bytedance/trae-agent) | OSS Trae Agent to distinguish from other Trae products |
 
 #### Login
 
@@ -98,12 +105,12 @@ Output fields:
 - `tool_calls` (when provided by the agent)
 - `telemetry_log` (when enabled)
 - `exit_code`
-- `output_path` (path to a `.log` file containing the coding agent CLI raw output)
+- `output_path` (path to a `.log` file containing raw output from the coding agent CLI)
 - `raw_output` (captured raw output from the coding agent CLI)
 - `trajectory_path` (path to a formatted, human-readable trace file for the run; no truncation)
 
 Telemetry:
-- Claude Code / Codex: exported via OpenTelemetry (OTEL, requires OTEL endpoint); log address is the OTEL endpoint
+- Claude Code / Codex: exported via OpenTelemetry (OTEL, requires an OTEL endpoint); `telemetry_log` is set to that endpoint
 - Copilot CLI: local logs in `~/.copilot/logs/` by default (cakit uses `--log-dir` when running)
 - Gemini CLI: local log `~/.gemini/telemetry.log`
 - Qwen Code: local log `~/.qwen/telemetry.log`
@@ -118,15 +125,15 @@ Image and video input support:
 | copilot |  |  |  |
 | gemini | ✓ | ✓ | staged media + `@path` injection |
 | kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`) |
-| qwen | ✓ | ✓ | `@{path}` injection; model capability dependent |
+| qwen | ✓ | ✓ | `@{path}` injection; depends on model capabilities |
 | openhands | ✗ | ✗ | headless CLI has no documented `--image` / `--video` flags |
 | swe-agent |  |  |  |
 | trae-oss |  |  |  |
 
 Kimi Agent Swarm:
 - Kimi supports launching multiple subagents in one run.
-- In prompt text, use wording like `launch multiple subagents` (for example: "Can you launch multiple subagents to solve this task and summarize the results?").
-- For Kimi runs, `models_usage`/`llm_calls`/`tool_calls` aggregate subagent events from session logs when available.
+- In your prompt, use wording like `launch multiple subagents` (for example: "Can you launch multiple subagents to solve this task and summarize the results?").
+- For Kimi runs, `models_usage`/`llm_calls`/`tool_calls` are aggregated from subagent events in session logs when available.
 Note: In our testing, Kimi CLI may hit a race condition when multiple sessions run concurrently, leading to failures. Avoid running multiple Kimi sessions at the same time.
 
 ### Skills
@@ -143,7 +150,7 @@ Use `-g`/`--global` to reuse across projects. Example:
 npx skills add vercel-labs/agent-skills -g -a claude-code codex
 ```
 
-Note: the “coding agent” names used by `skills` may differ from `cakit` agent names (e.g., `claude-code` vs `cakit`’s `claude`). If something doesn’t work, run `npx skills -h`.
+Note: the coding agent names used by `skills` may differ from `cakit` agent names (e.g., `claude-code` vs `cakit`’s `claude`). If something does not work, run `npx skills -h`.
 
 `npx skills` docs: [skills.sh](https://skills.sh/) and [vercel-labs/skills](https://github.com/vercel-labs/skills).
 
@@ -202,7 +209,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 - [ ] Namespace agent config/cache paths (e.g. `KIMI_SHARE_DIR`) to avoid conflicts with host agents
 - [ ] Support MCP
 - [ ] Support balanced mode
-- [ ] Support installing specific versions
+- [x] Support installing specific versions
 - [x] Validate Kimi token accounting semantics (including subagent aggregation)
 
 Note: currently only supports Linux amd64.

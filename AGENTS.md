@@ -4,6 +4,7 @@
 - Coding Agent Kit is a lightweight CLI for academic experiments. It installs and runs mainstream coding agents with a unified interface and outputs structured stats.
 - “coding agent” refers to the CLI itself (including `cursor-agent`), not IDEs or IDE plugins.
 - This repository is a standalone project; the repository root is the project root.
+- Open-source coding agent repository links are listed in the `Supported Agents` table in `README.md`.
 
 ## Environment and Dependencies
 - Use `uv` to manage the Python environment and dependencies.
@@ -15,7 +16,7 @@
 
 ## Common Commands
 - Generate `.env` template: `cakit env --output .env`
-- Install and configure an agent: `cakit install <agent>` (default is unrestricted mode/Yolo)
+- Install and configure an agent: `cakit install <agent>` (default is unrestricted mode/YOLO)
 - Run and output JSON stats: `cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--video /path/to/video]`
 - Generic availability test workflow: `python tests/availability_test.py <agent...>`
 - Install fast shell power tools (recommended): `cakit tools`

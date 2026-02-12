@@ -2,6 +2,9 @@
 
 This document explains how cakit runs Qwen Code and extracts run metadata.
 
+**Versioned Installation**
+- `cakit install qwen --version <npm_version_or_tag>` installs `@qwen-code/qwen-code@<version>`.
+
 **Sources**
 - CLI stdout/stderr from `qwen -p ... --output-format json --approval-mode yolo`.
 - Local telemetry log: `~/.qwen/telemetry.log`.
@@ -13,19 +16,19 @@ This document explains how cakit runs Qwen Code and extracts run metadata.
   - `GOOGLE_SEARCH_ENGINE_ID`, `TAVILY_API_KEY`
 
 **Run Behavior**
-- When `QWEN_OPENAI_API_KEY` exists, cakit passes `--auth-type openai`.
+- When `QWEN_OPENAI_API_KEY` is set, cakit passes `--auth-type openai`.
 
 **Image and Video Input**
 - `cakit run qwen --image/--video` is supported through prompt injection.
 - cakit copies each media file into `<run_cwd>/.cakit-media/` and prepends `@{.cakit-media/<file>}`.
-- Actual media understanding depends on the selected base model capability; text-only models may not produce correct image/video descriptions.
+- Actual media understanding depends on selected model capabilities; text-only models may not produce correct image/video descriptions.
 - The copy mechanism applies only to `--image`/`--video`.
 - If you only put local file paths in prompt text (without `--image`/`--video`), cakit does not copy files, and Qwen may reject paths outside the current run workspace.
 
 **Field Mapping**
 - `agent_version`: from `qwen --version`.
 - `runtime_seconds`: wall time of the `qwen` process.
-- `response`: from `result.result`; fallback to last assistant text block in JSON output.
+- `response`: from `result.result`; falls back to the last assistant text block in JSON output.
 - `models_usage`: `result.stats.models[model].tokens.prompt` / `candidates` / `total`.
 - `llm_calls`: sum of `result.stats.models[model].api.totalRequests`.
 - `tool_calls`: `result.stats.tools.totalCalls`.

@@ -2,6 +2,9 @@
 
 本文说明 cakit 如何运行 OpenHands CLI 并提取运行统计信息。
 
+**安装版本**
+- `cakit install openhands --version <pip_version>` 会安装 `openhands==<version>`（优先 `uv tool install`，不可用时回退到 `pip install`）。
+
 **数据来源**
 - `openhands --headless --json --override-with-envs -t ...` 的 stdout/stderr。
 - `~/.openhands/conversations/<conversation_id>/`（或 `OPENHANDS_CONVERSATIONS_DIR`）下的会话产物：

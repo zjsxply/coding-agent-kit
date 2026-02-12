@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +37,7 @@ class CodingAgent(abc.ABC):
         self.workdir = (workdir or Path.cwd()).expanduser().resolve()
 
     @abc.abstractmethod
-    def install(self, *, scope: str = "user") -> "InstallResult":
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> "InstallResult":
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -136,12 +137,20 @@ class CodingAgent(abc.ABC):
             return Path(prefix).expanduser()
         return Path.home() / ".npm-global"
 
-    def _npm_install(self, package: str, scope: str) -> CommandResult:
+    def _npm_install(self, package: str, scope: str, version: Optional[str] = None) -> CommandResult:
+        package_spec = package
+        if version:
+            normalized = version.strip()
+            if normalized:
+                if normalized.startswith("@"):
+                    package_spec = f"{package}{normalized}"
+                else:
+                    package_spec = f"{package}@{normalized}"
         if scope == "global":
-            return self._run(["npm", "install", "-g", package])
+            return self._run(["npm", "install", "-g", package_spec])
         prefix = self._npm_prefix()
         prefix.mkdir(parents=True, exist_ok=True)
-        return self._run(["npm", "install", "-g", "--prefix", str(prefix), package])
+        return self._run(["npm", "install", "-g", "--prefix", str(prefix), package_spec])
 
     def _extra_path_entries(self) -> list[str]:
         candidates = [
@@ -177,6 +186,18 @@ class CodingAgent(abc.ABC):
             if candidate.exists():
                 return str(candidate)
         return None
+
+    def _ensure_uv(self) -> bool:
+        if shutil.which("uv") is not None:
+            return True
+        if not sys.platform.startswith("linux"):
+            return False
+        if shutil.which("curl") is None:
+            return False
+        install = self._run(["bash", "-lc", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
+        if install.exit_code != 0:
+            return False
+        return shutil.which("uv") is not None or (Path.home() / ".local" / "bin" / "uv").exists()
 
     def _ensure_models_usage(
         self,

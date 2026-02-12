@@ -2,7 +2,7 @@
 
 This document describes how `--model` is applied for each coding agent.
 
-`cakit run <agent> ... --model <name>` applies model-related overrides only in the cakit-managed child process environment for that run. It does not mutate current process `os.environ`.
+`cakit run <agent> ... --model <name>` applies model-related overrides only in the cakit-managed child process environment for that run. It does not mutate the current process `os.environ`.
 
 | Agent | Env keys overridden by `--model` | Extra model CLI flag passed by cakit |
 | --- | --- | --- |

@@ -20,8 +20,8 @@ class CodexAgent(CodingAgent):
     supports_images = True
     supports_videos = False
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        result = self._npm_install("@openai/codex", scope)
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        result = self._npm_install("@openai/codex", scope, version=version)
         config_path = self.configure()
         ok = result.exit_code == 0
         details = result.output

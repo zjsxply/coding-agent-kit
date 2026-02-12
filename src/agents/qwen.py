@@ -17,8 +17,8 @@ class QwenAgent(CodingAgent):
     supports_images = True
     supports_videos = True
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        result = self._npm_install("@qwen-code/qwen-code", scope)
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        result = self._npm_install("@qwen-code/qwen-code", scope, version=version)
         config_path = self.configure()
         ok = result.exit_code == 0
         details = result.output

@@ -2,6 +2,9 @@
 
 This document explains how cakit runs Claude Code and extracts metadata.
 
+**Versioned Installation**
+- `cakit install claude --version <npm_version_or_tag>` installs `@anthropic-ai/claude-code@<version>`.
+
 **Sources**
 - CLI stdout from `~/.npm-global/bin/claude -p --output-format stream-json --verbose ...` (JSONL-like events, one JSON object per line).
 - Environment variables such as `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CAKIT_CLAUDE_USE_OAUTH`, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`/`ANTHROPIC_DEFAULT_SONNET_MODEL`/`ANTHROPIC_DEFAULT_HAIKU_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, `OTEL_EXPORTER_OTLP_ENDPOINT`.

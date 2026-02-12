@@ -2,6 +2,9 @@
 
 This document explains how cakit runs OpenHands CLI and extracts run metadata.
 
+**Versioned Installation**
+- `cakit install openhands --version <pip_version>` installs `openhands==<version>` (`uv tool install` when available, otherwise `pip install`).
+
 **Sources**
 - CLI stdout/stderr from `openhands --headless --json --override-with-envs -t ...`.
 - Conversation artifacts under `~/.openhands/conversations/<conversation_id>/` (or `OPENHANDS_CONVERSATIONS_DIR`):
@@ -10,12 +13,12 @@ This document explains how cakit runs OpenHands CLI and extracts run metadata.
 
 **Auth**
 - cakit currently supports API mode for OpenHands.
-- Required envs:
+- Required environment variables:
   - `LLM_API_KEY`
   - `LLM_MODEL`
-- Optional env:
+- Optional environment variable:
   - `LLM_BASE_URL`
-- If model has no provider prefix and base URL is set, cakit runs OpenHands with `openai/<model>` to satisfy LiteLLM provider routing.
+- If the model has no provider prefix and a base URL is set, cakit runs OpenHands with `openai/<model>` to satisfy LiteLLM provider routing.
 
 **Image and Video Input**
 - OpenHands headless CLI does not provide documented `--image` / `--video` run flags.
@@ -38,7 +41,7 @@ This document explains how cakit runs OpenHands CLI and extracts run metadata.
   - Reason: OpenHands can end successfully in two valid event shapes. Tool-based completion uses `FinishObservation`, while direct completion may only emit assistant `MessageEvent`.
   - The order is fixed and format-aware to cover both official shapes without introducing alias field parsing.
 - `output_path`/`raw_output`: captured OpenHands stdout/stderr stream.
-- `trajectory_path`: formatted YAML trace converted from conversation artifacts; if artifacts are unavailable, fallback to formatted raw output.
+- `trajectory_path`: formatted YAML trace converted from conversation artifacts; if artifacts are unavailable, it falls back to formatted raw output.
 
 **Exit Code Rules**
 - cakit marks OpenHands runs as failed (non-zero `exit_code`) when any of the following is true:

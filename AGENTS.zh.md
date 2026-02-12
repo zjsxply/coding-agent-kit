@@ -4,6 +4,7 @@
 - Coding Agent Kit 是面向学术实验的轻量 CLI，用统一方式安装和运行主流 coding agent，并输出结构化统计信息。
 - “coding agent”指 CLI 本体（包括 `cursor-agent`），不包含 IDE 或 IDE 插件。
 - 本仓库为独立项目，仓库根目录即项目根目录。
+- 开源 coding agent 的仓库链接可在 `README.zh.md` 的「支持的 Agent」表格中查看。
 
 ## 环境与依赖
 - 使用 `uv` 管理 Python 环境与依赖。
@@ -15,7 +16,7 @@
 
 ## 常用命令
 - 生成 `.env` 模板：`cakit env --output .env`
-- 安装并配置 agent：`cakit install <agent>`（默认无限制模式/Yolo）
+- 安装并配置 agent：`cakit install <agent>`（默认无限制模式/YOLO）
 - 运行并输出 JSON 统计：`cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--video /path/to/video]`
 - 通用可用性测试流程：`python tests/availability_test.py <agent...>`
 - 安装 Fast Shell Power Tools（推荐）：`cakit tools`

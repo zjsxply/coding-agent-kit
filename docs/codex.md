@@ -2,6 +2,9 @@
 
 This document explains how cakit collects Codex CLI metadata.
 
+**Versioned Installation**
+- `cakit install codex --version <npm_version_or_tag>` installs `@openai/codex@<version>`.
+
 **Sources**
 - CLI stdout from `codex exec --json` (JSONL events).
 - Response file from `codex exec --output-last-message <path>` (written under `CAKIT_OUTPUT_DIR`, defaulting to `~/.cache/cakit`).

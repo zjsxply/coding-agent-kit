@@ -21,8 +21,15 @@ class KimiAgent(CodingAgent):
     supports_videos = True
     _ALLOWED_PROVIDER_TYPES = {"kimi", "openai_legacy", "openai_responses"}
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        result = self._run(["bash", "-lc", "curl -LsSf https://code.kimi.com/install.sh | bash"])
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        if version and version.strip():
+            package_spec = f"kimi-cli=={version.strip()}"
+            if self._ensure_uv():
+                result = self._run(["uv", "tool", "install", "--python", "3.13", package_spec])
+            else:
+                result = self._run(["python", "-m", "pip", "install", package_spec])
+        else:
+            result = self._run(["bash", "-lc", "curl -LsSf https://code.kimi.com/install.sh | bash"])
         config_path = self.configure()
         ok = result.exit_code == 0
         details = result.output

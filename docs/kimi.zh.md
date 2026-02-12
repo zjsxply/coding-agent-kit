@@ -4,13 +4,21 @@
 
 ## 安装
 
-`cakit install kimi` 使用 Kimi 官方安装脚本：
+`cakit install kimi` 默认使用 Kimi 官方安装脚本：
 
 ```bash
 curl -LsSf https://code.kimi.com/install.sh | bash
 ```
 
 上游安装脚本会处理运行时依赖初始化（包括在缺少 `uv` 时自动安装）。
+
+如需安装指定 Kimi CLI 版本：
+
+```bash
+cakit install kimi --version <kimi_cli_version>
+```
+
+传入 `--version` 后，cakit 会安装 `kimi-cli==<version>`（优先使用 `uv tool install --python 3.13`，若本机无 `uv` 则回退到 `pip install`）。
 
 ## API 配置（`cakit configure kimi`）
 
@@ -39,16 +47,16 @@ cakit 仅写 provider 配置：
 `cakit run kimi --image <path>` 已支持。
 
 - cakit 使用 print mode 的 `--prompt` 输入，并在 prompt 中注入图片绝对路径，供 Kimi 读取文件。
-- 图像场景下，如果当前 shell 没有设置 `KIMI_MODEL_CAPABILITIES`，cakit 会在该次运行进程里临时设置为 `image_in`，以便 `ReadMediaFile` 工具可用。
-- 是否能真正读图仍取决于所选模型能力（`image_in`）。若模型不支持图像输入，Kimi 可能失败或直接返回不支持读图。
+- cakit 会在提示中要求 Kimi 使用 `ReadMediaFile` 打开图片路径后再回答。
+- 是否能真正读图仍取决于所选模型能力。若模型不支持图像输入，Kimi 可能失败或直接返回不支持读图。
 
 ## 视频输入
 
 `cakit run kimi --video <path>` 已支持。
 
 - 有视频场景：cakit 使用 print mode 的 `--prompt` 输入，并在 prompt 中注入视频绝对路径。
-- 视频场景下，如果当前 shell 没有设置 `KIMI_MODEL_CAPABILITIES`，cakit 会在该次运行进程里临时设置为 `video_in`（同时传图+视频时为 `image_in,video_in`），以便 `ReadMediaFile` 工具可用。
-- 是否能真正读视频仍取决于所选模型能力（`video_in`）。若模型不支持视频输入，Kimi 可能失败或直接返回不支持读视频。
+- cakit 会在提示中要求 Kimi 使用 `ReadMediaFile` 打开视频路径后再回答。
+- 是否能真正读视频仍取决于所选模型能力。若模型不支持视频输入，Kimi 可能失败或直接返回不支持读视频。
 
 ## Agent Swarm
 

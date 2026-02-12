@@ -17,11 +17,16 @@ class OpenHandsAgent(CodingAgent):
     binary = "openhands"
     _CONVERSATION_ID_RE = re.compile(r"Conversation ID:\s*([0-9a-fA-F-]{32,36})")
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        if self._has_uv():
-            result = self._run(["uv", "tool", "install", "openhands", "--python", "3.12"])
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        package_spec = "openhands"
+        if version:
+            normalized = version.strip()
+            if normalized:
+                package_spec = f"openhands=={normalized}"
+        if self._ensure_uv():
+            result = self._run(["uv", "tool", "install", package_spec, "--python", "3.12"])
         else:
-            result = self._run(["python", "-m", "pip", "install", "openhands"])
+            result = self._run(["python", "-m", "pip", "install", package_spec])
         ok = result.exit_code == 0
         return InstallResult(
             agent=self.name,
@@ -122,9 +127,6 @@ class OpenHandsAgent(CodingAgent):
         if result.exit_code == 0 and text:
             return text
         return None
-
-    def _has_uv(self) -> bool:
-        return self._run(["bash", "-lc", "command -v uv"]).exit_code == 0
 
     def _build_run_env(self) -> tuple[Dict[str, str], Optional[str]]:
         api_key = os.environ.get("LLM_API_KEY")

@@ -4,7 +4,7 @@ This document explains how cakit installs and configures Kimi Code CLI.
 
 ## Install
 
-`cakit install kimi` uses the official installer script:
+`cakit install kimi` uses the official installer script by default:
 
 ```bash
 curl -LsSf https://code.kimi.com/install.sh | bash
@@ -12,7 +12,15 @@ curl -LsSf https://code.kimi.com/install.sh | bash
 
 The upstream installer handles runtime bootstrap (including `uv` when needed).
 
-## API Configure (`cakit configure kimi`)
+To install a specific Kimi CLI version:
+
+```bash
+cakit install kimi --version <kimi_cli_version>
+```
+
+When `--version` is provided, cakit installs `kimi-cli==<version>` (prefers `uv tool install --python 3.13`, falls back to `pip install` if `uv` is unavailable).
+
+## API Configuration (`cakit configure kimi`)
 
 When `KIMI_API_KEY` is set, cakit writes `~/.kimi/config.toml` using Kimi CLI provider/model format.
 
@@ -22,7 +30,7 @@ Environment variable mapping:
 | --- | --- | --- |
 | `KIMI_API_KEY` | Provider API key | required |
 | `KIMI_BASE_URL` | Provider base URL | required |
-| `KIMI_MODEL_NAME` | Upstream model id (`model`), used at run-time `--model` | optional |
+| `KIMI_MODEL_NAME` | Upstream model ID (`model`), used for runtime `--model` | optional |
 | `CAKIT_KIMI_PROVIDER_TYPE` | Provider `type` in Kimi config | required (`kimi`, `openai_legacy`, `openai_responses`) |
 
 If any required variable above is missing, or `CAKIT_KIMI_PROVIDER_TYPE` is outside the allowed set, `cakit configure kimi` returns `config_path: null` and does not write a config file.
@@ -39,16 +47,16 @@ Reference:
 `cakit run kimi --image <path>` is supported.
 
 - cakit uses print mode `--prompt` input and injects absolute image paths into the prompt so Kimi can read the files.
-- For image runs, if `KIMI_MODEL_CAPABILITIES` is not set in the shell, cakit sets it to `image_in` for that run process so `ReadMediaFile` can be available.
-- Image understanding still depends on the selected model capability (`image_in`). If the model does not support image input, Kimi may fail or return that image reading is unsupported.
+- cakit prompts Kimi to use `ReadMediaFile` to open image paths before answering.
+- Image understanding still depends on the selected model capability. If the model does not support image input, Kimi may fail or report that image reading is unsupported.
 
 ## Video Input
 
 `cakit run kimi --video <path>` is supported.
 
-- With videos: cakit uses print mode `--prompt` input and injects absolute video paths into the prompt.
-- For video runs, if `KIMI_MODEL_CAPABILITIES` is not set in the shell, cakit sets it to `video_in` (or `image_in,video_in` when both image and video inputs are provided) so `ReadMediaFile` can be available.
-- Video understanding depends on the selected model capability (`video_in`). If the model does not support video input, Kimi may fail or return that video reading is unsupported.
+- For video runs, cakit uses print mode `--prompt` input and injects absolute video paths into the prompt.
+- cakit prompts Kimi to use `ReadMediaFile` to open video paths before answering.
+- Video understanding depends on the selected model capability. If the model does not support video input, Kimi may fail or report that video reading is unsupported.
 
 ## Agent Swarm
 
@@ -56,7 +64,7 @@ Kimi supports Agent Swarm style workflows. You can trigger it directly in prompt
 
 - `Can you launch multiple subagents to solve this and summarize the results?`
 
-## Run-time Model and Update Behavior
+## Runtime Model and Update Behavior
 
 - cakit always passes model via CLI flag: `kimi ... --model <KIMI_MODEL_NAME>`.
 - `cakit run kimi --model <name>` takes priority for that run (it overrides `KIMI_MODEL_NAME` in the run process, then restores it).

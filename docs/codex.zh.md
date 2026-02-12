@@ -2,6 +2,9 @@
 
 本文说明 cakit 如何收集 Codex CLI 的统计与元信息。
 
+**安装版本**
+- `cakit install codex --version <npm_version_or_tag>` 会安装 `@openai/codex@<version>`。
+
 **数据来源**
 - `codex exec --json` 的 stdout（JSONL 事件）。
 - `codex exec --output-last-message <path>` 输出的响应文件（写入 `CAKIT_OUTPUT_DIR`，默认 `~/.cache/cakit`）。

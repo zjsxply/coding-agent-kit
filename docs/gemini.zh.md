@@ -2,6 +2,9 @@
 
 本文说明 cakit 如何运行 Gemini CLI 并提取运行统计信息。
 
+**安装版本**
+- `cakit install gemini --version <npm_version_or_tag>` 会安装 `@google/gemini-cli@<version>`。
+
 **数据来源**
 - `gemini -p ... --output-format json --approval-mode yolo` 的 stdout/stderr。
 - 本地遥测日志：`~/.gemini/telemetry.log`。

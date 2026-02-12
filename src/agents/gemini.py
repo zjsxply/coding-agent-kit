@@ -17,8 +17,8 @@ class GeminiAgent(CodingAgent):
     supports_images = True
     supports_videos = True
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        result = self._npm_install("@google/gemini-cli", scope)
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        result = self._npm_install("@google/gemini-cli", scope, version=version)
         config_path = self.configure()
         ok = result.exit_code == 0
         details = result.output

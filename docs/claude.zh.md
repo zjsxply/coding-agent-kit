@@ -2,6 +2,9 @@
 
 本文说明 cakit 如何运行 Claude Code 并提取统计信息。
 
+**安装版本**
+- `cakit install claude --version <npm_version_or_tag>` 会安装 `@anthropic-ai/claude-code@<version>`。
+
 **数据来源**
 - `~/.npm-global/bin/claude -p --output-format stream-json --verbose ...` 的 stdout（每行一个 JSON 对象，类似 JSONL）。
 - 环境变量：`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`、`CAKIT_CLAUDE_USE_OAUTH`、`ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`/`ANTHROPIC_DEFAULT_SONNET_MODEL`/`ANTHROPIC_DEFAULT_HAIKU_MODEL`、`CLAUDE_CODE_SUBAGENT_MODEL`、`OTEL_EXPORTER_OTLP_ENDPOINT` 等。

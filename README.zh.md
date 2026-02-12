@@ -17,26 +17,33 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 默认无限制模式（Yolo）。
 
 ```bash
-cakit install <agent> [--scope user|global]
+cakit install <agent> [--scope user|global] [--version <value>]
 ```
 
 默认 `--scope user` 会把 npm 类 agent 安装到 `~/.npm-global`（无需 sudo），请确保 `~/.npm-global/bin` 在 `PATH` 中。
 如需全局安装，使用 `--scope global`（等价于 `npm install -g`，可能需要 sudo）。
+可使用 `--version` 指定安装版本/引用：
+- `codex` / `claude` / `copilot` / `gemini` / `qwen`：npm 版本号或 tag（例如 `0.98.0`）。
+- `cursor`：Cursor 构建号（例如 `2026.01.28-fd13201`）。
+- `kimi`：`kimi-cli` 包版本（例如 `1.9.0`）。
+- `openhands`：`openhands` 包版本（例如 `1.12.1`）。
+- `swe-agent`：上游 release tag（例如 `v1.0.0`）。
+- `trae-oss`：git 引用（tag / branch / commit）。
 
 #### 支持的 Agent
 
-| 名称 | 官网 | 文档 | 备注 |
-| --- | --- | --- | --- |
-| claude | [Claude](https://www.anthropic.com/claude) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) | — |
-| codex | [OpenAI Codex](https://openai.com/codex) | [Codex CLI](https://developers.openai.com/codex/cli) | — |
-| cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — |
-| copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — |
-| gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | — |
-| kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | — |
-| qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | — |
-| openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | — |
-| swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | — |
-| trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | OSS 版 Trae Agent，用于与其他 Trae 产品区分 |
+| 名称 | 官网 | 文档 | 开源仓库 | 备注 |
+| --- | --- | --- | --- | --- |
+| claude | [Claude](https://www.anthropic.com/claude) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/quickstart) | — | — |
+| codex | [OpenAI Codex](https://openai.com/codex) | [Codex CLI](https://developers.openai.com/codex/cli) | [openai/codex](https://github.com/openai/codex) | — |
+| cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — | — |
+| copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — | — |
+| gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) | — |
+| kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | [moonshotai/kimi-cli](https://github.com/moonshotai/kimi-cli) | — |
+| qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) | — |
+| openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | — |
+| swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) | — |
+| trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | [bytedance/trae-agent](https://github.com/bytedance/trae-agent) | OSS 版 Trae Agent，用于与其他 Trae 产品区分 |
 
 #### 登录方式
 
@@ -202,7 +209,7 @@ cakit tools
 - [ ] 调整所有 agent 配置/数据路径（如 `KIMI_SHARE_DIR`），避免与主机其他 agent 冲突
 - [ ] 支持 MCP
 - [ ] 支持 balanced 模式
-- [ ] 支持安装指定版本
+- [x] 支持安装指定版本
 - [x] 校验 Kimi token 统计口径（含 subagent 聚合）
 
 说明：目前仅支持 Linux amd64。

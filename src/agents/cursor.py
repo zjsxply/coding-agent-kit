@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import platform
+import re
+import shutil
+import tarfile
+import tempfile
+import time
+import urllib.request
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodingAgent
+from .base import CodingAgent, CommandResult
 from ..models import InstallResult, RunResult
 from ..utils import load_json_payloads
 
@@ -13,13 +21,18 @@ class CursorAgent(CodingAgent):
     display_name = "Cursor Agent"
     binary = "cursor-agent"
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        result = self._run(["bash", "-c", "curl -fsS https://cursor.com/install | bash"])
+    _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        if version and version.strip():
+            result = self._install_specific_version(version.strip())
+        else:
+            result = self._run(["bash", "-c", "curl -fsS https://cursor.com/install | bash"])
         ok = result.exit_code == 0
         details = result.output
         return InstallResult(
             agent=self.name,
-            version=self.get_version(),
+            version=self.get_version() if ok else None,
             ok=ok,
             details=details,
             config_path=None,
@@ -211,3 +224,98 @@ class CursorAgent(CodingAgent):
             return int(value)
         except Exception:
             return None
+
+    def _install_specific_version(self, version: str) -> CommandResult:
+        started = time.monotonic()
+        logs: List[str] = []
+        try:
+            if not self._VERSION_PATTERN.fullmatch(version):
+                raise RuntimeError("invalid Cursor version format")
+            os_name = self._map_os(platform.system())
+            arch = self._map_arch(platform.machine())
+            if not os_name or not arch:
+                raise RuntimeError(
+                    f"unsupported platform for cursor version install: {platform.system()}/{platform.machine()}"
+                )
+            url = f"https://downloads.cursor.com/lab/{version}/{os_name}/{arch}/agent-cli-package.tar.gz"
+            logs.append(f"download_url={url}")
+
+            staging_root = Path(tempfile.mkdtemp(prefix="cakit-cursor-"))
+            archive_path = staging_root / "agent-cli-package.tar.gz"
+            extracted_root = staging_root / "extract"
+            extracted_root.mkdir(parents=True, exist_ok=True)
+            try:
+                request = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": "curl/8.0.0",
+                        "Accept": "*/*",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=60) as response, archive_path.open("wb") as file:
+                    shutil.copyfileobj(response, file)
+                with tarfile.open(archive_path, mode="r:gz") as archive:
+                    archive.extractall(path=extracted_root)
+                package_root = self._find_cursor_package_root(extracted_root)
+                target_binary = package_root / "cursor-agent"
+                if not target_binary.is_file():
+                    raise RuntimeError("cursor-agent binary missing from downloaded package")
+
+                final_dir = Path.home() / ".local" / "share" / "cursor-agent" / "versions" / version
+                final_dir.parent.mkdir(parents=True, exist_ok=True)
+                if final_dir.exists():
+                    shutil.rmtree(final_dir)
+                shutil.move(str(package_root), str(final_dir))
+
+                bin_dir = Path.home() / ".local" / "bin"
+                bin_dir.mkdir(parents=True, exist_ok=True)
+                final_binary = final_dir / "cursor-agent"
+                for link_name in ("agent", "cursor-agent"):
+                    link = bin_dir / link_name
+                    if link.exists() or link.is_symlink():
+                        link.unlink()
+                    link.symlink_to(final_binary)
+            finally:
+                shutil.rmtree(staging_root, ignore_errors=True)
+
+            logs.append("installed cursor-agent and updated ~/.local/bin symlinks")
+            return CommandResult(
+                exit_code=0,
+                stdout="\n".join(logs),
+                stderr="",
+                duration_seconds=time.monotonic() - started,
+            )
+        except Exception as exc:
+            return CommandResult(
+                exit_code=1,
+                stdout="\n".join(logs),
+                stderr=str(exc),
+                duration_seconds=time.monotonic() - started,
+            )
+
+    @staticmethod
+    def _map_os(system_name: str) -> Optional[str]:
+        mapping = {
+            "Linux": "linux",
+            "Darwin": "darwin",
+        }
+        return mapping.get(system_name)
+
+    @staticmethod
+    def _map_arch(machine: str) -> Optional[str]:
+        normalized = machine.strip().lower()
+        mapping = {
+            "x86_64": "x64",
+            "amd64": "x64",
+            "arm64": "arm64",
+            "aarch64": "arm64",
+        }
+        return mapping.get(normalized)
+
+    @staticmethod
+    def _find_cursor_package_root(extracted_root: Path) -> Path:
+        candidates = [path.parent for path in extracted_root.rglob("cursor-agent") if path.is_file()]
+        if not candidates:
+            raise RuntimeError("failed to locate cursor-agent in downloaded archive")
+        candidates.sort(key=lambda path: len(path.parts))
+        return candidates[0]

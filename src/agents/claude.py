@@ -16,8 +16,8 @@ class ClaudeAgent(CodingAgent):
     supports_images = True
     supports_videos = False
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        result = self._npm_install("@anthropic-ai/claude-code", scope)
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        result = self._npm_install("@anthropic-ai/claude-code", scope, version=version)
         ok = result.exit_code == 0
         details = result.output
         return InstallResult(

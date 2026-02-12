@@ -14,12 +14,15 @@ class TraeOssAgent(CodingAgent):
     display_name = "Trae Agent (OSS)"
     binary = "trae-cli"
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        commit = os.environ.get("CAKIT_TRAE_OSS_COMMIT")
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        commit = version.strip() if version and version.strip() else os.environ.get("CAKIT_TRAE_OSS_COMMIT")
         url = "git+https://github.com/bytedance/trae-agent.git"
         if commit:
             url = f"{url}@{commit}"
-        result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url])
+        if self._ensure_uv():
+            result = self._run(["uv", "tool", "install", "--python", "3.12", url])
+        else:
+            result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url])
         config_path = self.configure()
         ok = result.exit_code == 0
         return InstallResult(

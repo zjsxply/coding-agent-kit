@@ -17,10 +17,13 @@ class SweAgent(CodingAgent):
     display_name = "SWE-agent"
     binary = "sweagent"
 
-    def install(self, *, scope: str = "user") -> InstallResult:
-        version = self._resolve_version()
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        version = self._resolve_version(version)
         url = f"https://github.com/SWE-agent/SWE-agent/archive/refs/tags/{version}.tar.gz"
-        result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url])
+        if self._ensure_uv():
+            result = self._run(["uv", "pip", "install", url])
+        else:
+            result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url])
         config_path = self.configure()
         ok = result.exit_code == 0
         return InstallResult(
@@ -117,7 +120,11 @@ class SweAgent(CodingAgent):
             return text
         return None
 
-    def _resolve_version(self) -> str:
+    def _resolve_version(self, requested: Optional[str]) -> str:
+        if requested:
+            normalized = requested.strip()
+            if normalized:
+                return normalized
         configured = os.environ.get("CAKIT_SWE_AGENT_VERSION")
         if configured:
             return configured

@@ -2,6 +2,9 @@
 
 本文说明 cakit 如何运行 Qwen Code 并提取运行统计信息。
 
+**安装版本**
+- `cakit install qwen --version <npm_version_or_tag>` 会安装 `@qwen-code/qwen-code@<version>`。
+
 **数据来源**
 - `qwen -p ... --output-format json --approval-mode yolo` 的 stdout/stderr。
 - 本地遥测日志：`~/.qwen/telemetry.log`。

@@ -52,6 +52,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default="user",
         help="Install scope for npm-based agents (default: user).",
     )
+    install.add_argument(
+        "--version",
+        help=(
+            "Install a specific agent version. Format depends on agent packaging "
+            "(for example npm version, pip version, release tag, or git ref)."
+        ),
+    )
 
     configure = subparsers.add_parser("configure", help="Configure a coding agent")
     configure.add_argument("agent", choices=list_agents())
@@ -109,8 +116,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_install(agent_name: str, scope: str) -> int:
-    install_result = _install_agent(agent_name, scope=scope)
+def _run_install(agent_name: str, scope: str, version: Optional[str]) -> int:
+    install_result = _install_agent(agent_name, scope=scope, version=version)
     payload = {
         "agent": install_result.agent,
         "ok": install_result.ok,
@@ -291,7 +298,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "install":
-        return _run_install(args.agent, args.scope)
+        return _run_install(args.agent, args.scope, args.version)
     if args.command == "configure":
         return _run_configure(args.agent)
     if args.command == "run":
@@ -395,7 +402,7 @@ def _load_managed_env_keys() -> list[str]:
 
 def _ensure_dependencies(agent_name: str) -> bool:
     needs_node = agent_name in {"codex", "claude", "copilot", "gemini", "qwen"}
-    needs_uv = agent_name in {"openhands"}
+    needs_uv = agent_name in {"openhands", "swe-agent", "trae-oss", "kimi"}
     ok = True
 
     if needs_node and not _ensure_node_tools():
@@ -406,7 +413,7 @@ def _ensure_dependencies(agent_name: str) -> bool:
     return ok
 
 
-def _install_agent(agent_name: str, scope: str) -> "InstallResult":
+def _install_agent(agent_name: str, scope: str, version: Optional[str] = None) -> "InstallResult":
     from .models import InstallResult
 
     if not _ensure_dependencies(agent_name):
@@ -418,7 +425,7 @@ def _install_agent(agent_name: str, scope: str) -> "InstallResult":
             config_path=None,
         )
     agent = create_agent(agent_name)
-    return agent.install(scope=scope)
+    return agent.install(scope=scope, version=version)
 
 
 def _install_node_linux() -> bool:
