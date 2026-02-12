@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
-from ..utils import load_json_payloads
+from ..utils import format_trace_text
 
 
 class GeminiAgent(CodingAgent):
@@ -59,28 +59,19 @@ class GeminiAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        model = os.environ.get("GEMINI_MODEL") or os.environ.get("GOOGLE_GEMINI_MODEL")
+        model = os.environ.get("GEMINI_MODEL")
         images = images or []
         videos = videos or []
         if images or videos:
-            media_paths: List[str] = []
-            for path in [*images, *videos]:
-                try:
-                    ref = str(path.relative_to(self.workdir))
-                except Exception:
-                    ref = str(path)
-                media_paths.append(ref)
-            quoted = ", ".join(json.dumps(item) for item in media_paths)
-            prompt = (
-                f"Please call read_many_files(paths=[{quoted}]) to load these media files before answering.\n\n{prompt}"
-            )
+            staged_paths = self._stage_media_files([*images, *videos], stage_dir_name=".cakit-media")
+            prompt = self._build_media_reference_prompt(prompt, staged_paths)
         telemetry_path = Path.home() / ".gemini" / "telemetry.log"
         telemetry_path.parent.mkdir(parents=True, exist_ok=True)
         if not (Path.home() / ".gemini" / "settings.json").exists():
             self.configure()
         env = {
             "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY"),
-            "GOOGLE_API_KEY": os.environ.get("CAKIT_GEMINI_GOOGLE_API_KEY"),
+            "GOOGLE_API_KEY": os.environ.get("GOOGLE_API_KEY"),
             "GOOGLE_GEMINI_BASE_URL": os.environ.get("GOOGLE_GEMINI_BASE_URL"),
             "GOOGLE_CLOUD_PROJECT": os.environ.get("GOOGLE_CLOUD_PROJECT"),
         }
@@ -97,22 +88,31 @@ class GeminiAgent(CodingAgent):
             cmd.extend(["--model", model])
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        payloads = load_json_payloads(output)
-        usage, models_usage, tool_calls = self._extract_usage(payloads)
+        payload = self._parse_output_json(output)
+        models_usage, llm_calls, tool_calls = self._extract_stats(payload)
+        response = self._extract_response(payload)
         output_path = self._write_output(self.name, output)
-        models_usage = self._ensure_models_usage(models_usage, usage, model)
-        response = self._extract_response(payloads, output)
+        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
+        run_exit_code = self._resolve_strict_run_exit_code(
+            command_exit_code=result.exit_code,
+            models_usage=models_usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            response=response,
+        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
             models_usage=models_usage,
             tool_calls=tool_calls,
+            llm_calls=llm_calls,
             telemetry_log=str(telemetry_path),
             response=response,
-            exit_code=result.exit_code,
+            exit_code=run_exit_code,
             output_path=str(output_path),
             raw_output=output,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
@@ -122,124 +122,90 @@ class GeminiAgent(CodingAgent):
             return text
         return None
 
-    def _extract_usage(
-        self, payloads: List[Dict[str, Any]]
-    ) -> Tuple[Optional[Dict[str, int]], Dict[str, Dict[str, int]], Optional[int]]:
-        data = next((payload for payload in payloads if isinstance(payload, dict) and "stats" in payload), None)
-        models_usage: Dict[str, Dict[str, int]] = {}
-        tool_calls: Optional[int] = None
-        if not isinstance(data, dict):
-            return None, models_usage, tool_calls
-        stats = data.get("stats")
-        if not isinstance(stats, dict):
-            return None, models_usage, tool_calls
-        models = stats.get("models")
-        if isinstance(models, dict):
-            for model_name, model_stats in models.items():
-                usage = self._extract_tokens_payload(model_stats)
-                if usage:
-                    models_usage[str(model_name)] = usage
-        tools = stats.get("tools")
-        if isinstance(tools, dict):
-            total_calls = self._as_int(tools.get("totalCalls"))
-            if total_calls is not None:
-                tool_calls = total_calls
-        totals = None
-        if models_usage:
-            totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-            for usage in models_usage.values():
-                totals["prompt_tokens"] += usage.get("prompt_tokens", 0) or 0
-                totals["completion_tokens"] += usage.get("completion_tokens", 0) or 0
-                totals["total_tokens"] += usage.get("total_tokens", 0) or 0
-        return totals, models_usage, tool_calls
-
-    def _extract_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
-        messages: List[str] = []
-
-        def add_text(value: Any) -> None:
-            if isinstance(value, str):
-                cleaned = value.strip()
-                if cleaned:
-                    messages.append(cleaned)
-
-        def add_from_candidates(obj: Any) -> None:
-            if not isinstance(obj, dict):
-                return
-            candidates = obj.get("candidates")
-            if not isinstance(candidates, list):
-                return
-            for candidate in candidates:
-                if not isinstance(candidate, dict):
-                    continue
-                content = candidate.get("content") or candidate.get("message")
-                if isinstance(content, dict):
-                    parts = content.get("parts")
-                    if isinstance(parts, list):
-                        pieces: List[str] = []
-                        for part in parts:
-                            if not isinstance(part, dict):
-                                continue
-                            text = part.get("text")
-                            if isinstance(text, str) and text.strip():
-                                pieces.append(text.strip())
-                        if pieces:
-                            messages.append("\n".join(pieces))
-                            continue
-                    add_text(content.get("text"))
-                add_text(candidate.get("text"))
-
-        for payload in payloads:
-            if not isinstance(payload, dict):
-                continue
-            add_from_candidates(payload)
-            add_from_candidates(payload.get("response"))
-            add_from_candidates(payload.get("result"))
-            for key in ("output", "final", "answer"):
-                if isinstance(payload.get(key), str):
-                    add_text(payload.get(key))
-            payload_type = payload.get("type")
-            if payload_type in {"final", "response", "output"}:
-                add_text(payload.get("text"))
-
-        if messages:
-            return messages[-1]
-
-        if output:
-            stdout = output
-            marker = "----- STDERR -----"
-            if marker in stdout:
-                stdout = stdout.split(marker, 1)[0]
-            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-            if lines:
-                return lines[-1]
+    def _parse_output_json(self, output: str) -> Optional[Dict[str, Any]]:
+        stdout = self._stdout_only(output).strip()
+        if not stdout:
+            return None
+        parsed = self._extract_last_json_value(stdout)
+        if isinstance(parsed, dict):
+            return parsed
         return None
 
-    def _extract_tokens_payload(self, payload: Any) -> Optional[Dict[str, int]]:
+    def _extract_stats(
+        self, data: Optional[Dict[str, Any]]
+    ) -> Tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
+        models_usage: Dict[str, Dict[str, int]] = {}
+        llm_calls: Optional[int] = None
+        tool_calls: Optional[int] = None
+        if not isinstance(data, dict):
+            return models_usage, llm_calls, tool_calls
+        stats = data.get("stats")
+        if not isinstance(stats, dict):
+            return {}, None, None
+        models = stats.get("models")
+        if not isinstance(models, dict) or not models:
+            return {}, None, None
+
+        total_llm_calls = 0
+        for model_name, model_stats in models.items():
+            if not isinstance(model_name, str) or not model_name.strip():
+                return {}, None, None
+            if not isinstance(model_stats, dict):
+                return {}, None, None
+            usage = self._extract_tokens_payload(model_stats.get("tokens"))
+            api_calls = self._extract_total_requests(model_stats.get("api"))
+            if usage is None or api_calls is None:
+                return {}, None, None
+            models_usage[model_name] = usage
+            total_llm_calls += api_calls
+
+        llm_calls = total_llm_calls
+        tools = stats.get("tools")
+        if not isinstance(tools, dict):
+            return {}, None, None
+        total_calls = self._as_int(tools.get("totalCalls"))
+        if total_calls is None:
+            return {}, None, None
+        tool_calls = total_calls
+        return models_usage, llm_calls, tool_calls
+
+    def _extract_response(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
         if not isinstance(payload, dict):
             return None
-        tokens = payload.get("tokens")
+        response = payload.get("response")
+        if isinstance(response, str):
+            cleaned = response.strip()
+            if cleaned:
+                return cleaned
+        return None
+
+    def _extract_tokens_payload(self, tokens: Any) -> Optional[Dict[str, int]]:
         if not isinstance(tokens, dict):
             return None
         prompt = self._as_int(tokens.get("prompt"))
-        if prompt is None:
-            prompt = self._as_int(tokens.get("input"))
         completion = self._as_int(tokens.get("candidates"))
-        if completion is None:
-            completion = self._as_int(tokens.get("output"))
         total = self._as_int(tokens.get("total"))
-        if prompt is None and completion is None and total is None:
+        if prompt is None or completion is None or total is None:
             return None
-        if total is None:
-            total = (prompt or 0) + (completion or 0)
         return {
-            "prompt_tokens": prompt or 0,
-            "completion_tokens": completion or 0,
-            "total_tokens": total or 0,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
         }
 
-    @staticmethod
-    def _as_int(value: Any) -> Optional[int]:
-        try:
-            return int(value)
-        except Exception:
+    def _extract_total_requests(self, api: Any) -> Optional[int]:
+        if not isinstance(api, dict):
             return None
+        return self._as_int(api.get("totalRequests"))
+
+    def _build_media_reference_prompt(self, prompt: str, media_paths: List[Path]) -> str:
+        lines = ["Use these local media files as additional context before answering:"]
+        for path in media_paths:
+            try:
+                rel_path = path.relative_to(self.workdir).as_posix()
+            except Exception:
+                rel_path = path.as_posix()
+            lines.append(f"@{rel_path}")
+        lines.append("")
+        lines.append(prompt)
+        return "\n".join(lines)

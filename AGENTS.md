@@ -10,6 +10,8 @@
 - Install dependencies: `uv sync`
 - Before running any Python command, activate the environment: `source .venv/bin/activate`
 - For API auth, generate `.env` from `.env.template` and run `set -a; source .env; set +a` in the current shell.
+- In agent implementation code, read cakit-managed env vars directly from `os.environ` (do not read managed vars from `base_env`).
+- `--env-file` is for extra pass-through variables that are not managed by `.env.template`; managed keys should come from the current shell env (for example via `.env` + `source`).
 
 ## Common Commands
 - Generate `.env` template: `cakit env --output .env`
@@ -23,6 +25,7 @@
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
   - `python tests/availability_test.py <agent...>`
+- By default, repeated stability runs are not required. If one run succeeds with correct response semantics and required stats fields, treat the capability as available.
 - Do not add code-level unit/integration test points for coding agent availability or stats extraction. Validate with `tests/availability_test.py` and manual, subjective review of real outputs.
 - Do not treat automated pass/fail in scripts as sufficient by itself; always inspect response content and judge correctness manually.
 - If manual validation is required, run tests in this order and in the same shell:
@@ -70,6 +73,7 @@
 - No output truncation (no `_preview`); output field is `raw_output`.
 - `get_version` must not use fallbacks.
 - Do not set hardcoded default values for environment variables in code (for example, avoid `os.environ.get("X") or "default"`). Read env vars as-is; if a required value is missing, fail clearly or skip writing config.
+- `--model` override must not mutate current process `os.environ`; only apply overrides in cakit-managed child process environment.
 - Keep upstream coding agent environment variable names unchanged. If an upstream name is duplicated across different coding agents, add a coding-agent-specific prefix to disambiguate.
 - OpenHands must use upstream env names `LLM_API_KEY`, `LLM_MODEL`, and `LLM_BASE_URL` only. Do not add or support `OPENHANDS_*` aliases.
 - Any environment variable defined only by cakit (not by upstream coding agents) must use the `CAKIT_` prefix.

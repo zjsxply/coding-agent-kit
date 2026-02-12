@@ -116,9 +116,9 @@ Image and video input support:
 | codex | ✓ |  | `--image` (multi-image) |
 | cursor |  |  |  |
 | copilot |  |  |  |
-| gemini | ✓ | ✓ | `read_many_files` |
+| gemini | ✓ | ✓ | staged media + `@path` injection |
 | kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`) |
-| qwen | ✓ | ✓ | `@{path}` injection |
+| qwen | ✓ | ✓ | `@{path}` injection; model capability dependent |
 | openhands | ✗ | ✗ | headless CLI has no documented `--image` / `--video` flags |
 | swe-agent |  |  |  |
 | trae-oss |  |  |  |
@@ -172,7 +172,8 @@ Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, 
 - `CAKIT_CODEX_USE_OAUTH`: if set (e.g., `1`), Codex uses OAuth login instead of API key.
 - `CAKIT_CLAUDE_USE_OAUTH`: if set (e.g., `1`) and both Claude API key/token are present, prefer OAuth token.
 - `CAKIT_KIMI_PROVIDER_TYPE`: Kimi provider `type` (`kimi`, `openai_legacy`, or `openai_responses`).
-- `CAKIT_GEMINI_GOOGLE_API_KEY` / `CAKIT_QWEN_GOOGLE_API_KEY`: per-agent overrides to avoid `GOOGLE_API_KEY` collisions.
+- `GOOGLE_API_KEY`: upstream Gemini/Vertex key used by Gemini CLI.
+- `CAKIT_QWEN_GOOGLE_API_KEY`: cakit-only per-agent override for Qwen to avoid `GOOGLE_API_KEY` collisions.
 
 ## Test Coverage Matrix
 
@@ -184,9 +185,9 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 | codex | ✓ | ✓ | ✓ |  |  |  |  | ✓ | 0.98.0 |
 | cursor |  |  |  |  |  |  |  |  |  |
 | copilot |  |  |  |  |  |  |  |  |  |
-| gemini |  |  |  | ⚠ |  |  |  |  | 0.27.3 |
+| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.27.3 |
 | kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
-| qwen |  |  |  | ⚠ |  |  |  |  | 0.10.0 |
+| qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.0 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
 | swe-agent | ✗ |  |  |  |  |  |  |  |  |
 | trae-oss | ✗ |  |  |  |  |  |  |  |  |
@@ -195,12 +196,13 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 
 - [ ] Add `cakit run` flag: disable web search vs fully disable network
 - [ ] Support network on/off toggle
+- [ ] Support `--timeout` in `cakit run` and return partial run artifacts on timeout
 - [x] Support skills
 - [ ] Support `AGENTS.md`
 - [ ] Namespace agent config/cache paths (e.g. `KIMI_SHARE_DIR`) to avoid conflicts with host agents
 - [ ] Support MCP
 - [ ] Support balanced mode
 - [ ] Support installing specific versions
-- [ ] Validate Kimi token accounting semantics (including subagent aggregation)
+- [x] Validate Kimi token accounting semantics (including subagent aggregation)
 
 Note: currently only supports Linux amd64.

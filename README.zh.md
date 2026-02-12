@@ -116,9 +116,9 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 | codex | ✓ |  | `--image`（支持多图） |
 | cursor |  |  |  |
 | copilot |  |  |  |
-| gemini | ✓ | ✓ | `read_many_files` |
+| gemini | ✓ | ✓ | staged 媒体 + `@path` 注入 |
 | kimi | ✓ | ✓ | `ReadMediaFile` + 模型能力（`image_in`/`video_in`） |
-| qwen | ✓ | ✓ | `@{path}` 注入 |
+| qwen | ✓ | ✓ | `@{path}` 注入；是否有效取决于模型能力 |
 | openhands | ✗ | ✗ | headless CLI 未提供已文档化的 `--image` / `--video` 参数 |
 | swe-agent |  |  |  |
 | trae-oss |  |  |  |
@@ -172,7 +172,8 @@ cakit tools
 - `CAKIT_CODEX_USE_OAUTH`：若设置（如 `1`），Codex 使用 OAuth 登录而非 API Key。
 - `CAKIT_CLAUDE_USE_OAUTH`：若设置（如 `1`）且 Claude 的 API key/token 同时存在时，优先使用 OAuth token。
 - `CAKIT_KIMI_PROVIDER_TYPE`：Kimi provider `type`（`kimi`、`openai_legacy`、`openai_responses`）。
-- `CAKIT_GEMINI_GOOGLE_API_KEY` / `CAKIT_QWEN_GOOGLE_API_KEY`：按 agent 覆盖，避免 `GOOGLE_API_KEY` 冲突。
+- `GOOGLE_API_KEY`：Gemini CLI 使用的上游 Gemini/Vertex API key。
+- `CAKIT_QWEN_GOOGLE_API_KEY`：Qwen 专用的 cakit 覆盖变量，用于避免 `GOOGLE_API_KEY` 冲突。
 
 ## 测试覆盖矩阵
 
@@ -184,9 +185,9 @@ cakit tools
 | codex | ✓ | ✓ | ✓ |  |  |  |  | ✓ | 0.98.0 |
 | cursor |  |  |  |  |  |  |  |  |  |
 | copilot |  |  |  |  |  |  |  |  |  |
-| gemini |  |  |  | ⚠ |  |  |  |  | 0.27.3 |
+| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.27.3 |
 | kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
-| qwen |  |  |  | ⚠ |  |  |  |  | 0.10.0 |
+| qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.0 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
 | swe-agent | ✗ |  |  |  |  |  |  |  |  |
 | trae-oss | ✗ |  |  |  |  |  |  |  |  |
@@ -195,12 +196,13 @@ cakit tools
 
 - [ ] `cakit run` 增加参数：禁用联网搜索 / 完全禁用联网
 - [ ] 支持开关联网
+- [ ] `cakit run` 支持 `--timeout`，并在超时时返回半成品运行产物
 - [x] 支持 skills
 - [ ] 支持 `AGENTS.md`
 - [ ] 调整所有 agent 配置/数据路径（如 `KIMI_SHARE_DIR`），避免与主机其他 agent 冲突
 - [ ] 支持 MCP
 - [ ] 支持 balanced 模式
 - [ ] 支持安装指定版本
-- [ ] 校验 Kimi token 统计口径（含 subagent 聚合）
+- [x] 校验 Kimi token 统计口径（含 subagent 聚合）
 
 说明：目前仅支持 Linux amd64。

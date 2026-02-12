@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import abc
+import json
 import os
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional
 
 
 @dataclass
@@ -272,6 +273,80 @@ class CodingAgent(abc.ABC):
             raw_output=message,
             trajectory_path=None,
         )
+
+    @staticmethod
+    def _stdout_only(output: str) -> str:
+        marker = "----- STDERR -----"
+        if marker in output:
+            return output.split(marker, 1)[0]
+        return output
+
+    def _extract_last_json_value(self, text: str) -> Optional[Any]:
+        decoder = json.JSONDecoder()
+        last_value: Optional[Any] = None
+        index = 0
+        while index < len(text):
+            char = text[index]
+            if char not in {"{", "["}:
+                index += 1
+                continue
+            try:
+                value, end = decoder.raw_decode(text, index)
+            except Exception:
+                index += 1
+                continue
+            if isinstance(value, (dict, list)):
+                last_value = value
+            index = end
+        return last_value
+
+    @staticmethod
+    def _as_int(value: Any) -> Optional[int]:
+        if isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _resolve_strict_run_exit_code(
+        *,
+        command_exit_code: int,
+        models_usage: Dict[str, Dict[str, int]],
+        llm_calls: Optional[int],
+        tool_calls: Optional[int],
+        response: Optional[str],
+    ) -> int:
+        if command_exit_code != 0:
+            return command_exit_code
+        if not models_usage:
+            return 1
+        if llm_calls is None or llm_calls < 1:
+            return 1
+        if tool_calls is None or tool_calls < 0:
+            return 1
+        if not isinstance(response, str) or not response.strip():
+            return 1
+        return 0
+
+    def _stage_media_files(self, media_paths: list[Path], *, stage_dir_name: str = ".cakit-media") -> list[Path]:
+        staged: list[Path] = []
+        stage_dir = self.workdir / stage_dir_name
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        for index, media_path in enumerate(media_paths):
+            src = media_path.expanduser().resolve()
+            suffix = src.suffix
+            stem = src.stem or "media"
+            safe_stem = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in stem)
+            target = stage_dir / f"{index:02d}-{safe_stem}{suffix}"
+            try:
+                if src != target:
+                    shutil.copy2(src, target)
+                staged.append(target)
+            except Exception:
+                staged.append(src)
+        return staged
 
 
 from ..models import InstallResult, RunResult  # noqa: E402

@@ -2,7 +2,7 @@
 
 本文说明 `--model` 在各 coding agent 上的生效方式。
 
-执行 `cakit run <agent> ... --model <name>` 时，cakit 会在当前 run 进程里为该 agent 覆盖模型相关环境变量，并在 run 结束后恢复。
+执行 `cakit run <agent> ... --model <name>` 时，cakit 仅在该次运行的子进程环境里覆盖模型相关变量，不会修改当前进程的 `os.environ`。
 
 | Agent | `--model` 覆盖的环境变量 | cakit 额外传递的模型命令行参数 |
 | --- | --- | --- |
@@ -10,9 +10,9 @@
 | `codex` | `CODEX_MODEL` | `--model <name>` |
 | `cursor` | `CURSOR_MODEL` | `--model <name>` |
 | `copilot` | `COPILOT_MODEL` | `--model <name>` |
-| `gemini` | `GEMINI_MODEL`、`GOOGLE_GEMINI_MODEL` | `--model <name>` |
+| `gemini` | `GEMINI_MODEL` | `--model <name>` |
 | `kimi` | `KIMI_MODEL_NAME` | `--model <name>` |
-| `qwen` | `QWEN_OPENAI_MODEL`、`QWEN_MODEL` | `--model <name>` |
+| `qwen` | `QWEN_OPENAI_MODEL` | `--model <name>` |
 | `openhands` | `LLM_MODEL` | 无 |
 | `swe-agent` | `SWE_AGENT_MODEL` | `--agent.model.name <name>` |
 | `trae-oss` | `TRAE_AGENT_MODEL` | 无 |

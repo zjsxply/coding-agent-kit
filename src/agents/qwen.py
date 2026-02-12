@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
-from ..utils import load_json_payloads
+from ..utils import format_trace_text
 
 
 class QwenAgent(CodingAgent):
@@ -76,22 +76,18 @@ class QwenAgent(CodingAgent):
         images = images or []
         videos = videos or []
         if images or videos:
-            media_refs: List[str] = []
-            for path in [*images, *videos]:
-                try:
-                    ref = str(path.relative_to(self.workdir))
-                except Exception:
-                    ref = str(path)
-                media_refs.append(f"@{{{ref}}}")
+            media_refs = self._build_media_refs([*images, *videos])
             prompt = "\n".join(media_refs) + "\n\n" + prompt
+
         telemetry_path = str(Path.home() / ".qwen" / "telemetry.log")
         qwen_key = os.environ.get("QWEN_OPENAI_API_KEY")
         qwen_base = os.environ.get("QWEN_OPENAI_BASE_URL")
-        qwen_model = os.environ.get("QWEN_OPENAI_MODEL") or os.environ.get("QWEN_MODEL")
+        qwen_model = os.environ.get("QWEN_OPENAI_MODEL")
+        if isinstance(qwen_model, str):
+            qwen_model = qwen_model.strip() or None
         qwen_google_api_key = os.environ.get("CAKIT_QWEN_GOOGLE_API_KEY")
         env = {
             "OPENAI_API_KEY": qwen_key,
-            "OPENAI_API_BASE": qwen_base,
             "OPENAI_BASE_URL": qwen_base,
             "OPENAI_MODEL": qwen_model,
             "TAVILY_API_KEY": os.environ.get("TAVILY_API_KEY"),
@@ -115,29 +111,40 @@ class QwenAgent(CodingAgent):
             telemetry_path,
             "--telemetry-log-prompts",
         ]
+        if qwen_key:
+            cmd.extend(["--auth-type", "openai"])
         if qwen_model:
             cmd.extend(["--model", qwen_model])
+
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        telemetry = self._read_text(Path(telemetry_path))
-        usage = self._extract_usage_from_telemetry(telemetry) or self._extract_usage_from_output(output)
-        tool_calls = self._count_tool_calls_from_telemetry(telemetry)
-        if tool_calls is None:
-            tool_calls = self._count_tool_calls(output)
+        payload = self._parse_output_json(output)
+        result_payload = self._extract_result_payload(payload)
+        models_usage, llm_calls, tool_calls = self._extract_stats(result_payload)
+        response = self._extract_response(payload, result_payload)
+
         output_path = self._write_output(self.name, output)
-        models_usage = self._ensure_models_usage({}, usage, qwen_model)
-        response = self._extract_response(load_json_payloads(output), output)
+        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
+        run_exit_code = self._resolve_strict_run_exit_code(
+            command_exit_code=result.exit_code,
+            models_usage=models_usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            response=response,
+        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
             models_usage=models_usage,
             tool_calls=tool_calls,
+            llm_calls=llm_calls,
             telemetry_log=telemetry_path,
             response=response,
-            exit_code=result.exit_code,
+            exit_code=run_exit_code,
             output_path=str(output_path),
             raw_output=output,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
@@ -147,231 +154,136 @@ class QwenAgent(CodingAgent):
             return text
         return None
 
-    def _extract_usage_from_telemetry(self, text: Optional[str]) -> Optional[Dict[str, int]]:
-        if not text:
+    def _parse_output_json(self, output: str) -> Optional[Any]:
+        stdout = self._stdout_only(output).strip()
+        if not stdout:
             return None
-        totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        found = False
-        for payload in load_json_payloads(text):
-            usage = self._extract_usage_from_mapping(payload) or self._extract_usage_from_tokens_payload(payload)
-            if not usage:
-                usage = self._extract_usage_from_dotted_keys(payload)
-            if not usage:
+        return self._extract_last_json_value(stdout)
+
+    def _extract_result_payload(self, payload: Optional[Any]) -> Optional[Dict[str, Any]]:
+        if isinstance(payload, dict):
+            if payload.get("type") == "result":
+                return payload
+            return None
+        if not isinstance(payload, list):
+            return None
+        result_payload: Optional[Dict[str, Any]] = None
+        for item in payload:
+            if not isinstance(item, dict):
                 continue
-            found = True
-            totals["prompt_tokens"] += usage.get("prompt_tokens", 0) or 0
-            totals["completion_tokens"] += usage.get("completion_tokens", 0) or 0
-            totals["total_tokens"] += usage.get("total_tokens", 0) or 0
-        if found:
-            return totals
-        return None
+            if item.get("type") == "result":
+                result_payload = item
+        return result_payload
 
-    def _extract_usage_from_output(self, output: str) -> Optional[Dict[str, int]]:
-        if not output:
-            return None
-        for payload in load_json_payloads(output):
-            usage = self._extract_usage_from_mapping(payload)
-            if usage:
-                return usage
-        return None
+    def _extract_stats(
+        self, result_payload: Optional[Dict[str, Any]]
+    ) -> Tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
+        models_usage: Dict[str, Dict[str, int]] = {}
+        if not isinstance(result_payload, dict):
+            return models_usage, None, None
 
-    def _extract_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
-        messages: List[str] = []
+        stats = result_payload.get("stats")
+        if not isinstance(stats, dict):
+            return {}, None, None
 
-        def add_text(value: Any) -> None:
-            if isinstance(value, str):
-                cleaned = value.strip()
-                if cleaned:
-                    messages.append(cleaned)
+        models = stats.get("models")
+        if not isinstance(models, dict) or not models:
+            return {}, None, None
 
-        def add_from_message(message: Any) -> None:
-            if isinstance(message, dict):
-                add_text(message.get("content"))
-                add_text(message.get("text"))
-            else:
-                add_text(message)
+        llm_calls = 0
+        for model_name, model_stats in models.items():
+            if not isinstance(model_name, str) or not model_name.strip():
+                return {}, None, None
+            usage, calls = self._extract_model_usage(model_stats)
+            if usage is None or calls is None:
+                return {}, None, None
+            models_usage[model_name] = usage
+            llm_calls += calls
 
-        def add_from_choices(choices: Any) -> None:
-            if not isinstance(choices, list):
-                return
-            for choice in choices:
-                if not isinstance(choice, dict):
-                    continue
-                message = choice.get("message") or choice.get("delta")
-                add_from_message(message)
+        tools = stats.get("tools")
+        if not isinstance(tools, dict):
+            return {}, None, None
+        tool_calls = self._as_int(tools.get("totalCalls"))
+        if tool_calls is None:
+            return {}, None, None
 
-        for payload in payloads:
-            if not isinstance(payload, dict):
-                continue
-            add_from_choices(payload.get("choices"))
-            event_type = payload.get("type")
-            if isinstance(event_type, str) and "output_text" in event_type:
-                add_text(payload.get("text"))
-            for key in ("output", "final", "response", "answer"):
-                add_text(payload.get(key))
+        return models_usage, llm_calls, tool_calls
 
-        if messages:
-            return messages[-1]
+    def _extract_model_usage(self, model_stats: Any) -> Tuple[Optional[Dict[str, int]], Optional[int]]:
+        if not isinstance(model_stats, dict):
+            return None, None
+        usage = self._extract_tokens_payload(model_stats.get("tokens"))
+        llm_calls = self._extract_total_requests(model_stats.get("api"))
+        if usage is None or llm_calls is None:
+            return None, None
+        return usage, llm_calls
 
-        if output:
-            stdout = output
-            marker = "----- STDERR -----"
-            if marker in stdout:
-                stdout = stdout.split(marker, 1)[0]
-            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-            if lines:
-                return lines[-1]
-        return None
-
-    def _extract_usage_from_tokens_payload(self, payload: Any) -> Optional[Dict[str, int]]:
-        if not isinstance(payload, dict):
-            return None
-        tokens = payload.get("tokens")
+    def _extract_tokens_payload(self, tokens: Any) -> Optional[Dict[str, int]]:
         if not isinstance(tokens, dict):
             return None
         prompt = self._as_int(tokens.get("prompt"))
-        if prompt is None:
-            prompt = self._as_int(tokens.get("input"))
         completion = self._as_int(tokens.get("candidates"))
-        if completion is None:
-            completion = self._as_int(tokens.get("output"))
         total = self._as_int(tokens.get("total"))
-        if prompt is None and completion is None and total is None:
+        if prompt is None or completion is None or total is None:
             return None
-        if total is None:
-            total = (prompt or 0) + (completion or 0)
         return {
-            "prompt_tokens": prompt or 0,
-            "completion_tokens": completion or 0,
-            "total_tokens": total or 0,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
         }
 
-    def _extract_usage_from_dotted_keys(self, payload: Any) -> Optional[Dict[str, int]]:
-        totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        found = False
+    def _extract_total_requests(self, api: Any) -> Optional[int]:
+        if not isinstance(api, dict):
+            return None
+        return self._as_int(api.get("totalRequests"))
 
-        def visit(obj: Any) -> None:
-            nonlocal found
-            if isinstance(obj, dict):
-                prompt = None
-                completion = None
-                total = None
-                for key, value in obj.items():
-                    if isinstance(value, (dict, list)):
-                        visit(value)
-                        continue
-                    if not isinstance(key, str):
-                        continue
-                    key_lower = key.lower()
-                    val = self._as_int(value)
-                    if val is None:
-                        continue
-                    if key_lower.endswith("prompt_tokens") or key_lower.endswith("input_tokens"):
-                        prompt = (prompt or 0) + val
-                    elif key_lower.endswith("completion_tokens") or key_lower.endswith("output_tokens"):
-                        completion = (completion or 0) + val
-                    elif key_lower.endswith("total_tokens"):
-                        total = (total or 0) + val
-                if prompt is not None or completion is not None or total is not None:
-                    found = True
-                    totals["prompt_tokens"] += prompt or 0
-                    totals["completion_tokens"] += completion or 0
-                    totals["total_tokens"] += total if total is not None else (prompt or 0) + (completion or 0)
-            elif isinstance(obj, list):
-                for item in obj:
-                    visit(item)
+    def _extract_response(self, payload: Optional[Any], result_payload: Optional[Dict[str, Any]]) -> Optional[str]:
+        if isinstance(result_payload, dict):
+            result_text = result_payload.get("result")
+            if isinstance(result_text, str):
+                cleaned = result_text.strip()
+                if cleaned:
+                    return cleaned
 
-        visit(payload)
-        if found:
-            return totals
+        if not isinstance(payload, list):
+            return None
+        for item in reversed(payload):
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "assistant":
+                continue
+            message = item.get("message")
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            text = self._extract_assistant_text(content)
+            if text:
+                return text
         return None
 
-    def _extract_usage_from_mapping(self, payload: Any) -> Optional[Dict[str, int]]:
-        if not isinstance(payload, dict):
+    def _extract_assistant_text(self, content: Any) -> Optional[str]:
+        if not isinstance(content, list):
             return None
-        if "usage" in payload and isinstance(payload["usage"], dict):
-            return self._normalize_usage(payload["usage"])
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"):
-            if key in payload:
-                return self._normalize_usage(payload)
-        for value in payload.values():
-            if isinstance(value, dict):
-                nested = self._extract_usage_from_mapping(value)
-                if nested:
-                    return nested
-            if isinstance(value, list):
-                for item in value:
-                    nested = self._extract_usage_from_mapping(item)
-                    if nested:
-                        return nested
-        return None
-
-    def _normalize_usage(self, raw: Dict[str, Any]) -> Dict[str, int]:
-        prompt = self._as_int(raw.get("prompt_tokens"))
-        completion = self._as_int(raw.get("completion_tokens"))
-        total = self._as_int(raw.get("total_tokens"))
-        if prompt is None and "input_tokens" in raw:
-            prompt = self._as_int(raw.get("input_tokens"))
-        if completion is None and "output_tokens" in raw:
-            completion = self._as_int(raw.get("output_tokens"))
-        if total is None:
-            total = (prompt or 0) + (completion or 0)
-        return {
-            "prompt_tokens": prompt or 0,
-            "completion_tokens": completion or 0,
-            "total_tokens": total or 0,
-        }
-
-    def _count_tool_calls_from_telemetry(self, text: Optional[str]) -> Optional[int]:
-        if not text:
+        lines: List[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str) and text.strip():
+                lines.append(text.strip())
+        if not lines:
             return None
-        payloads = load_json_payloads(text)
-        count = 0
-        for payload in payloads:
-            if self._looks_like_tool_call(payload):
-                count += 1
-        return count
+        return "\n".join(lines)
 
-    def _count_tool_calls(self, output: str) -> Optional[int]:
-        payloads = load_json_payloads(output)
-        if payloads:
-            count = 0
-            for payload in payloads:
-                if self._looks_like_tool_call(payload):
-                    count += 1
-            return count
-        return None
-
-    def _looks_like_tool_call(self, payload: Any) -> bool:
-        if not isinstance(payload, dict):
-            return False
-        for key in ("tool", "tool_name", "toolName", "tool_call", "toolCall", "tool_use", "toolUse"):
-            if key in payload:
-                return True
-        event_type = payload.get("type") or payload.get("event") or payload.get("name")
-        if isinstance(event_type, str) and "tool" in event_type.lower():
-            return True
-        for value in payload.values():
-            if isinstance(value, dict) and self._looks_like_tool_call(value):
-                return True
-            if isinstance(value, list):
-                for item in value:
-                    if self._looks_like_tool_call(item):
-                        return True
-        return False
-
-    def _usage_totals(self, usage: Optional[Dict[str, int]]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
-        if not usage:
-            return None, None, None
-        return (
-            usage.get("prompt_tokens"),
-            usage.get("completion_tokens"),
-            usage.get("total_tokens"),
-        )
-
-    @staticmethod
-    def _as_int(value: Any) -> Optional[int]:
-        try:
-            return int(value)
-        except Exception:
-            return None
+    def _build_media_refs(self, media_paths: List[Path]) -> List[str]:
+        refs: List[str] = []
+        staged_paths = self._stage_media_files(media_paths, stage_dir_name=".cakit-media")
+        for staged in staged_paths:
+            try:
+                rel_path = staged.relative_to(self.workdir)
+                refs.append(f"@{{{rel_path.as_posix()}}}")
+            except Exception:
+                refs.append(f"@{{{staged.as_posix()}}}")
+        return refs

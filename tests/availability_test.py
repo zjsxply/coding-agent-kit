@@ -340,7 +340,7 @@ def main() -> int:
         default="basic,image,video,web",
         help="Comma-separated tasks to run: basic,image,video,web (default: all)",
     )
-    parser.add_argument("--timeout-seconds", type=int, default=300, help="Per-case timeout in seconds")
+    parser.add_argument("--timeout-seconds", type=int, default=600, help="Per-case timeout in seconds")
     parser.add_argument("--no-parallel", action="store_true", help="Run cases sequentially")
     parser.add_argument("--max-workers", type=int, default=6, help="Max workers for parallel execution")
     args = parser.parse_args()

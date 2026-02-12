@@ -10,6 +10,8 @@
 - 安装依赖：`uv sync`
 - 执行任何 Python 命令前，先激活环境：`source .venv/bin/activate`
 - API 鉴权请使用 `.env.template` 生成 `.env`，并在当前 shell 执行 `set -a; source .env; set +a`。
+- 在 agent 实现代码中，cakit 受管控环境变量请直接从 `os.environ` 读取（不要从 `base_env` 读取受管控变量）。
+- `--env-file` 用于传递 `.env.template` 未管理的额外变量；受管控变量应来自当前 shell 环境（例如通过 `.env` + `source`）。
 
 ## 常用命令
 - 生成 `.env` 模板：`cakit env --output .env`
@@ -23,6 +25,7 @@
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
   - `python tests/availability_test.py <agent...>`
+- 默认不要求做稳定性重复跑；若单次运行成功，且响应语义与必需统计字段都正确，即可判定该能力可用。
 - 不要为 coding agent 可用性或统计提取新增代码级单元/集成测试点。统一使用 `tests/availability_test.py`，并结合真实输出做主观人工判读。
 - 不要把脚本自动 pass/fail 当作唯一依据；必须人工阅读响应内容并判断是否正确。
 - 若需要手工逐项验证，再在同一个 shell 中按以下顺序执行：
@@ -70,6 +73,7 @@
 - 不做输出截断（无需 `_preview`）；输出字段为 `raw_output`。
 - `get_version` 不做 fallback。
 - 代码中不要为环境变量设置硬编码默认值（例如避免 `os.environ.get("X") or "default"`）。环境变量应按原值读取；若必填项缺失，应明确失败或跳过写配置。
+- `--model` 覆盖不得修改当前进程的 `os.environ`；只允许在 cakit 管理的子进程环境中生效。
 - 所有被原始 coding agent 采用的环境变量名称都保持原样；如有在不同 coding agent 里重复的，则加上 coding agent 前缀以消歧。
 - OpenHands 仅使用上游环境变量 `LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`。禁止新增或兼容 `OPENHANDS_*` 别名。
 - 所有只在 cakit 里定义、用于 cakit 的环境变量都加上 `CAKIT_` 前缀。
