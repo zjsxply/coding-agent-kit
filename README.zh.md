@@ -100,6 +100,7 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 - `exit_code`
 - `output_path`（写入的 `.log` 文件路径，内容为 coding agent CLI 的原始输出）
 - `raw_output`（本次运行捕获到的 coding agent CLI 原始输出）
+- `trajectory_path`（本次运行的格式化、人类可读轨迹文件路径，不做截断）
 
 遥测支持：
 - Claude Code / Codex：通过 OpenTelemetry（OTEL）导出（需配置 OTEL endpoint），日志地址为 OTEL endpoint

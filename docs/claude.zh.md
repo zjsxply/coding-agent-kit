@@ -28,6 +28,7 @@
 - `total_cost`：来自 `result` 负载的 `total_cost_usd`。
 - `telemetry_log`：当同时设置 `CLAUDE_CODE_ENABLE_TELEMETRY` 和 `OTEL_EXPORTER_OTLP_ENDPOINT` 时，返回该 endpoint。
 - `output_path`/`raw_output`：本次运行捕获的 stdout/stderr。
+- `trajectory_path`：基于 Claude Code stdout/stderr 的 stream-json，输出为结构化 YAML 格式的人类可读轨迹文件（不做截断）。
 
 **备注**
 - cakit 会为 Claude Code 运行设置 `IS_SANDBOX=1`，以便在 root/sudo 环境下使用 `--dangerously-skip-permissions`。

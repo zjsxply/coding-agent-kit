@@ -27,6 +27,7 @@ class RunResult:
     exit_code: Optional[int] = None
     output_path: Optional[str] = None
     raw_output: Optional[str] = None
+    trajectory_path: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         models_usage = dict(self.models_usage or {})
@@ -43,4 +44,5 @@ class RunResult:
             "exit_code": self.exit_code,
             "output_path": self.output_path,
             "raw_output": self.raw_output,
+            "trajectory_path": self.trajectory_path,
         }

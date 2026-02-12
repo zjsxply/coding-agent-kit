@@ -78,7 +78,11 @@
   - `models_usage` (per-model breakdown with token usage)
   - `tool_calls`, `llm_calls`, `total_cost` (when available)
   - `telemetry_log` (when enabled, return log path or OTEL endpoint)
-  - `response`, `exit_code`, `output_path`, `raw_output`
+  - `response`, `exit_code`, `output_path`, `raw_output`, `trajectory_path`
+- `trajectory_path` is required and must point to a formatted, human-readable trace file generated from run artifacts without truncation.
+- Trajectory conversion rules:
+  - Convert run artifacts to structured YAML-formatted human-readable output.
+  - Inspect the actual payload structure and convert accordingly (do not leave raw machine JSON unless conversion is impossible).
 - Agents that can support image input must do so; Codex supports multiple images. If not supported, state clearly in README.
 
 ## Documentation and Config Sync

@@ -27,6 +27,7 @@
 - `llm_calls`：会话 JSONL 中 `token_count` 的去重计数（按 `prompt_tokens`/`completion_tokens`/`total_tokens` 去重）。
 - `telemetry_log`：若设置了 `CODEX_OTEL_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_ENDPOINT`，则返回该 endpoint。
 - `output_path`/`raw_output`：本次运行捕获的 stdout/stderr。
+- `trajectory_path`：基于 Codex stdout/stderr JSON 流，输出为结构化 YAML 格式的人类可读轨迹文件（不做截断）。
 
 **备注**
 - 若设置了 `CAKIT_CODEX_USE_OAUTH`，cakit 会要求 `${CODEX_HOME}/auth.json`（由 `codex login` 生成）。

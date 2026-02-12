@@ -93,6 +93,7 @@ Model name is extracted from run artifacts only (session wire / session logs). I
 If upstream emits these values as `0`, `prompt_tokens` can be `0`.
 
 When extraction fails unexpectedly, inspect `output_path` / `raw_output` plus Kimi session/log files.
+`trajectory_path` points to a formatted, human-readable trace built from `output_path` / `raw_output`, rendered as YAML (Unicode unescaped, multiline text as `|` blocks, no truncation).
 
 ## Reasoning Effort Mapping
 

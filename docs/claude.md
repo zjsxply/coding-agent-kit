@@ -28,6 +28,7 @@ This document explains how cakit runs Claude Code and extracts metadata.
 - `total_cost`: from the `result` payload field `total_cost_usd`.
 - `telemetry_log`: `OTEL_EXPORTER_OTLP_ENDPOINT` when both `CLAUDE_CODE_ENABLE_TELEMETRY` and `OTEL_EXPORTER_OTLP_ENDPOINT` are set.
 - `output_path`/`raw_output`: captured stdout/stderr from the Claude Code run.
+- `trajectory_path`: formatted, human-readable trace built from the Claude Code stdout/stderr stream JSON and rendered as YAML (no truncation).
 
 **Notes**
 - cakit sets `IS_SANDBOX=1` for Claude Code runs so `--dangerously-skip-permissions` can be used in root/sudo environments.

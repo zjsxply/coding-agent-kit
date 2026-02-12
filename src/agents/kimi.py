@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
-from ..utils import load_json_payloads
+from ..utils import format_trace_text, load_json_payloads
 
 
 class KimiAgent(CodingAgent):
@@ -134,6 +134,9 @@ class KimiAgent(CodingAgent):
             model_name = self._extract_model_name_from_log(session_id, run_prompt)
 
         output_path = self._write_output(self.name, output)
+        trajectory_path = self._write_trajectory(
+            self.name, format_trace_text(output, source=str(output_path))
+        )
         models_usage: Dict[str, Dict[str, int]] = {}
         if usage is not None and model_name:
             models_usage = self._ensure_models_usage({}, usage, model_name)
@@ -149,6 +152,7 @@ class KimiAgent(CodingAgent):
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:

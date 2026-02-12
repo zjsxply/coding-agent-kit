@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
-from ..utils import load_json_payloads
+from ..utils import format_trace_text, load_json_payloads
 
 
 class CodexAgent(CodingAgent):
@@ -99,6 +99,7 @@ class CodexAgent(CodingAgent):
         if self._use_oauth() and not self._auth_path().exists():
             message = f"codex OAuth is enabled but auth file not found at {self._auth_path()}; run `codex login`."
             output_path = self._write_output(self.name, message)
+            trajectory_path = self._write_trajectory(self.name, format_trace_text(message, source=str(output_path)))
             return RunResult(
                 agent=self.name,
                 agent_version=self.get_version(),
@@ -112,6 +113,7 @@ class CodexAgent(CodingAgent):
                 exit_code=2,
                 output_path=str(output_path),
                 raw_output=message,
+                trajectory_path=str(trajectory_path) if trajectory_path else None,
             )
         otel_endpoint = os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
         env = {
@@ -151,6 +153,7 @@ class CodexAgent(CodingAgent):
         tool_calls = self._count_tool_calls(payloads)
         response = self._read_last_message(last_message_path)
         output_path = self._write_output(self.name, output)
+        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
@@ -163,6 +166,7 @@ class CodexAgent(CodingAgent):
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:

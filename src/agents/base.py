@@ -222,6 +222,20 @@ class CodingAgent(abc.ABC):
         path.write_text(output, encoding="utf-8")
         return path
 
+    def _write_trajectory(self, agent: str, content: Optional[str]) -> Optional[Path]:
+        if not content:
+            return None
+        root = os.environ.get("CAKIT_OUTPUT_DIR")
+        if root:
+            output_dir = Path(root)
+        else:
+            output_dir = Path.home() / ".cache" / "cakit"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        path = output_dir / f"{agent}-{stamp}.trajectory.log"
+        path.write_text(content, encoding="utf-8")
+        return path
+
     def _reject_unsupported_media(
         self,
         *,
@@ -256,6 +270,7 @@ class CodingAgent(abc.ABC):
             exit_code=2,
             output_path=str(output_path),
             raw_output=message,
+            trajectory_path=None,
         )
 
 

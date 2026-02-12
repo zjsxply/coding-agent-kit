@@ -93,6 +93,7 @@ Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：
 若上游这些字段返回 `0`，则 `prompt_tokens` 可能为 `0`。
 
 若提取异常，优先排查 `output_path` / `raw_output` 以及 Kimi 的 session/log 文件。
+`trajectory_path` 指向格式化的人类可读轨迹文件：由 `output_path` / `raw_output` 转为结构化 YAML 格式输出（Unicode 不转义，多行文本用 `|` 块，不做截断）。
 
 ## 推理强度参数映射
 

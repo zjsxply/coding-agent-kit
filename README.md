@@ -100,6 +100,7 @@ Output fields:
 - `exit_code`
 - `output_path` (path to a `.log` file containing the coding agent CLI raw output)
 - `raw_output` (captured raw output from the coding agent CLI)
+- `trajectory_path` (path to a formatted, human-readable trace file for the run; no truncation)
 
 Telemetry:
 - Claude Code / Codex: exported via OpenTelemetry (OTEL, requires OTEL endpoint); log address is the OTEL endpoint

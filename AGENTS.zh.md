@@ -78,7 +78,11 @@
   - `models_usage`（按模型拆分，包含 token usage）
   - `tool_calls`、`llm_calls`、`total_cost`（若可获取）
   - `telemetry_log`（若启用，返回日志路径或 OTEL endpoint）
-  - `response`, `exit_code`, `output_path`, `raw_output`
+  - `response`, `exit_code`, `output_path`, `raw_output`, `trajectory_path`
+- `trajectory_path` 必填，且必须指向基于运行产物生成的“格式化、人类可读、无截断”轨迹文件。
+- 轨迹转换规则：
+  - 运行产物必须转换为结构化的 YAML 格式人类可读输出。
+  - 先识别实际数据结构再做转换（除非确实无法转换，否则不能直接保留机器 JSON 原文）。
 - 能支持的 agent 必须支持图像输入；Codex 支持多图。若不支持，需在 README 中明确标注。
 
 ## 文档与配置同步

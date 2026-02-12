@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
-from ..utils import load_json_payloads
+from ..utils import format_trace_text, load_json_payloads
 
 
 class ClaudeAgent(CodingAgent):
@@ -101,6 +101,9 @@ class ClaudeAgent(CodingAgent):
         except Exception as exc:
             message = f"failed to parse Claude Code JSON output: {exc}"
             output_path = self._write_output(self.name, output or message)
+            trajectory_path = self._write_trajectory(
+                self.name, format_trace_text(output or message, source=str(output_path))
+            )
             return RunResult(
                 agent=self.name,
                 agent_version=self.get_version(),
@@ -114,12 +117,14 @@ class ClaudeAgent(CodingAgent):
                 exit_code=2,
                 output_path=str(output_path),
                 raw_output=output or message,
+                trajectory_path=str(trajectory_path) if trajectory_path else None,
             )
         runtime_seconds = parsed["duration_ms"] / 1000.0
         models_usage = parsed["models_usage"]
         tool_calls = parsed["tool_calls"]
         response = parsed["response"]
         output_path = self._write_output(self.name, output)
+        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
@@ -133,6 +138,7 @@ class ClaudeAgent(CodingAgent):
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:

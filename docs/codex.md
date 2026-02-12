@@ -27,6 +27,7 @@ This document explains how cakit collects Codex CLI metadata.
 - `llm_calls`: count of distinct `token_count` totals in the session JSONL (deduped by `prompt_tokens`, `completion_tokens`, `total_tokens`).
 - `telemetry_log`: `CODEX_OTEL_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` when set.
 - `output_path`/`raw_output`: captured stdout/stderr from the Codex CLI run.
+- `trajectory_path`: formatted, human-readable trace built from the Codex stdout/stderr JSON stream and rendered as YAML (no truncation).
 
 **Notes**
 - If `CAKIT_CODEX_USE_OAUTH` is set, cakit expects a login file at `${CODEX_HOME}/auth.json` created by `codex login`.
