@@ -27,7 +27,7 @@ FRAMEWORK_ENV_KEYS: Dict[str, tuple[str, ...]] = {
     "cursor": ("CURSOR_MODEL",),
     "gemini": ("GEMINI_MODEL", "GOOGLE_GEMINI_MODEL"),
     "kimi": ("KIMI_MODEL_NAME",),
-    "openhands": ("OPENHANDS_LLM_MODEL", "LLM_MODEL"),
+    "openhands": ("LLM_MODEL",),
     "qwen": ("QWEN_OPENAI_MODEL", "QWEN_MODEL"),
     "swe-agent": ("SWE_AGENT_MODEL",),
     "trae-oss": ("TRAE_AGENT_MODEL",),

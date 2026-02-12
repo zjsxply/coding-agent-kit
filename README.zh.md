@@ -49,7 +49,7 @@ OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.templat
 - gemini：运行 `gemini`，按提示选择 Login with Google
 - kimi：OAuth 方式为运行 `kimi` 后输入 `/login`；API 方式为设置 `KIMI_API_KEY` 并执行 `cakit configure kimi`
 - qwen：运行 `qwen`，按提示完成浏览器登录
-- openhands：仅 API（见 `.env.template`）
+- openhands：仅 API（`LLM_API_KEY` + `LLM_MODEL`，见 `.env.template`）
 - swe-agent：仅 API（见 `.env.template`）
 - trae-oss：仅 API（见 `.env.template`）
 
@@ -119,7 +119,7 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 | gemini | ✓ | ✓ | `read_many_files` |
 | kimi | ✓ | ✓ | `ReadMediaFile` + 模型能力（`image_in`/`video_in`） |
 | qwen | ✓ | ✓ | `@{path}` 注入 |
-| openhands |  |  |  |
+| openhands | ✗ | ✗ | headless CLI 未提供已文档化的 `--image` / `--video` 参数 |
 | swe-agent |  |  |  |
 | trae-oss |  |  |  |
 
@@ -187,7 +187,7 @@ cakit tools
 | gemini |  |  |  | ⚠ |  |  |  |  | 0.27.3 |
 | kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
 | qwen |  |  |  | ⚠ |  |  |  |  | 0.10.0 |
-| openhands | ✗ |  |  |  |  |  |  |  |  |
+| openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
 | swe-agent | ✗ |  |  |  |  |  |  |  |  |
 | trae-oss | ✗ |  |  |  |  |  |  |  |  |
 

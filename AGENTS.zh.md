@@ -23,6 +23,8 @@
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
   - `python tests/availability_test.py <agent...>`
+- 不要为 coding agent 可用性或统计提取新增代码级单元/集成测试点。统一使用 `tests/availability_test.py`，并结合真实输出做主观人工判读。
+- 不要把脚本自动 pass/fail 当作唯一依据；必须人工阅读响应内容并判断是否正确。
 - 若需要手工逐项验证，再在同一个 shell 中按以下顺序执行：
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`
@@ -30,6 +32,7 @@
   4. `cakit run <agent> "这幅图片的内容是什么？有什么文字？" --image tests/image1.png > /tmp/cakit-<agent>-image.json`（图像输入检查）
   5. `cakit run <agent> "这个视频里发生了什么？有什么可见文字？" --video tests/video.mp4 > /tmp/cakit-<agent>-video.json`（视频输入检查，使用本地小体积 mp4）
   6. `cakit run <agent> "访问 https://github.com/algorithmicsuperintelligence/openevolve，并简要说明页面内容。" > /tmp/cakit-<agent>-web.json`（联网访问检查）
+- 必须补充“prompt 路径多模态检查”：在不传 `--image`/`--video` 的情况下，仅把本地图片/视频路径写进 prompt，验证该 coding agent 是否能通过可用工具自主读取，并记录实际表现。
 - 各项通过与否以返回内容是否正确为准，不能只看命令是否启动。
 - 必须校验 JSON 中统计字段提取结果：
   1. `response`：字段存在，且为非空文本。
@@ -68,6 +71,7 @@
 - `get_version` 不做 fallback。
 - 代码中不要为环境变量设置硬编码默认值（例如避免 `os.environ.get("X") or "default"`）。环境变量应按原值读取；若必填项缺失，应明确失败或跳过写配置。
 - 所有被原始 coding agent 采用的环境变量名称都保持原样；如有在不同 coding agent 里重复的，则加上 coding agent 前缀以消歧。
+- OpenHands 仅使用上游环境变量 `LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`。禁止新增或兼容 `OPENHANDS_*` 别名。
 - 所有只在 cakit 里定义、用于 cakit 的环境变量都加上 `CAKIT_` 前缀。
 
 ## 鉴权与统计输出要求

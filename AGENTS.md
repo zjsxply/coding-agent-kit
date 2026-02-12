@@ -23,6 +23,8 @@
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
   - `python tests/availability_test.py <agent...>`
+- Do not add code-level unit/integration test points for coding agent availability or stats extraction. Validate with `tests/availability_test.py` and manual, subjective review of real outputs.
+- Do not treat automated pass/fail in scripts as sufficient by itself; always inspect response content and judge correctness manually.
 - If manual validation is required, run tests in this order and in the same shell:
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`
@@ -30,6 +32,7 @@
   4. `cakit run <agent> "What is in this image? What text is shown?" --image tests/image1.png > /tmp/cakit-<agent>-image.json` (image input check)
   5. `cakit run <agent> "What happens in this video? List any visible text." --video tests/video.mp4 > /tmp/cakit-<agent>-video.json` (video input check; use a small local mp4)
   6. `cakit run <agent> "Visit https://github.com/algorithmicsuperintelligence/openevolve and summarize what is on that page." > /tmp/cakit-<agent>-web.json` (web access check)
+- Prompt-path multimodal check is required: test whether the coding agent can read local image/video files when only file paths are included in prompt text (without `--image`/`--video`) and report the observed behavior.
 - Record whether each check passes based on the actual response content (not just process start).
 - Verify stats field extraction from JSON outputs:
   1. `response`: key exists and value is non-empty text.
@@ -68,6 +71,7 @@
 - `get_version` must not use fallbacks.
 - Do not set hardcoded default values for environment variables in code (for example, avoid `os.environ.get("X") or "default"`). Read env vars as-is; if a required value is missing, fail clearly or skip writing config.
 - Keep upstream coding agent environment variable names unchanged. If an upstream name is duplicated across different coding agents, add a coding-agent-specific prefix to disambiguate.
+- OpenHands must use upstream env names `LLM_API_KEY`, `LLM_MODEL`, and `LLM_BASE_URL` only. Do not add or support `OPENHANDS_*` aliases.
 - Any environment variable defined only by cakit (not by upstream coding agents) must use the `CAKIT_` prefix.
 
 ## Auth and Stats Output Requirements

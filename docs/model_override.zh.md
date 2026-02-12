@@ -13,6 +13,6 @@
 | `gemini` | `GEMINI_MODEL`、`GOOGLE_GEMINI_MODEL` | `--model <name>` |
 | `kimi` | `KIMI_MODEL_NAME` | `--model <name>` |
 | `qwen` | `QWEN_OPENAI_MODEL`、`QWEN_MODEL` | `--model <name>` |
-| `openhands` | `OPENHANDS_LLM_MODEL`、`LLM_MODEL` | 无 |
+| `openhands` | `LLM_MODEL` | 无 |
 | `swe-agent` | `SWE_AGENT_MODEL` | `--agent.model.name <name>` |
 | `trae-oss` | `TRAE_AGENT_MODEL` | 无 |

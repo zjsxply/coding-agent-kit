@@ -49,7 +49,7 @@ For OAuth, use the official CLI login. For API keys, copy `.env.template` to `.e
 - gemini: run `gemini` and choose Login with Google
 - kimi: OAuth via `kimi` then `/login`, or API via `KIMI_API_KEY` + `cakit configure kimi`
 - qwen: run `qwen` and follow the browser login flow
-- openhands: API only (see `.env.template`)
+- openhands: API only (`LLM_API_KEY` + `LLM_MODEL`, see `.env.template`)
 - swe-agent: API only (see `.env.template`)
 - trae-oss: API only (see `.env.template`)
 
@@ -119,7 +119,7 @@ Image and video input support:
 | gemini | ✓ | ✓ | `read_many_files` |
 | kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`) |
 | qwen | ✓ | ✓ | `@{path}` injection |
-| openhands |  |  |  |
+| openhands | ✗ | ✗ | headless CLI has no documented `--image` / `--video` flags |
 | swe-agent |  |  |  |
 | trae-oss |  |  |  |
 
@@ -187,7 +187,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 | gemini |  |  |  | ⚠ |  |  |  |  | 0.27.3 |
 | kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
 | qwen |  |  |  | ⚠ |  |  |  |  | 0.10.0 |
-| openhands | ✗ |  |  |  |  |  |  |  |  |
+| openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
 | swe-agent | ✗ |  |  |  |  |  |  |  |  |
 | trae-oss | ✗ |  |  |  |  |  |  |  |  |
 
