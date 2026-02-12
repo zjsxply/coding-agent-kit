@@ -42,7 +42,7 @@
 - `models_usage` 中的模型名必须来自本次运行产物（stdout payload/session 日志），不能从配置、环境变量或 `--model` 输入回填。
 - 提取逻辑必须严格按格式读取：仅解析明确、文档化字段；结构异常时应立即返回 `None`，不要叠加多层 fallback 解析器。
 - 字段名必须精确且稳定。不要对同一信号尝试多个字段名或回退链；必需字段缺失时直接返回 `None`。
-- 用量统计必须基于源码确认。若 coding agent CLI 有开源仓库，应先阅读源码确认 usage 产生方式，再实现或调整 token 统计逻辑。
+- 用量统计必须基于源码确认。若 coding agent CLI 有开源仓库，应先将源码 clone 到 `/tmp` 进行本地阅读，确认 usage 产生方式，再实现或调整 token 统计逻辑。校验范围必须包含 `llm_calls`、token usage 与 `tool_calls` 的行为。若环境阻止 clone，则给出精确的 `git clone ... /tmp/<repo>` 命令并要求用户在本机执行，然后继续本地检查。
 - Token usage 定义为 agent 运行过程中所有 LLM call 的 prompt tokens 与 completion tokens 的总和（包含 subagents 时一并计入）。
 - 代码与文档必须保持一致。行为有变更时需在同一提交/修改中同步更新文档，且文档应与实现完全一致（不要出现不匹配的 fallback 或字段描述）。
 - 发生提取失败时必须排查：

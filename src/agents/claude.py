@@ -178,10 +178,10 @@ class ClaudeAgent(CodingAgent):
                 raise TypeError("modelUsage key is not a string")
             if not isinstance(model_stats, dict):
                 raise TypeError("modelUsage value is not an object")
-            prompt_tokens = model_stats.get("inputTokens", 0)
-            completion_tokens = model_stats.get("outputTokens", 0)
-            cache_read_tokens = model_stats.get("cacheReadInputTokens", 0)
-            cache_creation_tokens = model_stats.get("cacheCreationInputTokens", 0)
+            prompt_tokens = model_stats.get("inputTokens")
+            completion_tokens = model_stats.get("outputTokens")
+            cache_read_tokens = model_stats.get("cacheReadInputTokens")
+            cache_creation_tokens = model_stats.get("cacheCreationInputTokens")
             for key, value in (
                 ("inputTokens", prompt_tokens),
                 ("outputTokens", completion_tokens),

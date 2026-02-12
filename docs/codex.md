@@ -5,7 +5,7 @@ This document explains how cakit collects Codex CLI metadata.
 **Sources**
 - CLI stdout from `codex exec --json` (JSONL events).
 - Response file from `codex exec --output-last-message <path>` (written under `CAKIT_OUTPUT_DIR`, defaulting to `~/.cache/cakit`).
-- Session JSONL file at `$CODEX_HOME/sessions/**/rollout-*<thread_id>.jsonl` when available.
+- Session JSONL file at `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*<thread_id>.jsonl`, where `YYYY/MM/DD` is derived from the `thread_id` UUIDv7 timestamp. If `thread_id` is not UUIDv7, `models_usage` is not returned.
 - Environment variables such as `CODEX_MODEL`, `CODEX_API_BASE`, `CAKIT_CODEX_USE_OAUTH`, `CODEX_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 **Image Input**
@@ -19,11 +19,12 @@ This document explains how cakit collects Codex CLI metadata.
 - `runtime_seconds`: wall time of the `codex exec` process.
 - `response`: content of the file written by `--output-last-message`.
 - `models_usage`:
-  - Prefer session JSONL: read the last `event_msg` with `payload.type == "token_count"` and use `payload.info.total_token_usage` (`input_tokens`, `output_tokens`, `total_tokens`).
-  - Model name comes from the `turn_context` payload field `model`; if missing, use `unknown`.
-  - If no session file is found, parse `usage` from CLI JSON events.
-- `tool_calls`: best-effort count of JSON payloads that look like tool calls (keys such as `tool`, `tool_name`, `tool_call`, `toolUse`, etc.).
-- `llm_calls`: count of distinct `token_count` totals in the session JSONL (deduped by `input_tokens`, `output_tokens`, `total_tokens`). If the session file is unavailable, fallback to the number of `turn.completed`/`turn.failed` events in CLI JSON output.
+  - Read the last `event_msg` with `payload.type == "token_count"` from the session JSONL and use `payload.info.total_token_usage`.
+  - Required fields: `input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`, `total_tokens`.
+  - `prompt_tokens = input_tokens + cached_input_tokens`, `completion_tokens = output_tokens + reasoning_output_tokens`.
+  - Model name comes from the `turn_context` payload field `model`. If missing, the model name is `unknown`.
+- `tool_calls`: count of unique tool items from CLI JSON events. We count distinct `item.id` where `type` is one of `mcp_tool_call`, `collab_tool_call`, `command_execution`, or `web_search`, using `item.started` and `item.completed` events. If no such items appear, `tool_calls` is `0`.
+- `llm_calls`: count of distinct `token_count` totals in the session JSONL (deduped by `prompt_tokens`, `completion_tokens`, `total_tokens`).
 - `telemetry_log`: `CODEX_OTEL_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` when set.
 - `output_path`/`raw_output`: captured stdout/stderr from the Codex CLI run.
 
@@ -32,3 +33,4 @@ This document explains how cakit collects Codex CLI metadata.
 - For API-key mode, set `CODEX_API_KEY` and `CODEX_API_BASE` if you need a non-default base URL.
 - To avoid accidental auth mode selection, cakit removes both `OPENAI_API_KEY` and `CODEX_API_KEY` from the Codex CLI environment when OAuth is enabled.
 - If API-key mode is requested but `CODEX_API_KEY` is missing, cakit avoids passing `OPENAI_API_KEY`/`CODEX_API_KEY` to Codex (so an existing OAuth login can still work).
+- Codex behavior with Chat Completions-only API bases (no Responses support) has not been tested yet.

@@ -22,7 +22,7 @@
 - `agent_version`：来自 `~/.npm-global/bin/claude --version`。
 - `runtime_seconds`：来自最终 `{"type":"result", ...}` 的 `duration_ms / 1000`。
 - `response`：来自 `result` 负载的 `result` 字段。
-- `models_usage`：来自 `result` 负载的 `modelUsage`（逐模型的 `inputTokens`/`outputTokens`；若存在 `cacheReadInputTokens`/`cacheCreationInputTokens`，会加到 `prompt_tokens` 里）。
+- `models_usage`：来自 `result` 负载的 `modelUsage`（逐模型的 `inputTokens`/`outputTokens`，以及必须存在的 `cacheReadInputTokens`/`cacheCreationInputTokens`，会加到 `prompt_tokens` 里）。
 - `tool_calls`：统计 `{"type":"assistant", "message": {"content": [{"type":"tool_use", ...}, ...]}}` 的 `tool_use` 块数量。
 - `llm_calls`：来自 `result` 负载的 `num_turns`。
 - `total_cost`：来自 `result` 负载的 `total_cost_usd`。

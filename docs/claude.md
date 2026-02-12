@@ -22,7 +22,7 @@ This document explains how cakit runs Claude Code and extracts metadata.
 - `agent_version`: from `~/.npm-global/bin/claude --version`.
 - `runtime_seconds`: from the final `{"type":"result", ...}` payload field `duration_ms / 1000`.
 - `response`: from the `result` payload field `result`.
-- `models_usage`: from the `result` payload field `modelUsage` (per-model `inputTokens`/`outputTokens`, and `cacheReadInputTokens`/`cacheCreationInputTokens` are added into `prompt_tokens` when present).
+- `models_usage`: from the `result` payload field `modelUsage` (per-model `inputTokens`/`outputTokens` plus `cacheReadInputTokens`/`cacheCreationInputTokens`, which are required and summed into `prompt_tokens`).
 - `tool_calls`: count of `{"type":"assistant", "message": {"content": [{"type":"tool_use", ...}, ...]}}` blocks.
 - `llm_calls`: from the `result` payload field `num_turns`.
 - `total_cost`: from the `result` payload field `total_cost_usd`.

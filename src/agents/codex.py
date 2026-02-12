@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import datetime
 import os
 import time
 import uuid
@@ -186,31 +187,23 @@ class CodexAgent(CodingAgent):
     def _extract_models_usage(
         self, payloads: List[Dict[str, Any]]
     ) -> Tuple[Dict[str, Dict[str, int]], Optional[int]]:
-        turn_calls = self._count_turn_calls(payloads)
         thread_id = None
         for payload in payloads:
             if payload.get("type") == "thread.started":
                 thread_id = payload.get("thread_id")
-                if thread_id:
+                if isinstance(thread_id, str) and thread_id:
                     break
-        if thread_id:
-            session_path = self._find_session_file(thread_id)
-            if session_path:
-                model, usage, llm_calls = self._parse_session_file(session_path)
-                if usage:
-                    model_name = model or "unknown"
-                    return {model_name: usage}, llm_calls or turn_calls
-        usage = None
-        model_name = None
-        for payload in payloads:
-            if model_name is None:
-                model_name = payload.get("model") or payload.get("model_name")
-            if usage is None:
-                usage = self._find_usage(payload)
-        if usage:
-            model_name = model_name or "unknown"
-            return self._ensure_models_usage({}, usage, model_name), turn_calls
-        return {}, turn_calls
+        if not thread_id:
+            return {}, None
+        session_path = self._find_session_file(thread_id)
+        if not session_path:
+            return {}, None
+        model, usage, llm_calls = self._parse_session_file(session_path)
+        if not usage:
+            return {}, None
+        if not model:
+            return {"unknown": usage}, llm_calls
+        return {model: usage}, llm_calls
 
     def _create_last_message_path(self) -> Path:
         root = os.environ.get("CAKIT_OUTPUT_DIR")
@@ -233,35 +226,6 @@ class CodexAgent(CodingAgent):
             return None
         return None
 
-
-    def _count_turn_calls(self, payloads: List[Dict[str, Any]]) -> Optional[int]:
-        count = 0
-        for payload in payloads:
-            event_type = payload.get("type")
-            if event_type in {"turn.completed", "turn.failed"}:
-                count += 1
-        return count or None
-
-    def _find_usage(self, payload: Any) -> Optional[Dict[str, int]]:
-        if not isinstance(payload, dict):
-            return None
-        if "usage" in payload and isinstance(payload["usage"], dict):
-            return self._normalize_usage(payload["usage"])
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"):
-            if key in payload:
-                return self._normalize_usage(payload)
-        for value in payload.values():
-            if isinstance(value, dict):
-                nested = self._find_usage(value)
-                if nested:
-                    return nested
-            if isinstance(value, list):
-                for item in value:
-                    nested = self._find_usage(item)
-                    if nested:
-                        return nested
-        return None
-
     def _codex_home(self) -> Path:
         home = os.environ.get("CODEX_HOME")
         if home:
@@ -272,10 +236,29 @@ class CodexAgent(CodingAgent):
         root = self._codex_home() / "sessions"
         if not root.exists():
             return None
-        matches = sorted(root.glob(f"**/rollout-*{thread_id}.jsonl"))
-        if matches:
-            return matches[-1]
+        date_path = self._thread_id_date_path(thread_id)
+        if not date_path:
+            return None
+        search_root = root / date_path
+        if not search_root.exists():
+            return None
+        matches = sorted(search_root.glob(f"rollout-*{thread_id}.jsonl"))
+        if len(matches) == 1:
+            return matches[0]
         return None
+
+    def _thread_id_date_path(self, thread_id: str) -> Optional[Path]:
+        hex_str = thread_id.replace("-", "").lower()
+        if len(hex_str) != 32:
+            return None
+        if hex_str[12] != "7":
+            return None
+        try:
+            timestamp_ms = int(hex_str[:12], 16)
+        except Exception:
+            return None
+        timestamp = datetime.datetime.fromtimestamp(timestamp_ms / 1000, datetime.timezone.utc)
+        return Path(f"{timestamp:%Y/%m/%d}")
 
     def _parse_session_file(
         self, path: Path
@@ -308,11 +291,21 @@ class CodexAgent(CodingAgent):
                     total = info.get("total_token_usage")
                     if not isinstance(total, dict):
                         continue
-                    prompt = self._as_int(total.get("input_tokens")) or 0
-                    completion = self._as_int(total.get("output_tokens")) or 0
+                    input_tokens = self._as_int(total.get("input_tokens"))
+                    cached_input_tokens = self._as_int(total.get("cached_input_tokens"))
+                    output_tokens = self._as_int(total.get("output_tokens"))
+                    reasoning_output_tokens = self._as_int(total.get("reasoning_output_tokens"))
                     total_tokens = self._as_int(total.get("total_tokens"))
-                    if total_tokens is None:
-                        total_tokens = prompt + completion
+                    if None in {
+                        input_tokens,
+                        cached_input_tokens,
+                        output_tokens,
+                        reasoning_output_tokens,
+                        total_tokens,
+                    }:
+                        return model, None, None
+                    prompt = input_tokens + cached_input_tokens
+                    completion = output_tokens + reasoning_output_tokens
                     signature = (prompt, completion, total_tokens)
                     if signature != last_signature:
                         llm_calls += 1
@@ -326,64 +319,26 @@ class CodexAgent(CodingAgent):
             return model, usage, None
         return model, usage, (llm_calls or None)
 
-    def _normalize_usage(self, raw: Dict[str, Any]) -> Dict[str, int]:
-        prompt = self._as_int(raw.get("prompt_tokens"))
-        completion = self._as_int(raw.get("completion_tokens"))
-        total = self._as_int(raw.get("total_tokens"))
-        if prompt is None and "input_tokens" in raw:
-            prompt = self._as_int(raw.get("input_tokens"))
-        if completion is None and "output_tokens" in raw:
-            completion = self._as_int(raw.get("output_tokens"))
-        if total is None:
-            total = (prompt or 0) + (completion or 0)
-        return {
-            "prompt_tokens": prompt or 0,
-            "completion_tokens": completion or 0,
-            "total_tokens": total or 0,
-        }
-
-    def _count_tool_calls(self, payloads: List[Dict[str, Any]]) -> int:
-        count = 0
+    def _count_tool_calls(self, payloads: List[Dict[str, Any]]) -> Optional[int]:
+        tool_types = {"mcp_tool_call", "collab_tool_call", "command_execution", "web_search"}
+        tool_item_ids: set[str] = set()
         for payload in payloads:
-            if self._looks_like_tool_call(payload):
-                count += 1
-        return count
-
-    def _looks_like_tool_call(self, payload: Any) -> bool:
-        if not isinstance(payload, dict):
-            return False
-        for key in ("tool", "tool_name", "toolName", "tool_call", "toolCall", "tool_use", "toolUse"):
-            if key in payload:
-                return True
-        event_type = payload.get("type") or payload.get("event") or payload.get("name")
-        if isinstance(event_type, str) and "tool" in event_type.lower():
-            return True
-        for value in payload.values():
-            if isinstance(value, dict) and self._looks_like_tool_call(value):
-                return True
-            if isinstance(value, list):
-                for item in value:
-                    if self._looks_like_tool_call(item):
-                        return True
-        return False
-
-    def _usage_totals(
-        self,
-        usage: Optional[Dict[str, int]],
-        models_usage: Dict[str, Dict[str, int]],
-    ) -> Tuple[Optional[int], Optional[int], Optional[int]]:
-        if usage:
-            return (
-                usage.get("prompt_tokens"),
-                usage.get("completion_tokens"),
-                usage.get("total_tokens"),
-            )
-        if models_usage:
-            prompt_tokens = sum(v.get("prompt_tokens", 0) for v in models_usage.values())
-            completion_tokens = sum(v.get("completion_tokens", 0) for v in models_usage.values())
-            total_tokens = sum(v.get("total_tokens", 0) for v in models_usage.values())
-            return prompt_tokens, completion_tokens, total_tokens
-        return None, None, None
+            if not isinstance(payload, dict):
+                continue
+            event_type = payload.get("type")
+            if event_type not in {"item.started", "item.completed"}:
+                continue
+            item = payload.get("item")
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type not in tool_types:
+                continue
+            item_id = item.get("id")
+            if not isinstance(item_id, str) or not item_id:
+                return None
+            tool_item_ids.add(item_id)
+        return len(tool_item_ids)
 
     @staticmethod
     def _as_int(value: Any) -> Optional[int]:
