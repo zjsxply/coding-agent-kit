@@ -131,47 +131,33 @@ class TraeCnAgent(CodingAgent):
         output = result.output
         payload = self._extract_payload(output)
         usage = self._extract_usage(payload)
-        llm_calls = self._extract_llm_calls(payload)
-        tool_calls = self._extract_tool_calls(payload)
         model_name = self._extract_model_name(payload)
-        response = self._extract_response(payload, output)
         output_path = self._write_output(self.name, output)
-        models_usage = self._ensure_models_usage({}, usage, model_name)
         trajectory_path = self._write_trajectory(
             self.name, format_trace_text(output, source=str(output_path))
-        )
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
         )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            response=response,
-            exit_code=run_exit_code,
+            models_usage=self._ensure_models_usage({}, usage, model_name),
+            tool_calls=self._extract_tool_calls(payload),
+            llm_calls=self._extract_llm_calls(payload),
+            response=self._extract_response(payload, output),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["traecli", "--version"])
-        if result.exit_code != 0:
+        first = self._version_first_line(["traecli", "--version"])
+        if not first:
             return None
-        for raw_line in result.output.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            match = re.search(r"version\s+([A-Za-z0-9._-]+)$", line)
-            if match:
-                return match.group(1)
+        match = re.search(r"version\s+([A-Za-z0-9._-]+)$", first)
+        if match:
+            return match.group(1)
         return None
 
     def _extract_payload(self, output: str) -> Optional[Dict[str, Any]]:
@@ -201,7 +187,6 @@ class TraeCnAgent(CodingAgent):
             error_text = payload.get("error")
             if isinstance(error_text, str) and error_text.strip():
                 return error_text.strip()
-            return None
         stdout = self._stdout_only(output)
         lines = [line.strip() for line in stdout.splitlines() if line.strip()]
         if lines:

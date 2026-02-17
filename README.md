@@ -114,6 +114,7 @@ If the agent is not installed, `cakit run` will auto-run `cakit install <agent>`
 See `docs/model_override.md` for per-agent details.
 `--reasoning-effort` is a unified per-run reasoning/thinking control.
 See `docs/reasoning_effort.md` for per-agent options and mappings.
+Exit code reference: `docs/exit_codes.md`.
 Environment isolation:
 - cakit only passes cakit-managed environment variables to the coding agent (the variables listed in `.env.template` and any values it sets explicitly).
 - The rest of the current shell environment is not inherited by the coding agent process.
@@ -127,7 +128,8 @@ Output fields:
 - `llm_calls`
 - `tool_calls` (when provided by the agent)
 - `telemetry_log` (when enabled)
-- `exit_code`
+- `cakit_exit_code` (cakit strict result code)
+- `command_exit_code` (raw coding agent CLI process exit code)
 - `output_path` (path to a `.log` file containing raw output from the coding agent CLI)
 - `raw_output` (captured raw output from the coding agent CLI)
 - `trajectory_path` (path to a formatted, human-readable trace file for the run; no truncation)

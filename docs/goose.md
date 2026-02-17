@@ -50,7 +50,7 @@ goose run -t "<prompt>" --name <unique_name> --output-format stream-json
 
 - cakit always sets `GOOSE_MODE=auto` for non-interactive runs.
 - `cakit run goose --model <name>` passes `--model <name>` and sets run-local `GOOSE_MODEL`.
-- media flags are unsupported (`--image` / `--video`).
+- `cakit run goose --image/--video` is supported through natural-language local-path injection.
 
 ## Stats Extraction
 

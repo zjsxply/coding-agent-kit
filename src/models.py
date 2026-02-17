@@ -24,7 +24,8 @@ class RunResult:
     total_cost: Optional[float] = None
     telemetry_log: Optional[str] = None
     response: Optional[str] = None
-    exit_code: Optional[int] = None
+    cakit_exit_code: Optional[int] = None
+    command_exit_code: Optional[int] = None
     output_path: Optional[str] = None
     raw_output: Optional[str] = None
     trajectory_path: Optional[str] = None
@@ -41,7 +42,8 @@ class RunResult:
             "total_cost": self.total_cost,
             "telemetry_log": self.telemetry_log,
             "response": self.response,
-            "exit_code": self.exit_code,
+            "cakit_exit_code": self.cakit_exit_code,
+            "command_exit_code": self.command_exit_code,
             "output_path": self.output_path,
             "raw_output": self.raw_output,
             "trajectory_path": self.trajectory_path,

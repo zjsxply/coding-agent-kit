@@ -50,7 +50,7 @@ goose run -t "<prompt>" --name <unique_name> --output-format stream-json
 
 - cakit 运行时固定设置 `GOOSE_MODE=auto`（非交互）。
 - `cakit run goose --model <name>` 会传递 `--model <name>`，并在子进程设置 `GOOSE_MODEL`。
-- 媒体参数不支持（`--image` / `--video`）。
+- 支持 `cakit run goose --image/--video`，实现方式为自然语言本地路径注入。
 
 ## 统计提取
 

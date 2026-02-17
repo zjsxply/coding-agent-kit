@@ -19,16 +19,7 @@ class ContinueAgent(CodingAgent):
     supports_videos = False
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        result = self._npm_install("@continuedev/cli", scope, version=version)
-        config_path = self.configure()
-        ok = result.exit_code == 0
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=result.output,
-            config_path=config_path,
-        )
+        return self._install_with_npm(package="@continuedev/cli", scope=scope, version=version)
 
     def configure(self) -> Optional[str]:
         resolved, error = self._resolve_openai_auth(model_override=None)
@@ -55,21 +46,7 @@ class ContinueAgent(CodingAgent):
         del reasoning_effort
         resolved, env_error = self._resolve_openai_auth(model_override=model_override)
         if env_error is not None:
-            output_path = self._write_output(self.name, env_error)
-            trajectory_path = self._write_trajectory(self.name, format_trace_text(env_error, source=str(output_path)))
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                response=env_error,
-                exit_code=1,
-                output_path=str(output_path),
-                raw_output=env_error,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
-            )
+            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
         run_home = Path("/tmp") / f"cakit-continue-{uuid.uuid4().hex}"
         run_home.mkdir(parents=True, exist_ok=True)
@@ -104,14 +81,6 @@ class ContinueAgent(CodingAgent):
 
         session_payload = self._load_session(run_home / "sessions")
         models_usage, llm_calls, tool_calls = self._extract_stats(session_payload)
-        response = self._extract_response(output, session_payload)
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
@@ -120,19 +89,16 @@ class ContinueAgent(CodingAgent):
             tool_calls=tool_calls,
             llm_calls=llm_calls,
             telemetry_log=str(run_home / "logs" / "cn.log"),
-            response=response,
-            exit_code=run_exit_code,
+            response=self._extract_response(output, session_payload),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["cn", "--version"])
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(["cn", "--version"])
 
     def _continue_home(self) -> Path:
         root = os.environ.get("CONTINUE_GLOBAL_DIR")
@@ -151,7 +117,7 @@ class ContinueAgent(CodingAgent):
         if not model:
             missing.append("CAKIT_CONTINUE_OPENAI_MODEL")
         if missing:
-            return {}, f"missing required environment variable(s): {', '.join(missing)}"
+            return {}, self._missing_env_message(missing)
 
         resolved: Dict[str, str] = {
             "api_key": api_key,
@@ -280,35 +246,37 @@ class ContinueAgent(CodingAgent):
         return models_usage, llm_calls, tool_calls
 
     def _extract_response(self, output: str, session_payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        stdout = self._stdout_only(output).strip()
-        if stdout:
-            return stdout
         if not isinstance(session_payload, dict):
-            return None
-        history = session_payload.get("history")
-        if not isinstance(history, list):
-            return None
-        for item in reversed(history):
-            if not isinstance(item, dict):
-                return None
-            message = item.get("message")
-            if not isinstance(message, dict):
-                return None
-            if message.get("role") != "assistant":
-                continue
-            content = message.get("content")
-            if isinstance(content, str):
-                cleaned = content.strip()
-                if cleaned:
-                    return cleaned
-            if isinstance(content, list):
-                parts: list[str] = []
-                for block in content:
-                    if not isinstance(block, dict):
+            session_payload = None
+        if isinstance(session_payload, dict):
+            history = session_payload.get("history")
+            if isinstance(history, list):
+                for item in reversed(history):
+                    if not isinstance(item, dict):
                         return None
-                    text = block.get("text")
-                    if isinstance(text, str) and text.strip():
-                        parts.append(text.strip())
-                if parts:
-                    return "\n".join(parts)
+                    message = item.get("message")
+                    if not isinstance(message, dict):
+                        return None
+                    if message.get("role") != "assistant":
+                        continue
+                    content = message.get("content")
+                    if isinstance(content, str):
+                        cleaned = content.strip()
+                        if cleaned:
+                            return cleaned
+                    if isinstance(content, list):
+                        parts: list[str] = []
+                        for block in content:
+                            if not isinstance(block, dict):
+                                return None
+                            text = block.get("text")
+                            if isinstance(text, str) and text.strip():
+                                parts.append(text.strip())
+                        if parts:
+                            return "\n".join(parts)
+
+        stdout = self._stdout_only(output)
+        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
         return None

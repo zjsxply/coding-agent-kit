@@ -52,24 +52,7 @@ class DeepAgentsAgent(CodingAgent):
 
         env, env_error, selected_model = self._build_run_env(model_override=model_override)
         if env_error is not None:
-            output_path = self._write_output(self.name, env_error)
-            trajectory_path = self._write_trajectory(
-                self.name,
-                format_trace_text(env_error, source=str(output_path)),
-            )
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                response=env_error,
-                exit_code=1,
-                output_path=str(output_path),
-                raw_output=env_error,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
-            )
+            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
         cmd = [
             "deepagents",
@@ -109,13 +92,6 @@ class DeepAgentsAgent(CodingAgent):
 
         output_path = self._write_output(self.name, output)
         trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
@@ -124,32 +100,30 @@ class DeepAgentsAgent(CodingAgent):
             tool_calls=tool_calls,
             llm_calls=llm_calls,
             response=response,
-            exit_code=run_exit_code,
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["deepagents", "--version"])
-        if result.exit_code != 0:
+        first = self._version_first_line(["deepagents", "--version"])
+        if first is None:
             return None
-        text = result.output.strip()
-        if not text:
-            return None
-        parts = text.split()
-        if len(parts) >= 2 and parts[0].lower().startswith("deepagents"):
-            return parts[1].strip()
-        return text
+        prefixed = self._second_token_if_prefixed(first, prefix="deepagents")
+        if prefixed:
+            return prefixed
+        return first
 
     def _build_run_env(
         self, *, model_override: Optional[str]
     ) -> tuple[Dict[str, str], Optional[str], str]:
-        api_key = self._normalize_value(os.environ.get("DEEPAGENTS_OPENAI_API_KEY"))
-        base_url = self._normalize_value(os.environ.get("DEEPAGENTS_OPENAI_BASE_URL"))
+        api_key = self._normalize_text(os.environ.get("DEEPAGENTS_OPENAI_API_KEY"))
+        base_url = self._normalize_text(os.environ.get("DEEPAGENTS_OPENAI_BASE_URL"))
         model = (
-            self._normalize_value(model_override)
-            or self._normalize_value(os.environ.get("DEEPAGENTS_OPENAI_MODEL"))
+            self._normalize_text(model_override)
+            or self._normalize_text(os.environ.get("DEEPAGENTS_OPENAI_MODEL"))
         )
 
         missing: list[str] = []
@@ -158,7 +132,7 @@ class DeepAgentsAgent(CodingAgent):
         if not model:
             missing.append("DEEPAGENTS_OPENAI_MODEL")
         if missing:
-            return {}, f"missing required environment variable(s): {', '.join(missing)}", ""
+            return {}, self._missing_env_message(missing), ""
 
         normalized_model = self._normalize_model_spec(model)
         env: Dict[str, str] = {
@@ -167,15 +141,6 @@ class DeepAgentsAgent(CodingAgent):
         if base_url:
             env["OPENAI_BASE_URL"] = base_url
         return env, None, normalized_model
-
-    @staticmethod
-    def _normalize_value(value: Optional[str]) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        cleaned = value.strip()
-        if not cleaned:
-            return None
-        return cleaned
 
     @staticmethod
     def _normalize_model_spec(model: str) -> str:

@@ -20,16 +20,7 @@ class CrushAgent(CodingAgent):
     supports_videos = False
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        result = self._npm_install("@charmland/crush", scope, version=version)
-        config_path = self.configure()
-        ok = result.exit_code == 0
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=result.output,
-            config_path=config_path,
-        )
+        return self._install_with_npm(package="@charmland/crush", scope=scope, version=version)
 
     def configure(self) -> Optional[str]:
         settings, error = self._resolve_api_settings(model_override=None)
@@ -51,24 +42,7 @@ class CrushAgent(CodingAgent):
     ) -> RunResult:
         settings, settings_error = self._resolve_api_settings(model_override=model_override)
         if settings_error is not None:
-            output_path = self._write_output(self.name, settings_error)
-            trajectory_path = self._write_trajectory(
-                self.name,
-                format_trace_text(settings_error, source=str(output_path)),
-            )
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                response=settings_error,
-                exit_code=1,
-                output_path=str(output_path),
-                raw_output=settings_error,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
-            )
+            return self._build_error_run_result(message=settings_error, cakit_exit_code=1)
 
         data_dir = Path(tempfile.mkdtemp(prefix="cakit-crush-data-"))
         db_path = data_dir / "crush.db"
@@ -77,7 +51,7 @@ class CrushAgent(CodingAgent):
         env: Dict[str, str] = {
             "CRUSH_DISABLE_PROVIDER_AUTO_UPDATE": "1",
         }
-        selected_model = self._normalize_model_name(model_override or os.environ.get("CAKIT_CRUSH_MODEL"))
+        selected_model = self._normalize_text(model_override or os.environ.get("CAKIT_CRUSH_MODEL"))
         if settings is not None:
             config_dir = Path(tempfile.mkdtemp(prefix="cakit-crush-config-"))
             runtime_config_path = config_dir / "crush.json"
@@ -105,7 +79,6 @@ class CrushAgent(CodingAgent):
 
         result = self._run(cmd, env=env, base_env=base_env)
         output = result.output
-        response = self._extract_response(output)
         output_path = self._write_output(self.name, output)
 
         models_usage, llm_calls, tool_calls, trace_payload = self._extract_stats_from_db(db_path)
@@ -116,13 +89,6 @@ class CrushAgent(CodingAgent):
             output_path=output_path,
         )
         trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
@@ -131,22 +97,18 @@ class CrushAgent(CodingAgent):
             tool_calls=tool_calls,
             llm_calls=llm_calls,
             telemetry_log=str(telemetry_path),
-            response=response,
-            exit_code=run_exit_code,
+            response=self._extract_response(output),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["crush", "--version"])
-        text = result.output.strip()
-        if result.exit_code != 0 or not text:
+        first = self._version_first_line(["crush", "--version"])
+        if first is None:
             return None
-        line = [item.strip() for item in text.splitlines() if item.strip()]
-        if not line:
-            return None
-        first = line[0]
         prefix = "crush version "
         lowered = first.lower()
         if lowered.startswith(prefix):
@@ -156,7 +118,7 @@ class CrushAgent(CodingAgent):
     def _resolve_api_settings(self, *, model_override: Optional[str]) -> tuple[Optional[Dict[str, str]], Optional[str]]:
         api_key = os.environ.get("CRUSH_OPENAI_API_KEY")
         base_url = os.environ.get("CRUSH_OPENAI_BASE_URL")
-        model = self._normalize_model_name(model_override or os.environ.get("CAKIT_CRUSH_MODEL"))
+        model = self._normalize_text(model_override or os.environ.get("CAKIT_CRUSH_MODEL"))
 
         any_set = bool((api_key and api_key.strip()) or (base_url and base_url.strip()) or model)
         if not any_set:
@@ -170,22 +132,13 @@ class CrushAgent(CodingAgent):
         if not model:
             missing.append("CAKIT_CRUSH_MODEL")
         if missing:
-            return None, f"missing required environment variable(s): {', '.join(missing)}"
+            return None, self._missing_env_message(missing)
 
         return {
             "api_key": api_key.strip(),
             "base_url": base_url.strip(),
             "model": model,
         }, None
-
-    @staticmethod
-    def _normalize_model_name(value: Optional[str]) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        if not normalized:
-            return None
-        return normalized
 
     def _build_api_config_payload(self, *, model: str) -> Dict[str, Any]:
         provider_id = "cakit-openai"

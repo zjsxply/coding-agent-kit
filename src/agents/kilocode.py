@@ -25,16 +25,7 @@ class KiloCodeAgent(CodingAgent):
     supports_videos = False
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        result = self._npm_install("@kilocode/cli", scope, version=version)
-        config_path = self.configure()
-        ok = result.exit_code == 0
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=result.output,
-            config_path=config_path,
-        )
+        return self._install_with_npm(package="@kilocode/cli", scope=scope, version=version)
 
     def configure(self) -> Optional[str]:
         payload, _ = self._build_runtime_config_payload(model_override=None)
@@ -90,20 +81,10 @@ class KiloCodeAgent(CodingAgent):
         config_payload, config_error = self._build_runtime_config_payload(model_override=model_override)
         if config_payload is None:
             message = config_error or "missing required Kilo Code API settings"
-            output_path = self._write_output(self.name, message)
-            trajectory_path = self._write_trajectory(self.name, format_trace_text(message, source=str(output_path)))
-            return RunResult(
-                agent=self.name,
+            return self._build_error_run_result(
+                message=message,
+                cakit_exit_code=1,
                 agent_version=agent_version,
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                response=message,
-                exit_code=1,
-                output_path=str(output_path),
-                raw_output=message,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
             )
 
         run_home = Path(tempfile.mkdtemp(prefix="cakit-kilocode-home-"))
@@ -142,15 +123,7 @@ class KiloCodeAgent(CodingAgent):
         api_history = self._load_json_array(task_dir / "api_conversation_history.json") if task_dir else None
 
         usage = self._extract_usage_from_ui_messages(ui_messages)
-        llm_calls = self._extract_llm_calls_from_ui_messages(ui_messages)
-        tool_calls = self._extract_tool_calls_from_api_history(api_history)
         model_name = self._extract_model_name(task_item, global_state, api_history)
-        response = self._extract_response(payloads, ui_messages, api_history, output)
-        total_cost = self._extract_total_cost(task_item)
-
-        models_usage: Dict[str, Dict[str, int]] = {}
-        if usage is not None and model_name:
-            models_usage = self._ensure_models_usage({}, usage, model_name)
 
         output_path = self._write_output(self.name, output)
         trajectory_payload = self._build_trajectory_payload(
@@ -165,24 +138,17 @@ class KiloCodeAgent(CodingAgent):
         else:
             trajectory_content = format_trace_text(output, source=str(output_path))
         trajectory_path = self._write_trajectory(self.name, trajectory_content)
-
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=agent_version,
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            total_cost=total_cost,
-            response=response,
-            exit_code=run_exit_code,
+            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
+            tool_calls=self._extract_tool_calls_from_api_history(api_history),
+            llm_calls=self._extract_llm_calls_from_ui_messages(ui_messages),
+            total_cost=self._extract_total_cost(task_item),
+            response=self._extract_response(payloads, ui_messages, api_history, output),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
@@ -210,21 +176,11 @@ class KiloCodeAgent(CodingAgent):
         if model is None:
             missing.append("KILO_OPENAI_MODEL_ID")
         if missing:
-            message = f"missing required environment variable(s): {', '.join(missing)}"
-            output_path = self._write_output(self.name, message)
-            trajectory_path = self._write_trajectory(self.name, format_trace_text(message, source=str(output_path)))
-            return RunResult(
-                agent=self.name,
+            message = self._missing_env_message(missing) or "missing required Kilo Code API settings"
+            return self._build_error_run_result(
+                message=message,
+                cakit_exit_code=1,
                 agent_version=agent_version,
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                response=message,
-                exit_code=1,
-                output_path=str(output_path),
-                raw_output=message,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
             )
 
         run_home = Path(tempfile.mkdtemp(prefix="cakit-kilocode-home-"))
@@ -254,15 +210,7 @@ class KiloCodeAgent(CodingAgent):
         export_payload = self._export_v1_session_payload(session_id, env=env, base_env=base_env)
 
         usage = self._extract_v1_usage(export_payload)
-        llm_calls = self._extract_v1_llm_calls(export_payload)
-        tool_calls = self._extract_v1_tool_calls(export_payload)
         model_name = self._extract_v1_model_name(export_payload)
-        response = self._extract_v1_response(payloads, export_payload, output)
-        total_cost = self._extract_v1_total_cost(export_payload)
-
-        models_usage: Dict[str, Dict[str, int]] = {}
-        if usage is not None and model_name:
-            models_usage = self._ensure_models_usage({}, usage, model_name)
 
         output_path = self._write_output(self.name, output)
         trajectory_payload: Dict[str, Any] = {
@@ -275,38 +223,24 @@ class KiloCodeAgent(CodingAgent):
             source=str(output_path),
         )
         trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=agent_version,
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            total_cost=total_cost,
-            response=response,
-            exit_code=run_exit_code,
+            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
+            tool_calls=self._extract_v1_tool_calls(export_payload),
+            llm_calls=self._extract_v1_llm_calls(export_payload),
+            total_cost=self._extract_v1_total_cost(export_payload),
+            response=self._extract_v1_response(payloads, export_payload, output),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["kilocode", "--version"])
-        if result.exit_code != 0:
-            return None
-        for raw_line in result.output.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            return line
-        return None
+        return self._version_first_line(["kilocode", "--version"])
 
     def _build_runtime_config_payload(self, model_override: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         api_key = self._normalize_text(os.environ.get("KILO_OPENAI_API_KEY"))
@@ -323,7 +257,7 @@ class KiloCodeAgent(CodingAgent):
         if model is None:
             missing.append("KILO_OPENAI_MODEL_ID")
         if missing:
-            return None, f"missing required environment variable(s): {', '.join(missing)}"
+            return None, self._missing_env_message(missing)
 
         provider: Dict[str, Any] = {
             "id": "default",
@@ -375,15 +309,6 @@ class KiloCodeAgent(CodingAgent):
         if not match:
             return None
         return int(match.group(1))
-
-    @staticmethod
-    def _normalize_text(value: Optional[str]) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        cleaned = value.strip()
-        if not cleaned:
-            return None
-        return cleaned
 
     def _normalize_model_id(self, value: Optional[str]) -> Optional[str]:
         cleaned = self._normalize_text(value)

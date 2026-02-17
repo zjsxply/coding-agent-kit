@@ -30,6 +30,7 @@
 - Agent availability tests can take a long time; use a 10-minute timeout (`--timeout-seconds 600`) to reduce interruption risk.
 - Run multiple coding-agent invocation tasks in parallel to save total test time and reduce expected timeout risk.
 - If parallel execution causes race conditions (for example concurrent installation), fix the code before relying on the test result.
+- cakit must support concurrent multi-agent testing/runs; parallel execution is required instead of serial-only validation.
 - By default, repeated stability runs are not required. If one run succeeds with correct response semantics and required stats fields, treat the capability as available.
 - Do not add code-level unit/integration test points for coding agent availability or stats extraction. Validate with `tests/availability_test.py` and manual, subjective review of real outputs.
 - Do not treat automated pass/fail in scripts as sufficient by itself; always inspect response content and judge correctness manually.
@@ -66,6 +67,9 @@
 ## Code Structure and Style
 - `src/agents/`: one file per agent, one class per agent. All agent-specific logic (install, run, usage extraction, etc.) must live in the corresponding class.
 - `src/utils.py`: only necessary shared utilities; do not wrap one-liners into functions.
+- Keep code concise with intent:
+  - When building `RunResult`, remove one-time pass-through locals and construct those values inline in `RunResult(...)`.
+  - Keep meaningful readability variables (for example `trajectory_content`) when they make the flow clearer, even if they are used once.
 - Use the standard library to parse JSON; if custom parsing is unavoidable, put it in `src/utils.py`.
 - Reuse uv/pip install helpers via shared methods (prefer `src/agents/base.py`) instead of duplicating install command assembly in each coding agent.
 - Similar cross-coding-agent helper logic must be extracted into `src/utils.py` or `src/agents/base.py` (choose based on whether it is generic utility vs agent-runtime behavior).

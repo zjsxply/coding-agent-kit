@@ -66,23 +66,12 @@ class GooseAgent(CodingAgent):
                 videos=videos,
                 tool_name="developer__image_processor and developer__video_processor",
             )
-        env, env_error = self._build_run_env(model_override=model_override)
+        env, env_error = self._build_run_env(
+            model_override=model_override,
+            source_env=base_env,
+        )
         if env_error is not None:
-            output_path = self._write_output(self.name, env_error)
-            trajectory_path = self._write_trajectory(self.name, format_trace_text(env_error, source=str(output_path)))
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                response=env_error,
-                exit_code=1,
-                output_path=str(output_path),
-                raw_output=env_error,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
-            )
+            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
         session_name = f"cakit-goose-{uuid.uuid4().hex}"
         cmd = [
@@ -117,68 +106,57 @@ class GooseAgent(CodingAgent):
 
         model_name = self._extract_model_name_from_stream(payloads) or self._extract_model_name_from_session(session_payload)
         usage = self._extract_usage_from_session(session_payload)
-        llm_calls = self._extract_llm_calls_from_session(session_payload)
-        tool_calls = self._extract_tool_calls_from_session(session_payload)
-        response = self._extract_response(payloads=payloads, session_payload=session_payload, output=output)
-
-        models_usage: Dict[str, Dict[str, int]] = {}
-        if usage is not None and model_name:
-            models_usage = self._ensure_models_usage({}, usage, model_name)
-
         output_path = self._write_output(self.name, output)
         trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            response=response,
-            exit_code=run_exit_code,
+            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
+            tool_calls=self._extract_tool_calls_from_session(session_payload),
+            llm_calls=self._extract_llm_calls_from_session(session_payload),
+            response=self._extract_response(payloads=payloads, session_payload=session_payload, output=output),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["goose", "--version"])
-        if result.exit_code != 0:
+        first = self._version_first_line(["goose", "--version"])
+        if first is None:
             return None
-        lines = [line.strip() for line in result.output.splitlines() if line.strip()]
-        if not lines:
-            return None
-        first = lines[0]
-        parts = first.split()
-        if len(parts) >= 2 and parts[0].lower().startswith("goose"):
-            return parts[1]
+        prefixed = self._second_token_if_prefixed(first, prefix="goose")
+        if prefixed:
+            return prefixed
         return first
 
-    def _build_run_env(self, *, model_override: Optional[str]) -> Tuple[Dict[str, str], Optional[str]]:
-        provider = self._normalize_value(os.environ.get("CAKIT_GOOSE_PROVIDER")) or self._normalize_value(
-            os.environ.get("GOOSE_PROVIDER")
+    def _build_run_env(
+        self,
+        *,
+        model_override: Optional[str],
+        source_env: Optional[Dict[str, str]],
+    ) -> Tuple[Dict[str, str], Optional[str]]:
+        env_source = source_env if source_env is not None else os.environ
+
+        provider = self._normalize_text(env_source.get("CAKIT_GOOSE_PROVIDER")) or self._normalize_text(
+            env_source.get("GOOSE_PROVIDER")
         )
         model = (
-            self._normalize_value(model_override)
-            or self._normalize_value(os.environ.get("CAKIT_GOOSE_MODEL"))
-            or self._normalize_value(os.environ.get("GOOSE_MODEL"))
+            self._normalize_text(model_override)
+            or self._normalize_text(env_source.get("CAKIT_GOOSE_MODEL"))
+            or self._normalize_text(env_source.get("GOOSE_MODEL"))
         )
 
-        openai_api_key = self._normalize_value(os.environ.get("CAKIT_GOOSE_OPENAI_API_KEY")) or self._normalize_value(
-            os.environ.get("OPENAI_API_KEY")
+        openai_api_key = self._normalize_text(env_source.get("CAKIT_GOOSE_OPENAI_API_KEY")) or self._normalize_text(
+            env_source.get("OPENAI_API_KEY")
         )
-        openai_host = self._normalize_value(os.environ.get("OPENAI_HOST"))
-        openai_base_path = self._normalize_value(os.environ.get("CAKIT_GOOSE_OPENAI_BASE_PATH")) or self._normalize_value(
-            os.environ.get("OPENAI_BASE_PATH")
+        openai_host = self._normalize_text(env_source.get("OPENAI_HOST"))
+        openai_base_path = self._normalize_text(env_source.get("CAKIT_GOOSE_OPENAI_BASE_PATH")) or self._normalize_text(
+            env_source.get("OPENAI_BASE_PATH")
         )
-        openai_base_url = self._normalize_value(os.environ.get("CAKIT_GOOSE_OPENAI_BASE_URL"))
+        openai_base_url = self._normalize_text(env_source.get("CAKIT_GOOSE_OPENAI_BASE_URL"))
         if openai_base_url:
             endpoint = self._derive_openai_endpoint(openai_base_url)
             if endpoint is None:
@@ -196,7 +174,7 @@ class GooseAgent(CodingAgent):
             "CAKIT_GOOSE_OPENAI_BASE_URL",
             "CAKIT_GOOSE_OPENAI_BASE_PATH",
         )
-        cakit_configured = any(self._normalize_value(os.environ.get(key)) for key in cakit_keys)
+        cakit_configured = any(self._normalize_text(env_source.get(key)) for key in cakit_keys)
         if cakit_configured:
             missing: List[str] = []
             if provider is None:
@@ -206,7 +184,7 @@ class GooseAgent(CodingAgent):
             if provider == "openai" and openai_api_key is None:
                 missing.append("CAKIT_GOOSE_OPENAI_API_KEY")
             if missing:
-                return {}, f"missing required environment variable(s): {', '.join(missing)}"
+                return {}, self._missing_env_message(missing)
 
         env: Dict[str, str] = {
             "GOOSE_MODE": "auto",
@@ -222,15 +200,6 @@ class GooseAgent(CodingAgent):
         if openai_base_path:
             env["OPENAI_BASE_PATH"] = openai_base_path
         return env, None
-
-    @staticmethod
-    def _normalize_value(value: Optional[str]) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        if not normalized:
-            return None
-        return normalized
 
     @staticmethod
     def _derive_openai_endpoint(base_url: str) -> Optional[Tuple[str, str]]:

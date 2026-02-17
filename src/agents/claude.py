@@ -17,16 +17,7 @@ class ClaudeAgent(CodingAgent):
     supports_videos = False
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        result = self._npm_install("@anthropic-ai/claude-code", scope, version=version)
-        ok = result.exit_code == 0
-        details = result.output
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=details,
-            config_path=None,
-        )
+        return self._install_with_npm(package="@anthropic-ai/claude-code", scope=scope, version=version)
 
     def configure(self) -> Optional[str]:
         return None
@@ -102,53 +93,34 @@ class ClaudeAgent(CodingAgent):
             parsed = self._parse_stream_payloads(payloads)
         except Exception as exc:
             message = f"failed to parse Claude Code JSON output: {exc}"
-            output_path = self._write_output(self.name, output or message)
-            trajectory_path = self._write_trajectory(
-                self.name, format_trace_text(output or message, source=str(output_path))
-            )
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=result.duration_seconds,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                total_cost=None,
-                telemetry_log=None,
-                response=message,
-                exit_code=2,
-                output_path=str(output_path),
+            return self._build_error_run_result(
+                message=message,
+                cakit_exit_code=2,
+                command_exit_code=result.exit_code,
                 raw_output=output or message,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
+                runtime_seconds=result.duration_seconds,
             )
-        runtime_seconds = parsed["duration_ms"] / 1000.0
-        models_usage = parsed["models_usage"]
-        tool_calls = parsed["tool_calls"]
-        response = parsed["response"]
         output_path = self._write_output(self.name, output)
         trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
-            runtime_seconds=runtime_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
+            runtime_seconds=parsed["duration_ms"] / 1000.0,
+            models_usage=parsed["models_usage"],
+            tool_calls=parsed["tool_calls"],
             llm_calls=parsed["llm_calls"],
             total_cost=parsed["total_cost_usd"],
             telemetry_log=otel_endpoint if telemetry_enabled and otel_endpoint else None,
-            response=response,
-            exit_code=result.exit_code,
+            response=parsed["response"],
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["claude", "--version"])
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(["claude", "--version"])
 
     def _parse_stream_payloads(self, payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not payloads:

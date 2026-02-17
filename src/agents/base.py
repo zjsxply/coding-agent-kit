@@ -7,9 +7,13 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+
+from ..models import InstallResult, RunResult
+from ..utils import format_trace_text
 
 
 @dataclass
@@ -57,7 +61,7 @@ class CodingAgent(abc.ABC):
         rejected = self._reject_unsupported_media(images=images, videos=videos)
         if rejected:
             return rejected
-        return self._run_impl(
+        result = self._run_impl(
             prompt,
             images=images,
             videos=videos,
@@ -65,6 +69,15 @@ class CodingAgent(abc.ABC):
             model_override=model_override,
             base_env=base_env,
         )
+        if result.cakit_exit_code is None and result.command_exit_code is not None:
+            result.cakit_exit_code = self._resolve_strict_run_exit_code(
+                command_exit_code=result.command_exit_code,
+                models_usage=result.models_usage or {},
+                llm_calls=result.llm_calls,
+                tool_calls=result.tool_calls,
+                response=result.response,
+            )
+        return result
 
     @abc.abstractmethod
     def _run_impl(
@@ -97,7 +110,7 @@ class CodingAgent(abc.ABC):
             for key in unset_env:
                 merged_env.pop(key, None)
         if env:
-            merged_env.update({k: v for k, v in env.items() if v})
+            merged_env.update({k: v for k, v in env.items() if v is not None})
         extra_paths = self._extra_path_entries()
         if extra_paths:
             current_path = merged_env.get("PATH", "")
@@ -155,6 +168,31 @@ class CodingAgent(abc.ABC):
         prefix.mkdir(parents=True, exist_ok=True)
         return self._run(["npm", "install", "-g", "--prefix", str(prefix), package_spec])
 
+    def _install_with_npm(
+        self,
+        *,
+        package: str,
+        scope: str,
+        version: Optional[str],
+        require_config: bool = False,
+        configure_failure_message: Optional[str] = None,
+    ) -> "InstallResult":
+        result = self._npm_install(package, scope, version=version)
+        config_path = self.configure()
+        ok = result.exit_code == 0
+        details = result.output
+        if ok and require_config and config_path is None:
+            ok = False
+            message = configure_failure_message or f"{self.name} configure failed"
+            details = f"{details}\n{message}" if details else message
+        return InstallResult(
+            agent=self.name,
+            version=self.get_version() if ok else None,
+            ok=ok,
+            details=details,
+            config_path=config_path,
+        )
+
     def _extra_path_entries(self) -> list[str]:
         candidates = [
             self._npm_prefix() / "bin",
@@ -171,7 +209,6 @@ class CodingAgent(abc.ABC):
         if not self.binary:
             return None
         env_keys = (
-            f"CAKIT_{self.name.upper()}_BIN",
             f"{self.name.upper()}_BIN",
             f"{self.binary.upper()}_BIN",
         )
@@ -189,6 +226,86 @@ class CodingAgent(abc.ABC):
             if candidate.exists():
                 return str(candidate)
         return None
+
+    def _version_text(
+        self,
+        args: Iterable[str],
+        *,
+        env: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
+        result = self._run(args, env=env)
+        if result.exit_code != 0:
+            return None
+        text = result.output.strip()
+        if not text:
+            return None
+        return text
+
+    def _version_first_line(
+        self,
+        args: Iterable[str],
+        *,
+        env: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
+        text = self._version_text(args, env=env)
+        return self._first_nonempty_line(text)
+
+    @staticmethod
+    def _first_nonempty_line(text: Optional[str]) -> Optional[str]:
+        if not isinstance(text, str):
+            return None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line:
+                return line
+        return None
+
+    @staticmethod
+    def _second_token_if_prefixed(first_line: Optional[str], *, prefix: str) -> Optional[str]:
+        if not isinstance(first_line, str):
+            return None
+        parts = first_line.split()
+        if len(parts) < 2:
+            return None
+        if not parts[0].lower().startswith(prefix.lower()):
+            return None
+        value = parts[1].strip()
+        if not value:
+            return None
+        return value
+
+    def _build_error_run_result(
+        self,
+        *,
+        message: str,
+        cakit_exit_code: int = 1,
+        agent_version: Optional[str] = None,
+        command_exit_code: Optional[int] = None,
+        raw_output: Optional[str] = None,
+        runtime_seconds: float = 0.0,
+    ) -> "RunResult":
+        output_path = self._write_output(self.name, message)
+
+        trajectory_path = self._write_trajectory(
+            self.name,
+            format_trace_text(message, source=str(output_path)),
+        )
+        return RunResult(
+            agent=self.name,
+            agent_version=agent_version if agent_version is not None else self.get_version(),
+            runtime_seconds=runtime_seconds,
+            models_usage={},
+            tool_calls=None,
+            llm_calls=None,
+            total_cost=None,
+            telemetry_log=None,
+            response=message,
+            cakit_exit_code=cakit_exit_code,
+            command_exit_code=command_exit_code,
+            output_path=str(output_path),
+            raw_output=raw_output if raw_output is not None else message,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
+        )
 
     def _ensure_uv(self) -> bool:
         if shutil.which("uv") is not None:
@@ -332,28 +449,7 @@ class CodingAgent(abc.ABC):
         else:
             subject = f"{unsupported[0]} and {unsupported[1]} input"
         message = f"{subject} is not supported by {self.display_name} CLI."
-        output_path = self._write_output(self.name, message)
-        from ..utils import format_trace_text
-
-        trajectory_path = self._write_trajectory(
-            self.name,
-            format_trace_text(message, source=str(output_path)),
-        )
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=0.0,
-            models_usage={},
-            tool_calls=None,
-            llm_calls=None,
-            total_cost=None,
-            telemetry_log=None,
-            response=message,
-            exit_code=2,
-            output_path=str(output_path),
-            raw_output=message,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
-        )
+        return self._build_error_run_result(message=message, cakit_exit_code=2)
 
     @staticmethod
     def _stdout_only(output: str) -> str:
@@ -391,6 +487,84 @@ class CodingAgent(abc.ABC):
             return None
 
     @staticmethod
+    def _normalize_text(value: Optional[str]) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        return cleaned
+
+    @staticmethod
+    def _missing_env_message(missing: list[str]) -> Optional[str]:
+        if not missing:
+            return None
+        return f"missing required environment variable(s): {', '.join(missing)}"
+
+    def _extract_gemini_style_stats(
+        self,
+        payload: Optional[Dict[str, Any]],
+    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
+        if not isinstance(payload, dict):
+            return {}, None, None
+
+        stats = payload.get("stats")
+        if not isinstance(stats, dict):
+            return {}, None, None
+
+        models = stats.get("models")
+        if not isinstance(models, dict) or not models:
+            return {}, None, None
+
+        models_usage: Dict[str, Dict[str, int]] = {}
+        llm_calls = 0
+        for model_name, model_stats in models.items():
+            if not isinstance(model_name, str) or not model_name.strip():
+                return {}, None, None
+            usage, model_calls = self._extract_gemini_style_model_usage(model_stats)
+            if usage is None or model_calls is None:
+                return {}, None, None
+            models_usage[model_name] = usage
+            llm_calls += model_calls
+
+        tools = stats.get("tools")
+        if not isinstance(tools, dict):
+            return {}, None, None
+        tool_calls = self._as_int(tools.get("totalCalls"))
+        if tool_calls is None:
+            return {}, None, None
+
+        return models_usage, llm_calls, tool_calls
+
+    def _extract_gemini_style_model_usage(self, model_stats: Any) -> tuple[Optional[Dict[str, int]], Optional[int]]:
+        if not isinstance(model_stats, dict):
+            return None, None
+        usage = self._extract_gemini_style_tokens(model_stats.get("tokens"))
+        llm_calls = self._extract_gemini_style_total_requests(model_stats.get("api"))
+        if usage is None or llm_calls is None:
+            return None, None
+        return usage, llm_calls
+
+    def _extract_gemini_style_tokens(self, tokens: Any) -> Optional[Dict[str, int]]:
+        if not isinstance(tokens, dict):
+            return None
+        prompt = self._as_int(tokens.get("prompt"))
+        completion = self._as_int(tokens.get("candidates"))
+        total = self._as_int(tokens.get("total"))
+        if prompt is None or completion is None or total is None:
+            return None
+        return {
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
+        }
+
+    def _extract_gemini_style_total_requests(self, api: Any) -> Optional[int]:
+        if not isinstance(api, dict):
+            return None
+        return self._as_int(api.get("totalRequests"))
+
+    @staticmethod
     def _resolve_strict_run_exit_code(
         *,
         command_exit_code: int,
@@ -413,7 +587,8 @@ class CodingAgent(abc.ABC):
 
     def _stage_media_files(self, media_paths: list[Path]) -> list[Path]:
         staged: list[Path] = []
-        stage_dir = self.workdir / ".cakit-media"
+        run_stage = f"{os.getpid()}-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
+        stage_dir = self.workdir / ".cakit-media" / run_stage
         stage_dir.mkdir(parents=True, exist_ok=True)
         for index, media_path in enumerate(media_paths):
             src = media_path.expanduser().resolve()
@@ -481,6 +656,3 @@ class CodingAgent(abc.ABC):
         lines.append("")
         lines.append(prompt)
         return "\n".join(lines), staged_paths
-
-
-from ..models import InstallResult, RunResult  # noqa: E402

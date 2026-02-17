@@ -114,6 +114,7 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 具体到每个 agent 的覆盖方式见 `docs/model_override.zh.md`。
 `--reasoning-effort` 是统一的按次运行推理强度/思考开关参数。
 各 agent 的可选值与映射见 `docs/reasoning_effort.zh.md`。
+退出码说明见 `docs/exit_codes.zh.md`。
 环境传递说明：
 - cakit 只会把它“受管控”的环境变量传给 coding agent（即 `.env.template` 里的变量以及 cakit 显式设置的值）。
 - 当前 shell 的其他环境变量不会被继承给 coding agent 进程。
@@ -127,7 +128,8 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 - `llm_calls`
 - `tool_calls`（若 agent 提供）
 - `telemetry_log`（若启用）
-- `exit_code`
+- `cakit_exit_code`（cakit 严格结果码）
+- `command_exit_code`（coding agent CLI 进程原始退出码）
 - `output_path`（写入的 `.log` 文件路径，内容为 coding agent CLI 的原始输出）
 - `raw_output`（本次运行捕获到的 coding agent CLI 原始输出）
 - `trajectory_path`（本次运行的格式化、人类可读轨迹文件路径，不做截断）

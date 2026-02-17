@@ -21,20 +21,7 @@ class CodexAgent(CodingAgent):
     supports_videos = False
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        result = self._npm_install("@openai/codex", scope, version=version)
-        config_path = self.configure()
-        ok = result.exit_code == 0
-        details = result.output
-        if ok and config_path is None:
-            ok = False
-            details = (details + "\n" if details else "") + "codex configure failed"
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=details,
-            config_path=config_path,
-        )
+        return self._install_with_npm(package="@openai/codex", scope=scope, version=version, require_config=True, configure_failure_message="codex configure failed")
 
     def configure(self) -> Optional[str]:
         use_oauth = self._use_oauth()
@@ -99,24 +86,7 @@ class CodexAgent(CodingAgent):
         images = images or []
         if self._use_oauth() and not self._auth_path().exists():
             message = f"codex OAuth is enabled but auth file not found at {self._auth_path()}; run `codex login`."
-            output_path = self._write_output(self.name, message)
-            trajectory_path = self._write_trajectory(self.name, format_trace_text(message, source=str(output_path)))
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                total_cost=None,
-                telemetry_log=None,
-                response=message,
-                exit_code=2,
-                output_path=str(output_path),
-                raw_output=message,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
-            )
-        otel_endpoint = os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+            return self._build_error_run_result(message=message, cakit_exit_code=2)
         env = {
             "OPENAI_API_BASE": os.environ.get("CODEX_API_BASE"),
         }
@@ -151,8 +121,6 @@ class CodexAgent(CodingAgent):
         output = result.output
         payloads = load_json_payloads(output)
         models_usage, llm_calls = self._extract_models_usage(payloads)
-        tool_calls = self._count_tool_calls(payloads)
-        response = self._read_last_message(last_message_path)
         output_path = self._write_output(self.name, output)
         trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
         return RunResult(
@@ -160,22 +128,19 @@ class CodexAgent(CodingAgent):
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
             models_usage=models_usage,
-            tool_calls=tool_calls,
+            tool_calls=self._count_tool_calls(payloads),
             llm_calls=llm_calls,
-            telemetry_log=otel_endpoint,
-            response=response,
-            exit_code=result.exit_code,
+            telemetry_log=os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+            response=self._read_last_message(last_message_path),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["codex", "--version"])
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(["codex", "--version"])
 
     def _use_oauth(self) -> bool:
         value = os.environ.get("CAKIT_CODEX_USE_OAUTH")
@@ -271,7 +236,6 @@ class CodexAgent(CodingAgent):
         model: Optional[str] = None
         usage: Optional[Dict[str, int]] = None
         llm_calls = 0
-        last_signature: Optional[Tuple[int, int, int]] = None
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
                 if not line:
@@ -311,10 +275,7 @@ class CodexAgent(CodingAgent):
                         return model, None, None
                     prompt = input_tokens + cached_input_tokens
                     completion = output_tokens + reasoning_output_tokens
-                    signature = (prompt, completion, total_tokens)
-                    if signature != last_signature:
-                        llm_calls += 1
-                        last_signature = signature
+                    llm_calls += 1
                     usage = {
                         "prompt_tokens": prompt,
                         "completion_tokens": completion,

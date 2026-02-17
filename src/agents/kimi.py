@@ -151,19 +151,16 @@ class KimiAgent(CodingAgent):
         trajectory_path = self._write_trajectory(
             self.name, format_trace_text(output, source=str(output_path))
         )
-        models_usage: Dict[str, Dict[str, int]] = {}
-        if usage is not None and model_name:
-            models_usage = self._ensure_models_usage({}, usage, model_name)
-        response = self._extract_response(payloads, output)
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
+            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
             tool_calls=tool_calls,
             llm_calls=llm_calls,
-            response=response,
-            exit_code=result.exit_code,
+            response=self._extract_response(payloads, output),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,

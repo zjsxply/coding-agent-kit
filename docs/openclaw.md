@@ -44,8 +44,13 @@ Environment variables used by cakit:
 `cakit run openclaw "<prompt>"` executes:
 
 ```bash
+openclaw onboard --non-interactive ... --custom-model-id <resolved_model> --json
 openclaw agent --local --agent main --session-id <generated_id> --message "<prompt>" --json
 ```
+
+Run behavior notes:
+- cakit creates an isolated temporary `OPENCLAW_HOME` per run, so parallel runs do not share session/config state.
+- cakit runs non-interactive onboarding before `openclaw agent` so `--model` override is applied to the active custom model.
 
 Reasoning effort mapping:
 - `cakit run openclaw ... --reasoning-effort off|minimal|low|medium|high`
@@ -60,8 +65,8 @@ Reasoning effort mapping:
    - `provider/model`
    - usage (`input`, `output`, `cacheRead`, `cacheWrite`, `total`)
 2. Session transcript:
-   - `~/.openclaw/agents/main/sessions/<session_id>.jsonl`
+   - `<temporary OPENCLAW_HOME>/agents/main/sessions/<session_id>.jsonl`
    - `llm_calls`: assistant messages with valid usage
-   - `tool_calls`: tool-use blocks in transcript messages
+   - `tool_calls`: total tool-use occurrences in transcript messages
 
 If required stats cannot be parsed, cakit returns non-zero.

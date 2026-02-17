@@ -74,12 +74,6 @@ class TraeOssAgent(CodingAgent):
             "  trae_agent_model:\n"
             "    model_provider: custom\n"
             f"    model: {yaml_quote(model)}\n"
-            "    max_tokens: 4096\n"
-            "    temperature: 0.2\n"
-            "    top_p: 1.0\n"
-            "    top_k: 0\n"
-            "    parallel_tool_calls: false\n"
-            "    max_retries: 3\n"
         )
         path = Path.home() / ".config" / "trae" / "config.yaml"
         self._write_text(path, config)
@@ -128,46 +122,32 @@ class TraeOssAgent(CodingAgent):
 
         trajectory_payload = self._load_trajectory_payload(trajectory_file)
         usage = self._extract_usage_from_trajectory(trajectory_payload)
-        llm_calls = self._extract_llm_calls_from_trajectory(trajectory_payload)
-        tool_calls = self._extract_tool_calls_from_trajectory(trajectory_payload)
         model_name = self._extract_model_name_from_trajectory(trajectory_payload)
-        response = self._extract_response(output, trajectory_payload)
 
         output_path = self._write_output(self.name, output)
-        models_usage = self._ensure_models_usage({}, usage, model_name)
         trajectory_content = self._format_trajectory_trace(
             trajectory_file=trajectory_file,
             raw_output=output,
             output_path=output_path,
         )
         trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            response=response,
-            exit_code=run_exit_code,
+            models_usage=self._ensure_models_usage({}, usage, model_name),
+            tool_calls=self._extract_tool_calls_from_trajectory(trajectory_payload),
+            llm_calls=self._extract_llm_calls_from_trajectory(trajectory_payload),
+            response=self._extract_response(output, trajectory_payload),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["trae-cli", "--version"])
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(["trae-cli", "--version"])
 
     def _load_trajectory_payload(self, path: Path) -> Optional[Dict[str, Any]]:
         if not path.exists():
@@ -299,19 +279,3 @@ class TraeOssAgent(CodingAgent):
             if trajectory_raw.strip():
                 return format_trace_text(trajectory_raw, source=str(trajectory_file))
         return format_trace_text(raw_output, source=str(output_path))
-
-    def _usage_totals(self, usage: Optional[Dict[str, int]]) -> tuple[Optional[int], Optional[int], Optional[int]]:
-        if not usage:
-            return None, None, None
-        return (
-            usage.get("prompt_tokens"),
-            usage.get("completion_tokens"),
-            usage.get("total_tokens"),
-        )
-
-    def _count_actions(self, data: Dict[str, Any]) -> Optional[int]:
-        for key in ("trajectory", "steps", "actions"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return sum(1 for item in value if isinstance(item, dict) and ("action" in item or "tool" in item))
-        return None

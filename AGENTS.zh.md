@@ -30,6 +30,7 @@
 - Agent 可用性测试耗时可能较长；请使用 10 分钟超时（`--timeout-seconds 600`）以降低中途被打断的风险。
 - 请并行执行多个 coding agent 调用任务，以节约总测试时间并降低预期超时风险。
 - 若并行执行引入竞态问题（例如并发安装），应先修复代码，再采信测试结果。
+- cakit 必须支持并发的多 agent 测试/运行；验证时应采用并行执行，而不是仅串行流程。
 - 默认不要求做稳定性重复跑；若单次运行成功，且响应语义与必需统计字段都正确，即可判定该能力可用。
 - 不要为 coding agent 可用性或统计提取新增代码级单元/集成测试点。统一使用 `tests/availability_test.py`，并结合真实输出做主观人工判读。
 - 不要把脚本自动 pass/fail 当作唯一依据；必须人工阅读响应内容并判断是否正确。
@@ -66,6 +67,9 @@
 ## 代码结构与风格
 - `src/agents/`：每个 agent 一个文件、一个 class。所有 agent-specific 逻辑（安装、运行、usage 提取等）必须放在对应 class 内。
 - `src/utils.py`：仅放必要的通用工具函数；一行能解决的操作不要封装成函数。
+- 代码简洁要有边界：
+  - 构造 `RunResult` 时，去掉只做一次传递的一次性局部变量，直接在 `RunResult(...)` 参数中构造。
+  - 对于能提升流程可读性的中转变量（例如 `trajectory_content`），即使只使用一次也应保留。
 - 使用标准库解析 JSON；若必须自定义解析，放到 `src/utils.py`。
 - uv/pip 安装逻辑应优先复用共享方法（优先放在 `src/agents/base.py`），不要在各 coding agent 中重复拼装安装命令。
 - 跨 coding agent 的相似辅助逻辑必须下沉到 `src/utils.py` 或 `src/agents/base.py`（按“通用工具”与“agent 运行时行为”职责划分）。

@@ -7,10 +7,18 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
+
+try:
+    import fcntl
+except Exception:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 from .agents import create_agent, list_agents
+from .models import InstallResult
 from .utils import load_env_file
 
 
@@ -351,15 +359,9 @@ def _run_agent(
             base_env=base_env,
         )
         sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n")
-        exit_code = result.exit_code if result.exit_code is not None else 1
-        usage_ok = bool(result.models_usage)
-        llm_calls_ok = isinstance(result.llm_calls, int) and result.llm_calls >= 1
-        tool_calls_ok = isinstance(result.tool_calls, int) and result.tool_calls >= 0
-        response_ok = isinstance(result.response, str) and bool(result.response.strip())
-        trajectory_ok = isinstance(result.trajectory_path, str) and bool(result.trajectory_path.strip())
-        if exit_code == 0 and not (usage_ok and llm_calls_ok and tool_calls_ok and response_ok and trajectory_ok):
-            return 3
-        return 0 if exit_code == 0 else 1
+        if result.cakit_exit_code is None:
+            return 1
+        return result.cakit_exit_code
     finally:
         pass
 
@@ -424,11 +426,13 @@ def _run_skills(passthrough_args: list[str]) -> int:
 
 def _build_base_env(env_file: Optional[str]) -> Optional[Dict[str, str]]:
     base_env: Dict[str, str] = {}
-    base_env["PATH"] = os.environ.get("PATH") or os.defpath
-    base_env["HOME"] = os.environ.get("HOME") or str(Path.home())
+    path_value = os.environ.get("PATH")
+    home_value = os.environ.get("HOME")
+    base_env["PATH"] = path_value if path_value is not None else os.defpath
+    base_env["HOME"] = home_value if home_value is not None else str(Path.home())
     for key in _load_managed_env_keys():
         value = os.environ.get(key)
-        if value:
+        if value is not None:
             base_env[key] = value
     if env_file:
         env_file_values = _load_extra_env(env_file)
@@ -471,6 +475,41 @@ def _load_managed_env_keys() -> list[str]:
     return keys
 
 
+@contextmanager
+def _file_lock(name: str) -> Iterator[None]:
+    if fcntl is None:
+        yield
+        return
+    lock_root = Path("/tmp") / "cakit-locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_root / f"{name}.lock"
+    with lock_path.open("w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _run_logged_command(prefix: str, cmd: list[str], *, input_text: Optional[str] = None) -> bool:
+    print(f"{prefix} {' '.join(cmd)}")
+    result = subprocess.run(
+        cmd,
+        check=False,
+        input=input_text,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _with_sudo(cmd: list[str], *, use_sudo: bool, preserve_env: bool = False) -> list[str]:
+    if not use_sudo:
+        return cmd
+    if preserve_env:
+        return ["sudo", "-E", *cmd]
+    return ["sudo", *cmd]
+
+
 def _ensure_dependencies(agent_name: str) -> bool:
     needs_node = agent_name in {
         "codex",
@@ -487,27 +526,30 @@ def _ensure_dependencies(agent_name: str) -> bool:
     needs_uv = agent_name in {"openhands", "swe-agent", "trae-oss", "kimi", "deepagents"}
     ok = True
 
-    if needs_node and not _ensure_node_tools():
-        ok = False
+    if needs_node:
+        with _file_lock("deps-node"):
+            if not _ensure_node_tools():
+                ok = False
     if needs_uv and shutil.which("uv") is None:
-        print("[deps] uv not found, attempting auto-install.")
-        ok = _install_uv_linux() and ok
+        with _file_lock("deps-uv"):
+            if shutil.which("uv") is None:
+                print("[deps] uv not found, attempting auto-install.")
+                ok = _install_uv_linux() and ok
     return ok
 
 
 def _install_agent(agent_name: str, scope: str, version: Optional[str] = None) -> "InstallResult":
-    from .models import InstallResult
-
-    if not _ensure_dependencies(agent_name):
-        return InstallResult(
-            agent=agent_name,
-            version=None,
-            ok=False,
-            details="dependency install failed",
-            config_path=None,
-        )
-    agent = create_agent(agent_name)
-    return agent.install(scope=scope, version=version)
+    with _file_lock(f"install-{agent_name}"):
+        if not _ensure_dependencies(agent_name):
+            return InstallResult(
+                agent=agent_name,
+                version=None,
+                ok=False,
+                details="dependency install failed",
+                config_path=None,
+            )
+        agent = create_agent(agent_name)
+        return agent.install(scope=scope, version=version)
 
 
 def _install_node_linux() -> bool:
@@ -518,20 +560,34 @@ def _install_node_linux() -> bool:
     if use_sudo and shutil.which("sudo") is None:
         print("[deps] sudo not found; run as root to auto-install Node.js.")
         return False
-    sudo = "sudo " if use_sudo else ""
-    sudo_exec = "sudo -E " if use_sudo else ""
     if shutil.which("curl") is None:
-        subprocess.run(f"{sudo}apt-get update", shell=True, check=False)
-        subprocess.run(f"{sudo}apt-get install -y curl ca-certificates", shell=True, check=False)
-    steps = [
-        f"curl -fsSL https://deb.nodesource.com/setup_22.x | {sudo_exec}bash -",
-        f"{sudo}apt-get install -y nodejs",
-    ]
-    for cmd in steps:
-        print(f"[deps] {cmd}")
-        result = subprocess.run(cmd, shell=True, check=False)
-        if result.returncode != 0:
+        if not _run_logged_command("[deps]", _with_sudo(["apt-get", "update"], use_sudo=use_sudo)):
             return False
+        if not _run_logged_command(
+            "[deps]",
+            _with_sudo(["apt-get", "install", "-y", "curl", "ca-certificates"], use_sudo=use_sudo),
+        ):
+            return False
+
+    setup_script = subprocess.run(
+        ["curl", "-fsSL", "https://deb.nodesource.com/setup_22.x"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if setup_script.returncode != 0:
+        return False
+    if not _run_logged_command(
+        "[deps]",
+        _with_sudo(["bash", "-"], use_sudo=use_sudo, preserve_env=True),
+        input_text=setup_script.stdout,
+    ):
+        return False
+    if not _run_logged_command(
+        "[deps]",
+        _with_sudo(["apt-get", "install", "-y", "nodejs"], use_sudo=use_sudo),
+    ):
+        return False
     return True
 
 
@@ -543,14 +599,21 @@ def _install_uv_linux() -> bool:
     if use_sudo and shutil.which("sudo") is None:
         print("[deps] sudo not found; run as root to auto-install uv prerequisites.")
         return False
-    sudo = "sudo " if use_sudo else ""
     if shutil.which("curl") is None and shutil.which("apt-get") is not None:
-        subprocess.run(f"{sudo}apt-get update", shell=True, check=False)
-        subprocess.run(f"{sudo}apt-get install -y curl", shell=True, check=False)
-    cmd = "curl -LsSf https://astral.sh/uv/install.sh | sh"
-    print(f"[deps] {cmd}")
-    result = subprocess.run(cmd, shell=True, check=False)
-    if result.returncode == 0:
+        if not _run_logged_command("[deps]", _with_sudo(["apt-get", "update"], use_sudo=use_sudo)):
+            return False
+        if not _run_logged_command("[deps]", _with_sudo(["apt-get", "install", "-y", "curl"], use_sudo=use_sudo)):
+            return False
+
+    install_script = subprocess.run(
+        ["curl", "-LsSf", "https://astral.sh/uv/install.sh"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if install_script.returncode != 0:
+        return False
+    if _run_logged_command("[deps]", ["sh"], input_text=install_script.stdout):
         print("[deps] uv installed; restart your shell if it is not on PATH.")
         return True
     return False
@@ -590,52 +653,91 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
     use_sudo = os.geteuid() != 0
     if use_sudo and shutil.which("sudo") is None:
         return False, "sudo not found; run as root to install tools"
-    sudo = "sudo " if use_sudo else ""
-    steps = [
-        f"{sudo}apt-get update",
-        f"{sudo}apt-get install -y curl ca-certificates gnupg lsb-release unzip",
-        f"{sudo}apt-get install -y ripgrep fd-find fzf jq yq bat git git-delta",
-    ]
-    for cmd in steps:
-        print(f"[tools] {cmd}")
-        result = subprocess.run(cmd, shell=True, check=False)
-        if result.returncode != 0:
-            return False, f"command failed: {cmd}"
+
+    def run_tool_cmd(cmd: list[str]) -> bool:
+        return _run_logged_command("[tools]", _with_sudo(cmd, use_sudo=use_sudo))
+
+    if not run_tool_cmd(["apt-get", "update"]):
+        return False, "command failed: apt-get update"
+    if not run_tool_cmd(["apt-get", "install", "-y", "curl", "ca-certificates", "gnupg", "lsb-release", "unzip"]):
+        return False, "command failed: apt-get install base tools"
+    if not run_tool_cmd(["apt-get", "install", "-y", "ripgrep", "fd-find", "fzf", "jq", "yq", "bat", "git", "git-delta"]):
+        return False, "command failed: apt-get install shell tools"
+
     if shutil.which("gh") is None:
         print("[tools] installing GitHub CLI (gh)")
-        gh_steps = [
-            f"{sudo}mkdir -p /etc/apt/keyrings",
-            f"curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | {sudo}tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null",
-            f"{sudo}chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg",
-            'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | '
-            f"{sudo}tee /etc/apt/sources.list.d/github-cli.list >/dev/null",
-            f"{sudo}apt-get update",
-            f"{sudo}apt-get install -y gh",
-        ]
-        for cmd in gh_steps:
-            print(f"[tools] {cmd}")
-            result = subprocess.run(cmd, shell=True, check=False)
-            if result.returncode != 0:
-                return False, f"command failed: {cmd}"
+        if not run_tool_cmd(["mkdir", "-p", "/etc/apt/keyrings"]):
+            return False, "command failed: mkdir -p /etc/apt/keyrings"
+
+        gh_key_tmp = Path(tempfile.mkdtemp(prefix="cakit-gh-key-")) / "githubcli-archive-keyring.gpg"
+        if not _run_logged_command(
+            "[tools]",
+            ["curl", "-fsSL", "https://cli.github.com/packages/githubcli-archive-keyring.gpg", "-o", str(gh_key_tmp)],
+        ):
+            return False, "command failed: download gh keyring"
+        if not _run_logged_command(
+            "[tools]",
+            _with_sudo(["cp", str(gh_key_tmp), "/etc/apt/keyrings/githubcli-archive-keyring.gpg"], use_sudo=use_sudo),
+        ):
+            return False, "command failed: install gh keyring"
+        if not run_tool_cmd(["chmod", "go+r", "/etc/apt/keyrings/githubcli-archive-keyring.gpg"]):
+            return False, "command failed: chmod gh keyring"
+
+        arch_result = subprocess.run(
+            ["dpkg", "--print-architecture"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if arch_result.returncode != 0:
+            return False, "command failed: dpkg --print-architecture"
+        dpkg_arch = arch_result.stdout.strip()
+        if not dpkg_arch:
+            return False, "command failed: empty dpkg architecture"
+
+        gh_list_tmp = Path(tempfile.mkdtemp(prefix="cakit-gh-list-")) / "github-cli.list"
+        gh_list_content = (
+            f"deb [arch={dpkg_arch} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] "
+            "https://cli.github.com/packages stable main\n"
+        )
+        gh_list_tmp.write_text(gh_list_content, encoding="utf-8")
+        if not _run_logged_command(
+            "[tools]",
+            _with_sudo(["cp", str(gh_list_tmp), "/etc/apt/sources.list.d/github-cli.list"], use_sudo=use_sudo),
+        ):
+            return False, "command failed: install gh apt source"
+        if not run_tool_cmd(["apt-get", "update"]):
+            return False, "command failed: apt-get update (gh)"
+        if not run_tool_cmd(["apt-get", "install", "-y", "gh"]):
+            return False, "command failed: apt-get install gh"
+
     if arch_supported and shutil.which("sg") is None:
         print("[tools] installing ast-grep (sg)")
-        cmd = (
-            "curl -fsSL https://github.com/ast-grep/ast-grep/releases/latest/download/"
-            "ast-grep-linux-x86_64.tar.gz | "
-            f"{sudo}tar -xz -C /usr/local/bin sg"
-        )
-        print(f"[tools] {cmd}")
-        result = subprocess.run(cmd, shell=True, check=False)
-        if result.returncode != 0:
-            return False, f"command failed: {cmd}"
+        sg_tmp = Path(tempfile.mkdtemp(prefix="cakit-ast-grep-")) / "ast-grep-linux-x86_64.tar.gz"
+        if not _run_logged_command(
+            "[tools]",
+            [
+                "curl",
+                "-fsSL",
+                "https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-linux-x86_64.tar.gz",
+                "-o",
+                str(sg_tmp),
+            ],
+        ):
+            return False, "command failed: download ast-grep"
+        if not _run_logged_command(
+            "[tools]",
+            _with_sudo(["tar", "-xzf", str(sg_tmp), "-C", "/usr/local/bin", "sg"], use_sudo=use_sudo),
+        ):
+            return False, "command failed: install ast-grep"
+
     if shutil.which("fd") is None and shutil.which("fdfind") is not None:
-        cmd = f"{sudo}ln -sf /usr/bin/fdfind /usr/local/bin/fd"
-        print(f"[tools] {cmd}")
-        subprocess.run(cmd, shell=True, check=False)
+        _run_logged_command("[tools]", _with_sudo(["ln", "-sf", "/usr/bin/fdfind", "/usr/local/bin/fd"], use_sudo=use_sudo))
     if shutil.which("bat") is None and shutil.which("batcat") is not None:
-        cmd = f"{sudo}ln -sf /usr/bin/batcat /usr/local/bin/bat"
-        print(f"[tools] {cmd}")
-        subprocess.run(cmd, shell=True, check=False)
+        _run_logged_command(
+            "[tools]",
+            _with_sudo(["ln", "-sf", "/usr/bin/batcat", "/usr/local/bin/bat"], use_sudo=use_sudo),
+        )
     return True, "installed"
 
 

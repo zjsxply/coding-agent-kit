@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -21,50 +22,18 @@ class OpenClawAgent(CodingAgent):
 
     _SAFE_PROVIDER_ID_RE = re.compile(r"[^a-z0-9._-]+")
     _TOOL_CALL_TYPES = {"tool_use", "toolcall", "tool_call"}
+    _DEFAULT_CONTEXT_WINDOW = 32_000
+    _DEFAULT_MAX_TOKENS = 32_000
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        result = self._npm_install("openclaw", scope, version=version)
-        config_path = self.configure()
-        ok = result.exit_code == 0
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=result.output,
-            config_path=config_path,
-        )
+        return self._install_with_npm(package="openclaw", scope=scope, version=version)
 
     def configure(self) -> Optional[str]:
         settings, err = self._resolve_runtime_settings(model_override=None)
         if err is not None:
             return None
 
-        cmd = [
-            "openclaw",
-            "onboard",
-            "--non-interactive",
-            "--accept-risk",
-            "--mode",
-            "local",
-            "--auth-choice",
-            "custom-api-key",
-            "--custom-base-url",
-            settings["base_url"],
-            "--custom-model-id",
-            settings["model_id"],
-            "--custom-api-key",
-            settings["api_key"],
-            "--skip-channels",
-            "--skip-skills",
-            "--skip-health",
-            "--skip-ui",
-            "--skip-daemon",
-            "--json",
-        ]
-        provider_id = settings.get("provider_id")
-        if provider_id:
-            cmd.extend(["--custom-provider-id", provider_id])
-
+        cmd = self._build_onboard_command(settings)
         result = self._run(cmd)
         if result.exit_code != 0:
             return None
@@ -86,29 +55,24 @@ class OpenClawAgent(CodingAgent):
         del images, videos
         settings, env_error = self._resolve_runtime_settings(model_override=model_override)
         if env_error is not None:
-            output_path = self._write_output(self.name, env_error)
-            trajectory_path = self._write_trajectory(
-                self.name,
-                format_trace_text(env_error, source=str(output_path)),
-            )
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                response=env_error,
-                exit_code=1,
-                output_path=str(output_path),
-                raw_output=env_error,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
-            )
+            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
+        run_home = Path(tempfile.mkdtemp(prefix="cakit-openclaw-home-"))
         session_id = f"cakit-{uuid.uuid4().hex}"
         env = {
             "OPENAI_API_KEY": settings["api_key"],
+            "OPENCLAW_HOME": str(run_home),
         }
+        onboard = self._run(self._build_onboard_command(settings), env=env, base_env=base_env)
+        if onboard.exit_code != 0:
+            message = "openclaw non-interactive onboard failed during run"
+            return self._build_error_run_result(
+                message=message,
+                cakit_exit_code=1,
+                command_exit_code=onboard.exit_code,
+                raw_output=onboard.output,
+            )
+        self._patch_custom_provider_limits(self._resolve_runtime_config_path(run_home))
         cmd = [
             "openclaw",
             "agent",
@@ -128,47 +92,29 @@ class OpenClawAgent(CodingAgent):
         output = result.output
         payload = self._parse_run_payload(output)
         response, usage, model_name = self._extract_stats_from_payload(payload)
-        session_path = self._resolve_session_path(session_id, agent_id="main")
+        session_path = self._resolve_session_path(session_id, agent_id="main", env_source=env)
         llm_calls, tool_calls = self._extract_counts_from_transcript(session_path)
-
-        models_usage: Dict[str, Dict[str, int]] = {}
-        if usage is not None and model_name:
-            models_usage = self._ensure_models_usage({}, usage, model_name)
 
         output_path = self._write_output(self.name, output)
         trajectory_content = format_trace_text(output, source=str(output_path))
         trajectory_path = self._write_trajectory(self.name, trajectory_content)
-
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
+            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
             tool_calls=tool_calls,
             llm_calls=llm_calls,
             response=response,
-            exit_code=run_exit_code,
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["openclaw", "--version"])
-        if result.exit_code != 0:
-            return None
-        for raw_line in result.output.splitlines():
-            line = raw_line.strip()
-            if line:
-                return line
-        return None
+        return self._version_first_line(["openclaw", "--version"])
 
     def _resolve_runtime_settings(
         self, *, model_override: Optional[str]
@@ -194,7 +140,7 @@ class OpenClawAgent(CodingAgent):
         if model_id is None:
             missing.append("CAKIT_OPENCLAW_MODEL")
         if missing:
-            return None, f"missing required environment variable(s): {', '.join(missing)}"
+            return None, self._missing_env_message(missing)
 
         resolved: Dict[str, str] = {
             "api_key": api_key,
@@ -205,14 +151,33 @@ class OpenClawAgent(CodingAgent):
             resolved["provider_id"] = provider_id
         return resolved, None
 
-    @staticmethod
-    def _normalize_text(value: Optional[str]) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        if not normalized:
-            return None
-        return normalized
+    def _build_onboard_command(self, settings: Dict[str, str]) -> list[str]:
+        cmd = [
+            "openclaw",
+            "onboard",
+            "--non-interactive",
+            "--accept-risk",
+            "--mode",
+            "local",
+            "--auth-choice",
+            "custom-api-key",
+            "--custom-base-url",
+            settings["base_url"],
+            "--custom-model-id",
+            settings["model_id"],
+            "--custom-api-key",
+            settings["api_key"],
+            "--skip-channels",
+            "--skip-skills",
+            "--skip-health",
+            "--skip-ui",
+            "--skip-daemon",
+            "--json",
+        ]
+        provider_id = settings.get("provider_id")
+        if provider_id:
+            cmd.extend(["--custom-provider-id", provider_id])
+        return cmd
 
     def _normalize_provider_id(self, value: Optional[str]) -> Optional[str]:
         normalized = self._normalize_text(value)
@@ -248,7 +213,24 @@ class OpenClawAgent(CodingAgent):
             return Path(override).expanduser()
         return self._openclaw_home() / "openclaw.json"
 
+    def _resolve_runtime_config_path(self, run_home: Path) -> Path:
+        nested = run_home / ".openclaw" / "openclaw.json"
+        if nested.exists():
+            return nested
+        direct = run_home / "openclaw.json"
+        if direct.exists():
+            return direct
+        return nested
+
     def _patch_custom_provider_limits(self, config_path: Path) -> None:
+        min_context_window = self._resolve_limit_env(
+            "CAKIT_OPENCLAW_CONTEXT_WINDOW",
+            self._DEFAULT_CONTEXT_WINDOW,
+        )
+        min_max_tokens = self._resolve_limit_env(
+            "CAKIT_OPENCLAW_MAX_TOKENS",
+            self._DEFAULT_MAX_TOKENS,
+        )
         text = self._read_text(config_path)
         if not text:
             return
@@ -277,22 +259,53 @@ class OpenClawAgent(CodingAgent):
                     continue
                 context_window = self._as_int(model.get("contextWindow"))
                 max_tokens = self._as_int(model.get("maxTokens"))
-                if context_window is None or context_window < 16000:
-                    model["contextWindow"] = 16000
+                if context_window is None or context_window < min_context_window:
+                    model["contextWindow"] = min_context_window
                     changed = True
-                if max_tokens is None or max_tokens < 16000:
-                    model["maxTokens"] = 16000
+                if max_tokens is None or max_tokens < min_max_tokens:
+                    model["maxTokens"] = min_max_tokens
                     changed = True
         if changed:
             self._write_text(config_path, json.dumps(payload, ensure_ascii=True, indent=2))
 
-    def _resolve_session_path(self, session_id: str, *, agent_id: str) -> Path:
-        state_dir = os.environ.get("OPENCLAW_STATE_DIR")
+    def _resolve_limit_env(self, env_key: str, default: int) -> int:
+        raw = self._normalize_text(os.environ.get(env_key))
+        if raw is None:
+            return default
+        try:
+            value = int(raw)
+        except Exception:
+            return default
+        if value <= 0:
+            return default
+        return value
+
+    def _resolve_session_path(
+        self,
+        session_id: str,
+        *,
+        agent_id: str,
+        env_source: Optional[Dict[str, str]] = None,
+    ) -> Path:
+        source = env_source if env_source is not None else os.environ
+        roots: list[Path] = []
+        state_dir = source.get("OPENCLAW_STATE_DIR")
         if state_dir:
-            root = Path(state_dir).expanduser()
+            roots.append(Path(state_dir).expanduser())
         else:
-            root = self._openclaw_home()
-        return root / "agents" / agent_id / "sessions" / f"{session_id}.jsonl"
+            openclaw_home = source.get("OPENCLAW_HOME")
+            if openclaw_home:
+                home_root = Path(openclaw_home).expanduser()
+                roots.append(home_root / ".openclaw")
+                roots.append(home_root)
+            else:
+                roots.append(self._openclaw_home())
+
+        for root in roots:
+            candidate = root / "agents" / agent_id / "sessions" / f"{session_id}.jsonl"
+            if candidate.exists():
+                return candidate
+        return roots[0] / "agents" / agent_id / "sessions" / f"{session_id}.jsonl"
 
     def _parse_run_payload(self, output: str) -> Optional[Dict[str, Any]]:
         stdout = self._stdout_only(output).strip()
@@ -404,13 +417,12 @@ class OpenClawAgent(CodingAgent):
         return (llm_calls or None), tool_calls
 
     def _count_tool_calls(self, message: Dict[str, Any]) -> int:
-        names = set()
         tool_name_raw = message.get("toolName") or message.get("tool_name")
-        if isinstance(tool_name_raw, str) and tool_name_raw.strip():
-            names.add(tool_name_raw.strip())
+        has_message_tool = isinstance(tool_name_raw, str) and bool(tool_name_raw.strip())
         content = message.get("content")
         if not isinstance(content, list):
-            return len(names)
+            return 1 if has_message_tool else 0
+        content_tool_calls = 0
         for item in content:
             if not isinstance(item, dict):
                 continue
@@ -419,7 +431,7 @@ class OpenClawAgent(CodingAgent):
                 continue
             if block_type.strip().lower() not in self._TOOL_CALL_TYPES:
                 continue
-            name = item.get("name")
-            if isinstance(name, str) and name.strip():
-                names.add(name.strip())
-        return len(names)
+            content_tool_calls += 1
+        if content_tool_calls > 0:
+            return content_tool_calls
+        return 1 if has_message_tool else 0

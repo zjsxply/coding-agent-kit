@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import shutil
 import tarfile
 import tempfile
 import urllib.request
@@ -97,7 +96,6 @@ class SweAgent(CodingAgent):
         model = model_override or os.environ.get("SWE_AGENT_MODEL")
         if isinstance(model, str):
             model = model.strip() or None
-        self._cleanup_local_tools_root()
         repo_path = self._resolve_repo_path(base_env=base_env)
         output_dir = Path(tempfile.mkdtemp(prefix="cakit-sweagent-"))
         cmd = [
@@ -134,49 +132,38 @@ class SweAgent(CodingAgent):
             result = self._run_sweagent_command(cmd, env=env, base_env=base_env)
             output = result.output
 
-        trajectory_file = self._find_latest_trajectory_file(output_dir)
-        trajectory_payload = self._load_trajectory_payload(trajectory_file)
-        usage = self._extract_usage_from_trajectory(trajectory_payload)
-        llm_calls = self._extract_llm_calls_from_trajectory(trajectory_payload)
-        tool_calls = self._extract_tool_calls_from_trajectory(trajectory_payload)
-        model_name = self._extract_model_name_from_trajectory(trajectory_payload)
-        response = self._extract_response(output, trajectory_payload)
+        trajectory_files = self._find_trajectory_files(output_dir)
+        trajectory_payloads = self._load_trajectory_payloads(trajectory_files)
+        usage = self._extract_usage_from_trajectories(trajectory_payloads)
+        model_name = self._extract_model_name_from_trajectories(trajectory_payloads)
 
         output_path = self._write_output(self.name, output)
-        models_usage = self._ensure_models_usage({}, usage, model_name)
         trajectory_content = self._format_trajectory_trace(
-            trajectory_file=trajectory_file,
+            trajectory_files=trajectory_files,
             raw_output=output,
             output_path=output_path,
         )
         trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            response=response,
-            exit_code=run_exit_code,
+            models_usage=self._ensure_models_usage({}, usage, model_name),
+            tool_calls=self._extract_tool_calls_from_trajectories(trajectory_payloads),
+            llm_calls=self._extract_llm_calls_from_trajectories(trajectory_payloads),
+            response=self._extract_response(output, trajectory_payloads),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["sweagent", "--version"], env=self._runtime_asset_env(create_if_missing=False))
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(
+            ["sweagent", "--version"],
+            env=self._runtime_asset_env(create_if_missing=False),
+        )
 
     def _resolve_version(self, requested: Optional[str]) -> str:
         if requested:
@@ -364,11 +351,6 @@ class SweAgent(CodingAgent):
             return False
         return result.stdout.strip().lower() == "true"
 
-    def _cleanup_local_tools_root(self) -> None:
-        tools_root = Path("/root/tools")
-        if tools_root.exists():
-            shutil.rmtree(tools_root, ignore_errors=True)
-
     def _run_sweagent_command(
         self, args: list[str], *, env: Optional[Dict[str, str]], base_env: Optional[Dict[str, str]]
     ):
@@ -379,17 +361,24 @@ class SweAgent(CodingAgent):
         finally:
             self.workdir = original_workdir
 
-    def _find_latest_trajectory_file(self, output_dir: Path) -> Optional[Path]:
+    def _find_trajectory_files(self, output_dir: Path) -> list[Path]:
         if not output_dir.exists():
-            return None
-        candidates = [path for path in output_dir.rglob("*.traj") if path.is_file()]
-        if not candidates:
-            return None
-        candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-        return candidates[0]
+            return []
+        return sorted(path for path in output_dir.rglob("*.traj") if path.is_file())
 
-    def _load_trajectory_payload(self, trajectory_file: Optional[Path]) -> Optional[Dict[str, Any]]:
-        if trajectory_file is None or not trajectory_file.exists():
+    def _load_trajectory_payloads(self, trajectory_files: list[Path]) -> Optional[list[Dict[str, Any]]]:
+        if not trajectory_files:
+            return None
+        payloads: list[Dict[str, Any]] = []
+        for trajectory_file in trajectory_files:
+            payload = self._load_trajectory_payload(trajectory_file)
+            if payload is None:
+                return None
+            payloads.append(payload)
+        return payloads
+
+    def _load_trajectory_payload(self, trajectory_file: Path) -> Optional[Dict[str, Any]]:
+        if not trajectory_file.exists():
             return None
         try:
             data = json.loads(trajectory_file.read_text(encoding="utf-8"))
@@ -435,10 +424,64 @@ class SweAgent(CodingAgent):
 
         return self._count_trajectory_actions(payload.get("trajectory"))
 
-    def _extract_response(self, output: str, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        response = self._extract_response_from_trajectory(payload)
-        if response:
-            return response
+    def _extract_usage_from_trajectories(self, payloads: Optional[list[Dict[str, Any]]]) -> Optional[Dict[str, int]]:
+        if not isinstance(payloads, list):
+            return None
+        prompt_tokens = 0
+        completion_tokens = 0
+        for payload in payloads:
+            usage = self._extract_usage_from_trajectory(payload)
+            if usage is None:
+                return None
+            prompt_tokens += usage["prompt_tokens"]
+            completion_tokens += usage["completion_tokens"]
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+
+    def _extract_llm_calls_from_trajectories(self, payloads: Optional[list[Dict[str, Any]]]) -> Optional[int]:
+        if not isinstance(payloads, list):
+            return None
+        llm_calls = 0
+        for payload in payloads:
+            value = self._extract_llm_calls_from_trajectory(payload)
+            if value is None:
+                return None
+            llm_calls += value
+        return llm_calls
+
+    def _extract_tool_calls_from_trajectories(self, payloads: Optional[list[Dict[str, Any]]]) -> Optional[int]:
+        if not isinstance(payloads, list):
+            return None
+        tool_calls = 0
+        for payload in payloads:
+            value = self._extract_tool_calls_from_trajectory(payload)
+            if value is None:
+                return None
+            tool_calls += value
+        return tool_calls
+
+    def _extract_model_name_from_trajectories(self, payloads: Optional[list[Dict[str, Any]]]) -> Optional[str]:
+        if not isinstance(payloads, list):
+            return None
+        names: list[str] = []
+        for payload in payloads:
+            value = self._extract_model_name_from_trajectory(payload)
+            if value:
+                names.append(value)
+        unique_names = list(dict.fromkeys(names))
+        if len(unique_names) == 1:
+            return unique_names[0]
+        return None
+
+    def _extract_response(self, output: str, payloads: Optional[list[Dict[str, Any]]]) -> Optional[str]:
+        if isinstance(payloads, list):
+            for payload in reversed(payloads):
+                response = self._extract_response_from_trajectory(payload)
+                if response:
+                    return response
         stdout = self._stdout_only(output)
         lines = [line.strip() for line in stdout.splitlines() if line.strip()]
         if lines:
@@ -614,12 +657,20 @@ class SweAgent(CodingAgent):
             return unique_names[0]
         return None
 
-    def _format_trajectory_trace(self, *, trajectory_file: Optional[Path], raw_output: str, output_path: Path) -> str:
-        if trajectory_file is not None and trajectory_file.exists():
-            try:
-                trajectory_raw = trajectory_file.read_text(encoding="utf-8")
-            except Exception:
-                trajectory_raw = ""
-            if trajectory_raw.strip():
-                return format_trace_text(trajectory_raw, source=str(trajectory_file))
+    def _format_trajectory_trace(self, *, trajectory_files: list[Path], raw_output: str, output_path: Path) -> str:
+        if trajectory_files:
+            entries: list[dict[str, str]] = []
+            for trajectory_file in trajectory_files:
+                try:
+                    trajectory_raw = trajectory_file.read_text(encoding="utf-8")
+                except Exception:
+                    trajectory_raw = ""
+                if not trajectory_raw.strip():
+                    continue
+                entries.append({"path": str(trajectory_file), "content": trajectory_raw})
+            if entries:
+                return format_trace_text(
+                    json.dumps({"trajectory_files": entries}, ensure_ascii=True),
+                    source=str(output_path),
+                )
         return format_trace_text(raw_output, source=str(output_path))

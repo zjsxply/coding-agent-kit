@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from .base import CodingAgent
 from ..models import InstallResult, RunResult
@@ -18,17 +18,7 @@ class QwenAgent(CodingAgent):
     supports_videos = True
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        result = self._npm_install("@qwen-code/qwen-code", scope, version=version)
-        config_path = self.configure()
-        ok = result.exit_code == 0
-        details = result.output
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=details,
-            config_path=config_path,
-        )
+        return self._install_with_npm(package="@qwen-code/qwen-code", scope=scope, version=version)
 
     def configure(self) -> Optional[str]:
         tavily_key = os.environ.get("TAVILY_API_KEY")
@@ -124,17 +114,9 @@ class QwenAgent(CodingAgent):
         payload = self._parse_output_json(output)
         result_payload = self._extract_result_payload(payload)
         models_usage, llm_calls, tool_calls = self._extract_stats(result_payload)
-        response = self._extract_response(payload, result_payload)
 
         output_path = self._write_output(self.name, output)
         trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
@@ -143,19 +125,16 @@ class QwenAgent(CodingAgent):
             tool_calls=tool_calls,
             llm_calls=llm_calls,
             telemetry_log=telemetry_path,
-            response=response,
-            exit_code=run_exit_code,
+            response=self._extract_response(payload, result_payload),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["qwen", "--version"])
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(["qwen", "--version"])
 
     def _parse_output_json(self, output: str) -> Optional[Any]:
         stdout = self._stdout_only(output).strip()
@@ -180,65 +159,8 @@ class QwenAgent(CodingAgent):
 
     def _extract_stats(
         self, result_payload: Optional[Dict[str, Any]]
-    ) -> Tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
-        models_usage: Dict[str, Dict[str, int]] = {}
-        if not isinstance(result_payload, dict):
-            return models_usage, None, None
-
-        stats = result_payload.get("stats")
-        if not isinstance(stats, dict):
-            return {}, None, None
-
-        models = stats.get("models")
-        if not isinstance(models, dict) or not models:
-            return {}, None, None
-
-        llm_calls = 0
-        for model_name, model_stats in models.items():
-            if not isinstance(model_name, str) or not model_name.strip():
-                return {}, None, None
-            usage, calls = self._extract_model_usage(model_stats)
-            if usage is None or calls is None:
-                return {}, None, None
-            models_usage[model_name] = usage
-            llm_calls += calls
-
-        tools = stats.get("tools")
-        if not isinstance(tools, dict):
-            return {}, None, None
-        tool_calls = self._as_int(tools.get("totalCalls"))
-        if tool_calls is None:
-            return {}, None, None
-
-        return models_usage, llm_calls, tool_calls
-
-    def _extract_model_usage(self, model_stats: Any) -> Tuple[Optional[Dict[str, int]], Optional[int]]:
-        if not isinstance(model_stats, dict):
-            return None, None
-        usage = self._extract_tokens_payload(model_stats.get("tokens"))
-        llm_calls = self._extract_total_requests(model_stats.get("api"))
-        if usage is None or llm_calls is None:
-            return None, None
-        return usage, llm_calls
-
-    def _extract_tokens_payload(self, tokens: Any) -> Optional[Dict[str, int]]:
-        if not isinstance(tokens, dict):
-            return None
-        prompt = self._as_int(tokens.get("prompt"))
-        completion = self._as_int(tokens.get("candidates"))
-        total = self._as_int(tokens.get("total"))
-        if prompt is None or completion is None or total is None:
-            return None
-        return {
-            "prompt_tokens": prompt,
-            "completion_tokens": completion,
-            "total_tokens": total,
-        }
-
-    def _extract_total_requests(self, api: Any) -> Optional[int]:
-        if not isinstance(api, dict):
-            return None
-        return self._as_int(api.get("totalRequests"))
+    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
+        return self._extract_gemini_style_stats(result_payload)
 
     def _extract_response(self, payload: Optional[Any], result_payload: Optional[Dict[str, Any]]) -> Optional[str]:
         if isinstance(result_payload, dict):

@@ -51,24 +51,7 @@ class OpenHandsAgent(CodingAgent):
     ) -> RunResult:
         env, env_error = self._build_run_env(model_override=model_override)
         if env_error is not None:
-            output_path = self._write_output(self.name, env_error)
-            trajectory_path = self._write_trajectory(
-                self.name,
-                format_trace_text(env_error, source=str(output_path)),
-            )
-            return RunResult(
-                agent=self.name,
-                agent_version=self.get_version(),
-                runtime_seconds=0.0,
-                models_usage={},
-                tool_calls=None,
-                llm_calls=None,
-                response=env_error,
-                exit_code=1,
-                output_path=str(output_path),
-                raw_output=env_error,
-                trajectory_path=str(trajectory_path) if trajectory_path else None,
-            )
+            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
         cmd = [
             "openhands",
@@ -90,14 +73,6 @@ class OpenHandsAgent(CodingAgent):
         response = self._extract_response_from_events(events)
 
         has_error_event = self._has_error_event(events)
-        run_exit_code = self._resolve_run_exit_code(
-            command_exit_code=result.exit_code,
-            has_error_event=has_error_event,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         trajectory_content = self._build_trajectory_content(
             output=output,
             output_path=output_path,
@@ -117,18 +92,25 @@ class OpenHandsAgent(CodingAgent):
             llm_calls=llm_calls,
             total_cost=total_cost,
             response=response,
-            exit_code=run_exit_code,
+            cakit_exit_code=(
+                1
+                if result.exit_code == 0 and has_error_event
+                else self._resolve_strict_run_exit_code(
+                    command_exit_code=result.exit_code,
+                    models_usage=models_usage,
+                    llm_calls=llm_calls,
+                    tool_calls=tool_calls,
+                    response=response,
+                )
+            ),
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["openhands", "--version"])
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(["openhands", "--version"])
 
     def _build_run_env(self, *, model_override: Optional[str] = None) -> tuple[Dict[str, str], Optional[str]]:
         api_key = os.environ.get("LLM_API_KEY")
@@ -141,7 +123,7 @@ class OpenHandsAgent(CodingAgent):
         if not model:
             missing.append("LLM_MODEL")
         if missing:
-            return {}, f"missing required environment variable(s): {', '.join(missing)}"
+            return {}, self._missing_env_message(missing)
 
         resolved_model = self._normalize_model(model=model)
         env: Dict[str, str] = {
@@ -352,30 +334,6 @@ class OpenHandsAgent(CodingAgent):
             if kind in {"ConversationErrorEvent", "AgentErrorEvent"}:
                 return True
         return False
-
-    def _resolve_run_exit_code(
-        self,
-        *,
-        command_exit_code: int,
-        has_error_event: bool,
-        models_usage: Dict[str, Dict[str, int]],
-        llm_calls: Optional[int],
-        tool_calls: Optional[int],
-        response: Optional[str],
-    ) -> int:
-        if command_exit_code != 0:
-            return command_exit_code
-        if has_error_event:
-            return 1
-        if not models_usage:
-            return 1
-        if llm_calls is None or llm_calls < 1:
-            return 1
-        if tool_calls is None:
-            return 1
-        if not isinstance(response, str) or not response.strip():
-            return 1
-        return 0
 
     def _build_trajectory_content(
         self,

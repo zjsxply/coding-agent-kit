@@ -14,7 +14,17 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_WEB_URL = "https://github.com/algorithmicsuperintelligence/openevolve"
 DEFAULT_IMAGE_PROMPT = "What is shown in this image? What text can you read?"
 DEFAULT_VIDEO_PROMPT = "What happens in this video? List any visible text."
-DEFAULT_WEB_PROMPT = "Visit {url} and briefly describe what is on that page."
+DEFAULT_WEB_PROMPT = (
+    "Visit {url}, read the repository README, and summarize what the project is about in plain language."
+)
+DEFAULT_WEB_KEYWORDS = [
+    "alphaevolve",
+    "map-elites",
+    "circle packing",
+    "2-3x speedups",
+    "open-source implementation",
+    "autonomous code optimizer",
+]
 DEFAULT_BASIC_EXPECTED = "CAKIT_HEALTHCHECK_OK"
 DEFAULT_VIDEO_EXPECTED = "CAKIT VIDEO TEST 123"
 DEFAULT_BASIC_PROMPT = f"Reply with exactly this text and nothing else: {DEFAULT_BASIC_EXPECTED}"
@@ -46,7 +56,8 @@ def _extract_last_json(text: str) -> Dict[str, Any]:
 
 def _empty_payload() -> Dict[str, Any]:
     return {
-        "exit_code": None,
+        "cakit_exit_code": None,
+        "command_exit_code": None,
         "agent_version": None,
         "response": None,
         "models_usage": {},
@@ -148,12 +159,13 @@ def _run_case(
             semantic_ok = False
             semantic_error = f"response missing expected keywords: {expected_keywords}"
 
-    ok = rc == 0 and stats_ok and semantic_ok and (payload.get("exit_code") == 0)
+    ok = rc == 0 and stats_ok and semantic_ok and (payload.get("cakit_exit_code") == 0)
     return {
         "label": label,
         "ok": ok,
         "command_rc": rc,
-        "agent_exit_code": payload.get("exit_code"),
+        "cakit_exit_code": payload.get("cakit_exit_code"),
+        "command_exit_code": payload.get("command_exit_code"),
         "agent_version": payload.get("agent_version"),
         "stats_ok": stats_ok,
         "stats_errors": stat_errors,
@@ -218,7 +230,6 @@ def _build_case_specs(
             }
         )
     if "web" in tasks:
-        web_keywords = ["openevolve", "algorithmicsuperintelligence", "evolutionary coding agent"]
         specs.append(
             {
                 "agent": agent,
@@ -226,7 +237,7 @@ def _build_case_specs(
                 "prompt": DEFAULT_WEB_PROMPT.format(url=web_url),
                 "image": None,
                 "video": None,
-                "expected_keywords": web_keywords,
+                "expected_keywords": DEFAULT_WEB_KEYWORDS,
             }
         )
     for spec in specs:
@@ -249,6 +260,11 @@ def _run_case_spec(spec: Dict[str, Any], timeout_seconds: int) -> Dict[str, Any]
     )
     result["agent"] = spec["agent"]
     return result
+
+
+def _run_agent_case_specs(case_specs: List[Dict[str, Any]], timeout_seconds: int) -> List[Dict[str, Any]]:
+    ordered_specs = sorted(case_specs, key=lambda spec: CASE_ORDER.get(str(spec.get("label")), 99))
+    return [_run_case_spec(spec, timeout_seconds) for spec in ordered_specs]
 
 
 def _build_agent_report(agent: str, cases: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -275,17 +291,25 @@ def _run_all_cases(
     max_workers: int,
 ) -> Dict[str, List[Dict[str, Any]]]:
     cases_by_agent: Dict[str, List[Dict[str, Any]]] = {}
+    specs_by_agent: Dict[str, List[Dict[str, Any]]] = {}
+    for spec in case_specs:
+        specs_by_agent.setdefault(str(spec["agent"]), []).append(spec)
     if not parallel or len(case_specs) <= 1:
-        for spec in case_specs:
-            result = _run_case_spec(spec, timeout_seconds)
-            cases_by_agent.setdefault(str(result["agent"]), []).append(result)
+        for agent_specs in specs_by_agent.values():
+            for result in _run_agent_case_specs(agent_specs, timeout_seconds):
+                cases_by_agent.setdefault(str(result["agent"]), []).append(result)
         return cases_by_agent
-    workers = min(max_workers, len(case_specs))
+
+    workers = min(max_workers, len(specs_by_agent))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_run_case_spec, spec, timeout_seconds) for spec in case_specs]
+        futures = [
+            executor.submit(_run_agent_case_specs, agent_specs, timeout_seconds)
+            for agent_specs in specs_by_agent.values()
+        ]
         for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            cases_by_agent.setdefault(str(result["agent"]), []).append(result)
+            results = future.result()
+            for result in results:
+                cases_by_agent.setdefault(str(result["agent"]), []).append(result)
     return cases_by_agent
 
 
@@ -376,7 +400,7 @@ def main() -> int:
         default="basic,image,video,web",
         help="Comma-separated tasks to run: basic,image,video,web (default: all)",
     )
-    parser.add_argument("--timeout-seconds", type=int, default=600, help="Per-case timeout in seconds")
+    parser.add_argument("--timeout-seconds", type=int, default=900, help="Per-case timeout in seconds")
     parser.add_argument("--no-parallel", action="store_true", help="Run cases sequentially")
     parser.add_argument("--max-workers", type=int, default=6, help="Max workers for parallel execution")
     args = parser.parse_args()

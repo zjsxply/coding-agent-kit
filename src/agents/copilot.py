@@ -21,17 +21,7 @@ class CopilotAgent(CodingAgent):
     _LOG_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[^ ]+\s+\[[A-Z]+\]\s?(.*)$")
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        result = self._npm_install("@github/copilot", scope, version=version)
-        config_path = self.configure()
-        ok = result.exit_code == 0
-        details = result.output
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=details,
-            config_path=config_path,
-        )
+        return self._install_with_npm(package="@github/copilot", scope=scope, version=version)
 
     def configure(self) -> Optional[str]:
         return None
@@ -76,14 +66,6 @@ class CopilotAgent(CodingAgent):
         trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
         model_calls = self._load_model_call_payloads(log_dir)
         models_usage, llm_calls, tool_calls = self._extract_stats(model_calls)
-        response = self._extract_response(model_calls, output)
-        run_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=result.exit_code,
-            models_usage=models_usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            response=response,
-        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
@@ -92,19 +74,16 @@ class CopilotAgent(CodingAgent):
             tool_calls=tool_calls,
             llm_calls=llm_calls,
             telemetry_log=str(log_dir),
-            response=response,
-            exit_code=run_exit_code,
+            response=self._extract_response(model_calls, output),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["copilot", "--version"])
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(["copilot", "--version"])
 
     def _prepare_log_dir(self) -> Path:
         root = os.environ.get("CAKIT_OUTPUT_DIR")

@@ -44,8 +44,13 @@ cakit 使用的环境变量：
 `cakit run openclaw "<prompt>"` 实际执行：
 
 ```bash
+openclaw onboard --non-interactive ... --custom-model-id <resolved_model> --json
 openclaw agent --local --agent main --session-id <generated_id> --message "<prompt>" --json
 ```
+
+运行行为说明：
+- cakit 每次运行会创建隔离的临时 `OPENCLAW_HOME`，并行运行不会共享会话/配置状态。
+- cakit 在 `openclaw agent` 前执行一次非交互 onboarding，以确保 `--model` 覆盖能作用到当前 custom model。
 
 推理强度映射：
 - `cakit run openclaw ... --reasoning-effort off|minimal|low|medium|high`
@@ -60,8 +65,8 @@ openclaw agent --local --agent main --session-id <generated_id> --message "<prom
    - `provider/model`
    - usage（`input`、`output`、`cacheRead`、`cacheWrite`、`total`）
 2. 会话 transcript：
-   - `~/.openclaw/agents/main/sessions/<session_id>.jsonl`
+   - `<临时 OPENCLAW_HOME>/agents/main/sessions/<session_id>.jsonl`
    - `llm_calls`：带有效 usage 的 assistant 消息数
-   - `tool_calls`：transcript 消息中的 tool-use 块计数
+   - `tool_calls`：transcript 消息中 tool-use 的总出现次数
 
 若关键统计无法解析，cakit 会返回非零退出码。

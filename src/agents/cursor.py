@@ -9,7 +9,7 @@ import time
 import urllib.request
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from .base import CodingAgent, CommandResult
 from ..models import InstallResult, RunResult
@@ -70,37 +70,57 @@ class CursorAgent(CodingAgent):
         output = result.output
         payloads = load_json_payloads(output)
         usage = self._extract_usage(payloads)
-        tool_calls = self._count_tool_calls(payloads)
         output_path = self._write_output(self.name, output)
         trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        models_usage = self._ensure_models_usage({}, usage, model)
-        response = self._extract_response(payloads, output)
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
             runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            response=response,
-            exit_code=result.exit_code,
+            models_usage=self._ensure_models_usage({}, usage, model),
+            tool_calls=self._count_tool_calls(payloads),
+            llm_calls=self._count_llm_calls(payloads),
+            response=self._extract_response(payloads, output),
+            cakit_exit_code=None,
+            command_exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
             trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:
-        result = self._run(["cursor-agent", "--version"])
-        text = result.output.strip()
-        if result.exit_code == 0 and text:
-            return text
-        return None
+        return self._version_text(["cursor-agent", "--version"])
 
     def _extract_usage(self, payloads: List[Dict[str, Any]]) -> Optional[Dict[str, int]]:
+        usage_by_message_id: Dict[str, Dict[str, int]] = {}
+        usage_without_message_id: List[Dict[str, int]] = []
         for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            payload_type = payload.get("type")
+            if isinstance(payload_type, str) and "delta" in payload_type:
+                continue
             usage = self._find_usage(payload)
-            if usage:
-                return usage
-        return None
+            if not usage:
+                continue
+            message_id = payload.get("id")
+            if isinstance(message_id, str) and message_id.strip():
+                previous = usage_by_message_id.get(message_id)
+                if previous is None or usage["total_tokens"] >= previous["total_tokens"]:
+                    usage_by_message_id[message_id] = usage
+                continue
+            usage_without_message_id.append(usage)
+
+        items = list(usage_by_message_id.values()) + usage_without_message_id
+        if not items:
+            return None
+        prompt_tokens = sum(item["prompt_tokens"] for item in items)
+        completion_tokens = sum(item["completion_tokens"] for item in items)
+        total_tokens = sum(item["total_tokens"] for item in items)
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
 
     def _extract_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
         messages: List[str] = []
@@ -171,7 +191,7 @@ class CursorAgent(CodingAgent):
                         return nested
         return None
 
-    def _normalize_usage(self, raw: Dict[str, Any]) -> Dict[str, int]:
+    def _normalize_usage(self, raw: Dict[str, Any]) -> Optional[Dict[str, int]]:
         prompt = self._as_int(raw.get("prompt_tokens"))
         completion = self._as_int(raw.get("completion_tokens"))
         total = self._as_int(raw.get("total_tokens"))
@@ -179,12 +199,14 @@ class CursorAgent(CodingAgent):
             prompt = self._as_int(raw.get("input_tokens"))
         if completion is None and "output_tokens" in raw:
             completion = self._as_int(raw.get("output_tokens"))
+        if prompt is None or completion is None:
+            return None
         if total is None:
-            total = (prompt or 0) + (completion or 0)
+            total = prompt + completion
         return {
-            "prompt_tokens": prompt or 0,
-            "completion_tokens": completion or 0,
-            "total_tokens": total or 0,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
         }
 
     def _count_tool_calls(self, payloads: List[Dict[str, Any]]) -> Optional[int]:
@@ -193,6 +215,21 @@ class CursorAgent(CodingAgent):
             if self._looks_like_tool_call(payload):
                 count += 1
         return count
+
+    def _count_llm_calls(self, payloads: List[Dict[str, Any]]) -> Optional[int]:
+        llm_calls = 0
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            payload_type = payload.get("type")
+            if isinstance(payload_type, str) and "delta" in payload_type:
+                continue
+            if payload.get("role") == "assistant":
+                llm_calls += 1
+                continue
+            if payload_type in {"assistant", "assistant_message", "final", "response"}:
+                llm_calls += 1
+        return llm_calls or None
 
     def _looks_like_tool_call(self, payload: Any) -> bool:
         if not isinstance(payload, dict):
@@ -211,15 +248,6 @@ class CursorAgent(CodingAgent):
                     if self._looks_like_tool_call(item):
                         return True
         return False
-
-    def _usage_totals(self, usage: Optional[Dict[str, int]]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
-        if not usage:
-            return None, None, None
-        return (
-            usage.get("prompt_tokens"),
-            usage.get("completion_tokens"),
-            usage.get("total_tokens"),
-        )
 
     def _install_specific_version(self, version: str) -> CommandResult:
         started = time.monotonic()
@@ -251,7 +279,7 @@ class CursorAgent(CodingAgent):
                 with urllib.request.urlopen(request, timeout=60) as response, archive_path.open("wb") as file:
                     shutil.copyfileobj(response, file)
                 with tarfile.open(archive_path, mode="r:gz") as archive:
-                    archive.extractall(path=extracted_root)
+                    self._extract_package_archive(archive, extracted_root)
                 package_root = self._find_cursor_package_root(extracted_root)
                 target_binary = package_root / "cursor-agent"
                 if not target_binary.is_file():
@@ -288,6 +316,31 @@ class CursorAgent(CodingAgent):
                 stderr=str(exc),
                 duration_seconds=time.monotonic() - started,
             )
+
+    @staticmethod
+    def _extract_package_archive(archive: tarfile.TarFile, extracted_root: Path) -> None:
+        root_resolved = extracted_root.resolve()
+        for member in archive.getmembers():
+            target = (extracted_root / member.name).resolve()
+            try:
+                target.relative_to(root_resolved)
+            except Exception as exc:
+                raise RuntimeError(f"unsafe archive member path: {member.name}") from exc
+
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                continue
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                raise RuntimeError(f"failed to extract archive member: {member.name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(extracted.read())
+            try:
+                target.chmod(member.mode & 0o777)
+            except Exception:
+                pass
 
     @staticmethod
     def _map_os(system_name: str) -> Optional[str]:
