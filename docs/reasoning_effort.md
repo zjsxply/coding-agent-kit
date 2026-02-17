@@ -6,7 +6,7 @@ If an agent does not support reasoning/thinking controls in cakit, passing `--re
 
 The status in this table was verified on **February 12, 2026**.
 
-- OSS agents (`codex`, `gemini`, `kimi`, `qwen`, `openhands`, `swe-agent`, `trae-oss`): verified by reading upstream source code.
+- OSS agents (`codex`, `gemini`, `crush`, `auggie`, `continue`, `openclaw`, `deepagents`, `kimi`, `qwen`, `openhands`, `swe-agent`, `trae-oss`): verified by reading upstream source code.
 - Non-OSS agents (`claude`, `cursor`, `copilot`): verified from official CLI docs.
 
 | Agent | Supported values in cakit | Mapping in cakit | Upstream status |
@@ -16,6 +16,11 @@ The status in this table was verified on **February 12, 2026**.
 | `cursor` | Not supported | Not supported in cakit | Closed-source CLI; no documented reasoning/thinking toggle |
 | `copilot` | Not supported | Not supported in cakit | Closed-source CLI; no documented reasoning/thinking toggle |
 | `gemini` | Not supported in `cakit run` | Not supported in cakit | Upstream has thinking controls via model config aliases/settings (`thinkingConfig`), but no dedicated per-run reasoning-effort flag |
+| `crush` | Not supported in `cakit run` | Not supported in cakit | Upstream `crush run` exposes model selection (`--model` / `--small-model`) but no dedicated per-run reasoning-effort flag; in cakit, when a model is selected for Crush, the same model is applied to both large and small model slots |
+| `auggie` | Not supported in `cakit run` | Not supported in cakit | Upstream CLI supports model selection (`--model`) but no dedicated per-run reasoning-effort flag |
+| `continue` | Not supported in `cakit run` | Not supported in cakit | Upstream `cn` exposes no dedicated per-run reasoning-effort flag |
+| `openclaw` | `off`, `minimal`, `low`, `medium`, `high` | Adds `--thinking <value>` to `openclaw agent` | Upstream `openclaw agent` supports `--thinking` |
+| `deepagents` | Not supported in `cakit run` | Not supported in cakit | Upstream `deepagents` CLI has no dedicated per-run reasoning-effort flag |
 | `kimi` | `thinking`, `none` | Adds `--thinking` / `--no-thinking` to `kimi` | Upstream CLI provides `--thinking/--no-thinking` directly |
 | `qwen` | Not supported in `cakit run` | Not supported in cakit | Upstream supports `model.generationConfig.reasoning` (and provider `extra_body`) in config, but no dedicated per-run reasoning-effort flag |
 | `openhands` | Not supported in `cakit run` | Not supported in cakit | Upstream supports `reasoning_effort` in LLM config/env (`LLM_REASONING_EFFORT`), but no dedicated reasoning-effort CLI argument |

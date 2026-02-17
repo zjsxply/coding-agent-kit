@@ -17,15 +17,20 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 The default is unrestricted mode (YOLO).
 
 ```bash
-cakit install <agent> [--scope user|global] [--version <value>]
+cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 ```
 
 By default, `--scope user` installs npm-based agents under `~/.npm-global` (no sudo). Ensure `~/.npm-global/bin` is on `PATH`.
 Use `--scope global` to run `npm install -g` (may require sudo).
+`all` and `*` install all supported agents (`*` should be quoted to avoid shell expansion).
+If `<agent>` is omitted, it defaults to `all`.
+When `--version` is omitted, `cakit install` always installs the latest upstream release available at install time.
 Use `--version` to install a specific version or reference:
-- `codex` / `claude` / `copilot` / `gemini` / `qwen`: npm version or tag (for example `0.98.0`).
+- `codex` / `claude` / `copilot` / `gemini` / `qwen` / `continue` / `crush` / `auggie` / `kilocode` / `openclaw` / `kimi`: npm package version or tag (for example `0.98.0`, `2026.2.15`, `1.9.0`).
 - `cursor`: Cursor build ID (for example `2026.01.28-fd13201`).
-- `kimi`: `kimi-cli` package version (for example `1.9.0`).
+- `goose`: Goose CLI release version (for example `v1.2.3` or `1.2.3`).
+- `deepagents`: `deepagents-cli` package version (for example `0.0.21`).
+- `trae-cn`: TRAE CLI version (for example `0.111.5`).
 - `openhands`: `openhands` package version (for example `1.12.1`).
 - `swe-agent`: upstream release tag (for example `v1.0.0`).
 - `trae-oss`: git ref (tag / branch / commit).
@@ -39,7 +44,15 @@ Use `--version` to install a specific version or reference:
 | cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — | — |
 | copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — | — |
 | gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) | — |
+| crush | [Crush](https://github.com/charmbracelet/crush) | [README](https://github.com/charmbracelet/crush#readme) | [charmbracelet/crush](https://github.com/charmbracelet/crush) | Formerly opencode (`opencode-ai/opencode`) |
+| auggie | [Auggie](https://github.com/augmentcode/auggie) | [CLI Overview](https://docs.augmentcode.com/cli/overview) | [augmentcode/auggie](https://github.com/augmentcode/auggie) | OSS repo publishes docs/examples; npm package ships bundled CLI runtime |
+| continue | [Continue](https://www.continue.dev/) | [Continue CLI](https://github.com/continuedev/continue/tree/main/extensions/cli) | [continuedev/continue](https://github.com/continuedev/continue) | CLI binary is `cn` |
+| goose | [Goose](https://block.github.io/goose/) | [Goose CLI Commands](https://block.github.io/goose/docs/guides/goose-cli-commands) | [block/goose](https://github.com/block/goose) | cakit runs goose in headless `run` mode with strict session export parsing |
+| kilocode | [Kilo Code](https://kilo.ai) | [README](https://github.com/Kilo-Org/kilocode#readme) | [Kilo-Org/kilocode](https://github.com/Kilo-Org/kilocode) | cakit installs `@kilocode/cli` and parses run artifacts strictly |
+| openclaw | [OpenClaw](https://openclaw.ai/) | [Getting Started](https://docs.openclaw.ai/start/getting-started) | [openclaw/openclaw](https://github.com/openclaw/openclaw) | cakit runs `openclaw agent --local --json` and parses session transcript strictly |
+| deepagents | [Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) | [Deep Agents CLI](https://docs.langchain.com/oss/python/deepagents/cli) | [langchain-ai/deepagents](https://github.com/langchain-ai/deepagents) | cakit installs `deepagents-cli` and parses session checkpoints strictly |
 | kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | [moonshotai/kimi-cli](https://github.com/moonshotai/kimi-cli) | — |
+| trae-cn | [TRAE](https://www.trae.cn/) | [TRAE CLI Docs](https://docs.trae.cn/cli) | — | Official TRAE CLI from trae.cn |
 | qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) | — |
 | openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | — |
 | swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) | — |
@@ -54,7 +67,15 @@ For OAuth, use the official CLI login. For API keys, copy `.env.template` to `.e
 - cursor: `cursor-agent login`
 - copilot: run `copilot`, then `/login`; `GH_TOKEN`/`GITHUB_TOKEN` are also supported
 - gemini: run `gemini` and choose Login with Google
+- crush: OAuth via `crush login` (for example `crush login hyper`), or API via `CRUSH_OPENAI_API_KEY` + `CRUSH_OPENAI_BASE_URL` + `CAKIT_CRUSH_MODEL`
+- auggie: OAuth via `auggie login`, or API via `AUGMENT_API_TOKEN` + `AUGMENT_API_URL` (optional `AUGMENT_SESSION_AUTH`)
+- continue: OAuth via `cn login`, or API via `CAKIT_CONTINUE_OPENAI_API_KEY` + `CAKIT_CONTINUE_OPENAI_MODEL` + `cakit configure continue`
+- goose: API via `CAKIT_GOOSE_PROVIDER` + `CAKIT_GOOSE_MODEL` + `CAKIT_GOOSE_OPENAI_API_KEY` (+ `CAKIT_GOOSE_OPENAI_BASE_URL` for OpenAI-compatible endpoints)
+- kilocode: API via `KILO_OPENAI_API_KEY` + `KILO_OPENAI_MODEL_ID` + `cakit configure kilocode`
+- openclaw: API via `CAKIT_OPENCLAW_API_KEY` + `CAKIT_OPENCLAW_BASE_URL` + `CAKIT_OPENCLAW_MODEL` + `cakit configure openclaw`
+- deepagents: API only via `DEEPAGENTS_OPENAI_API_KEY` + `DEEPAGENTS_OPENAI_MODEL`
 - kimi: OAuth via `kimi` then `/login`, or API via `KIMI_API_KEY` + `cakit configure kimi`
+- trae-cn: OAuth via `traecli` then `/login`, or API via `CAKIT_TRAE_CN_API_KEY` + `cakit configure trae-cn`
 - qwen: run `qwen` and follow the browser login flow
 - openhands: API only (`LLM_API_KEY` + `LLM_MODEL`, see `.env.template`)
 - swe-agent: API only (see `.env.template`)
@@ -71,11 +92,12 @@ Writes the environment template file for configuring API keys and endpoints.
 ### Configure an agent
 
 ```bash
-cakit configure <agent>
+cakit configure [<agent|all|*>]
 ```
 
 This regenerates the agent config based on current environment variables.
-If you update environment variables later, rerun `set -a; source .env; set +a` and then rerun `cakit configure <agent>`.
+If `<agent>` is omitted, it defaults to `all`.
+If you update environment variables later, rerun `set -a; source .env; set +a` and then rerun `cakit configure [<agent|all|*>]`.
 If an agent does not require a config file, `cakit configure` may report `"config_path": null` and still succeed.
 Note: Claude Code reads environment variables directly; `cakit configure claude` is a no-op.
 
@@ -113,6 +135,8 @@ Telemetry:
 - Claude Code / Codex: exported via OpenTelemetry (OTEL, requires an OTEL endpoint); `telemetry_log` is set to that endpoint
 - Copilot CLI: local logs in `~/.copilot/logs/` by default (cakit uses `--log-dir` when running)
 - Gemini CLI: local log `~/.gemini/telemetry.log`
+- Crush: local log `<run_data_dir>/logs/crush.log` (run-local `--data-dir`)
+- Auggie CLI: run-local log `<tmp_run_dir>/auggie.log` (cakit passes `--log-file`)
 - Qwen Code: local log `~/.qwen/telemetry.log`
 
 Image and video input support:
@@ -123,8 +147,16 @@ Image and video input support:
 | codex | ✓ | ✗ | `--image` (multi-image) |
 | cursor | ✗ | ✗ |  |
 | copilot | ✓ | ✗ | `--image` uses natural-language file-path injection |
-| gemini | ✓ | ✓ | staged media + `@{path}` injection |
+| gemini | ✓ | ✓ | symbolic local-path injection (`@{path}`); verified with `--model gemini-2.5-pro` (model-dependent) |
+| crush | ✗ | ✗ | `crush run` has no `--image` / `--video` flags |
+| auggie | ✓ | ✗ | native `--image`; no documented `--video` flag |
+| continue | ✗ | ✗ | `cn` has no documented `--image` / `--video` flags in headless mode |
+| goose | ✓ | ✓ | natural-language local-path injection + built-in `developer` processors |
+| kilocode | ✓ | ✗ | native `--attach`; no documented `--video` flag |
+| openclaw | ✗ | ✗ | `openclaw agent` has no documented `--image` / `--video` flags |
+| deepagents | ✗ | ✗ | `deepagents` non-interactive CLI has no documented `--image` / `--video` flags |
 | kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`) |
+| trae-cn | ✗ | ✗ | `traecli` has no `--image` / `--video` flags |
 | qwen | ✓ | ✓ | `@{path}` injection; depends on model capabilities |
 | openhands | ✗ | ✗ | headless CLI has no documented `--image` / `--video` flags |
 | swe-agent | ✗ | ✗ | upstream multimodal path supports issue-image URLs (`swe_bench_multimodal`), but `sweagent run` has no generic `--image` / `--video` flags |
@@ -172,15 +204,7 @@ Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, 
 
 ## Environment Variables
 
-- Full list in `.env.template`.
-- `CAKIT_OUTPUT_DIR`: override log output directory.
-- `CAKIT_TRAE_TRAJECTORY`: override Trae trajectory output path.
-- `CAKIT_NPM_PREFIX`: override the user install prefix for npm-based agents (default: `~/.npm-global`).
-- `CAKIT_CODEX_USE_OAUTH`: if set (e.g., `1`), Codex uses OAuth login instead of API key.
-- `CAKIT_CLAUDE_USE_OAUTH`: if set (e.g., `1`) and both Claude API key/token are present, prefer OAuth token.
-- `CAKIT_KIMI_PROVIDER_TYPE`: Kimi provider `type` (`kimi`, `openai_legacy`, or `openai_responses`).
-- `GOOGLE_API_KEY`: upstream Gemini/Vertex key used by Gemini CLI.
-- `CAKIT_QWEN_GOOGLE_API_KEY`: cakit-only per-agent override for Qwen to avoid `GOOGLE_API_KEY` collisions.
+See `.env.template` for the full, up-to-date environment variable documentation.
 
 ## Test Coverage Matrix
 
@@ -188,13 +212,21 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 
 | Agent | OAuth | API | Image Input | Video Input | MCP | Skills | Telemetry | Web Access | Test Version |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.37 |
-| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.98.0 |
+| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.44 |
+| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.101.0 |
 | cursor |  |  | ✗ | ✗ |  |  |  |  |  |
-| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 0.0.408 |
-| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.27.3 |
-| kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
-| qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.0 |
+| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 0.0.410 |
+| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.28.2 |
+| crush |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.43.0 |
+| auggie |  | ⚠ | ⚠ | ✗ |  |  | ✓ | ⚠ | 0.16.1 |
+| continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.43 |
+| goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.24.0 |
+| kilocode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.0.22 |
+| openclaw |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 2026.2.15 |
+| deepagents | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.0.21 |
+| kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.12.0 |
+| trae-cn | ✗ | ⚠ | ✗ | ✗ |  |  |  | ⚠ | 0.111.5 |
+| qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.3 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
 | swe-agent | ✗ | ⚠ | ✗ | ✗ |  |  |  | ⚠ | 1.1.0 |
 | trae-oss | ✗ | ⚠ | ✗ | ✗ |  |  |  | ⚠ | 0.1.0 |
@@ -206,6 +238,8 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, ✗* = not 
 - [ ] Support `--timeout` in `cakit run` and return partial run artifacts on timeout
 - [x] Support skills
 - [ ] Support `AGENTS.md`
+- [ ] For all agents, create an isolated run-specific `HOME` under `/tmp` and write run-specific config on every `cakit run`, to avoid cross-run session conflicts and guarantee stats match current run artifacts; remove the need for `cakit configure` (configuration should be fully managed by `cakit run`)
+- [ ] Add a command to build a Docker image containing cakit, with selectable base image
 - [ ] Namespace agent config/cache paths (e.g. `KIMI_SHARE_DIR`) to avoid conflicts with host agents
 - [ ] Support MCP
 - [ ] Support balanced mode

@@ -109,7 +109,7 @@ class CopilotAgent(CodingAgent):
     def _prepare_log_dir(self) -> Path:
         root = os.environ.get("CAKIT_OUTPUT_DIR")
         base = Path(root) if root else Path.home() / ".cache" / "cakit"
-        stamp = time.strftime("%Y%m%d-%H%M%S")
+        stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
         log_dir = base / "copilot-logs" / stamp
         log_dir.mkdir(parents=True, exist_ok=True)
         return log_dir

@@ -13,6 +13,7 @@
 - API 鉴权请使用 `.env.template` 生成 `.env`，并在当前 shell 执行 `set -a; source .env; set +a`。
 - 在 agent 实现代码中，cakit 受管控环境变量请直接从 `os.environ` 读取（不要从 `base_env` 读取受管控变量）。
 - `--env-file` 用于传递 `.env.template` 未管理的额外变量；受管控变量应来自当前 shell 环境（例如通过 `.env` + `source`）。
+- 不要在 cakit 代码里实现“agent 专用环境变量回退到通用 `LLM_*` 环境变量”的兼容逻辑。若测试需要使用 `LLM_*`，应在测试 shell/命令中做环境变量重定向，而不是把回退逻辑写入产品代码。
 
 ## 常用命令
 - 生成 `.env` 模板：`cakit env --output .env`
@@ -26,6 +27,9 @@
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
   - `python tests/availability_test.py <agent...>`
+- Agent 可用性测试耗时可能较长；请使用 10 分钟超时（`--timeout-seconds 600`）以降低中途被打断的风险。
+- 请并行执行多个 coding agent 调用任务，以节约总测试时间并降低预期超时风险。
+- 若并行执行引入竞态问题（例如并发安装），应先修复代码，再采信测试结果。
 - 默认不要求做稳定性重复跑；若单次运行成功，且响应语义与必需统计字段都正确，即可判定该能力可用。
 - 不要为 coding agent 可用性或统计提取新增代码级单元/集成测试点。统一使用 `tests/availability_test.py`，并结合真实输出做主观人工判读。
 - 不要把脚本自动 pass/fail 当作唯一依据；必须人工阅读响应内容并判断是否正确。
@@ -37,6 +41,7 @@
   5. `cakit run <agent> "这个视频里发生了什么？有什么可见文字？" --video tests/video.mp4 > /tmp/cakit-<agent>-video.json`（视频输入检查，使用本地小体积 mp4）
   6. `cakit run <agent> "访问 https://github.com/algorithmicsuperintelligence/openevolve，并简要说明页面内容。" > /tmp/cakit-<agent>-web.json`（联网访问检查）
 - 必须补充“prompt 路径多模态检查”：在不传 `--image`/`--video` 的情况下，仅把本地图片/视频路径写进 prompt，验证该 coding agent 是否能通过可用工具自主读取，并记录实际表现。
+- 做图像/视频能力检查时，所用基础模型必须原生支持对应模态。若当前模型不支持图像/视频输入（例如纯文本模型），应先切换到支持该模态的模型，再判断该能力是否支持。
 - 各项通过与否以返回内容是否正确为准，不能只看命令是否启动。
 - 必须校验 JSON 中统计字段提取结果：
   1. `response`：字段存在，且为非空文本。
@@ -49,7 +54,7 @@
 - `models_usage` 中的模型名必须来自本次运行产物（stdout payload/session 日志），不能从配置、环境变量或 `--model` 输入回填。
 - 提取逻辑必须严格按格式读取：仅解析明确、文档化字段；结构异常时应立即返回 `None`，不要叠加多层 fallback 解析器。
 - 字段名必须精确且稳定。不要对同一信号尝试多个字段名或回退链；必需字段缺失时直接返回 `None`。
-- 用量统计必须基于源码确认。若 coding agent CLI 有开源仓库，应先将源码 clone 到 `/tmp` 进行本地阅读，确认 usage 产生方式，再实现或调整 token 统计逻辑。校验范围必须包含 `llm_calls`、token usage 与 `tool_calls` 的行为。若环境阻止 clone，则给出精确的 `git clone ... /tmp/<repo>` 命令并要求用户在本机执行，然后继续本地检查。
+- 用量统计必须基于源码确认。若 coding agent CLI 有开源仓库，应先检查 `/tmp` 下是否已有该仓库：若已存在则先进入仓库执行 `git pull` 更新；若不存在再 clone 到 `/tmp` 后进行本地阅读。确认 usage 产生方式后再实现或调整 token 统计逻辑。校验范围必须包含 `llm_calls`、token usage 与 `tool_calls` 的行为。若环境阻止 clone，则给出精确的 `git clone ... /tmp/<repo>` 命令并要求用户在本机执行，然后继续本地检查。
 - Token usage 定义为 agent 运行过程中所有 LLM call 的 prompt tokens 与 completion tokens 的总和（包含 subagents 时一并计入）。
 - 代码与文档必须保持一致。行为有变更时需在同一提交/修改中同步更新文档，且文档应与实现完全一致（不要出现不匹配的 fallback 或字段描述）。
 - 发生提取失败时必须排查：
@@ -74,6 +79,7 @@
 - `cakit run` 若发现未安装对应 agent，需要自动执行 `cakit install <agent>` 并提示。
 - 预期成功的命令必须返回 0；usage 解析失败或关键信息缺失必须返回非 0。
 - `cakit install` 需自动安装缺失的运行时依赖（如 Node.js、uv），并兼容无 `sudo` 或 root 环境。
+- 默认安装行为必须始终指向上游 latest：未传 `--version` 时，代码中不得写死固定默认版本。
 - `cakit tools` 仅支持 Linux；需处理无 `sudo` 或 root 环境；在非 `x86_64/amd64` 上给出清晰提示并跳过。
 - 调试时产生的临时文件请放在 `/tmp`，不要写进项目目录。
 - 不做输出截断（无需 `_preview`）；输出字段为 `raw_output`。
@@ -109,3 +115,10 @@
   - `docs/<agent>.zh.md`（例如 `docs/codex.zh.md`）
   - 支持的 Agent 列表、登录方式说明、测试覆盖矩阵、Todo
 - 修改 `AGENTS.md` 时，也需要同步更新 `AGENTS.zh.md`。
+
+## 新 Agent 接入流程
+- 新增 coding agent 支持时，必须实现安装与可用性验证，并且同时验证“不指定版本安装”和“指定 `--version` 安装”。
+- 必须更新 `README.md` 与 `README.zh.md` 中该 coding agent 的支持列表/表格以及测试覆盖矩阵。
+- 新增与修改文件应仿照项目现有实现模式，保持结构、命名和严格解析行为一致。
+- 可用性测试时可使用 `.env` 中的 `LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`，但应在测试 shell/命令中重定向到新 coding agent 的环境变量名；禁止在 cakit 代码中新增对 `LLM_*` 的兼容回退。
+- 当仓库内有其他 codex 并行修改时，应接纳现有变更并避免干扰与当前任务无关的工作。

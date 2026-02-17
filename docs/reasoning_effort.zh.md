@@ -6,7 +6,7 @@
 
 本表核对时间为 **2026 年 2 月 12 日**。
 
-- 开源 agent（`codex`、`gemini`、`kimi`、`qwen`、`openhands`、`swe-agent`、`trae-oss`）：基于上游源码核对。
+- 开源 agent（`codex`、`gemini`、`crush`、`auggie`、`continue`、`openclaw`、`deepagents`、`kimi`、`qwen`、`openhands`、`swe-agent`、`trae-oss`）：基于上游源码核对。
 - 非开源 agent（`claude`、`cursor`、`copilot`）：基于官方 CLI 文档核对。
 
 | Agent | cakit 支持的取值 | cakit 映射行为 | 上游状态 |
@@ -16,6 +16,11 @@
 | `cursor` | 不支持 | cakit 中不支持 | 闭源 CLI；文档未提供 reasoning/thinking 开关 |
 | `copilot` | 不支持 | cakit 中不支持 | 闭源 CLI；文档未提供 reasoning/thinking 开关 |
 | `gemini` | `cakit run` 中不支持 | cakit 中不支持 | 上游可通过 model config aliases/settings 的 `thinkingConfig` 控制思考，但没有独立的按次运行 reasoning-effort 参数 |
+| `crush` | `cakit run` 中不支持 | cakit 中不支持 | 上游 `crush run` 仅支持模型选择（`--model` / `--small-model`），没有独立的按次运行 reasoning-effort 参数；在 cakit 中为 Crush 选择模型时，会把同一模型同时用于 large/small 两个模型槽位 |
+| `auggie` | `cakit run` 中不支持 | cakit 中不支持 | 上游 CLI 支持模型选择（`--model`），但没有独立的按次运行 reasoning-effort 参数 |
+| `continue` | `cakit run` 中不支持 | cakit 中不支持 | 上游 `cn` 无独立的按次运行 reasoning-effort 参数 |
+| `openclaw` | `off`、`minimal`、`low`、`medium`、`high` | 在 `openclaw agent` 上追加 `--thinking <value>` | 上游 `openclaw agent` 支持 `--thinking` |
+| `deepagents` | `cakit run` 中不支持 | cakit 中不支持 | 上游 `deepagents` CLI 无独立的按次运行 reasoning-effort 参数 |
 | `kimi` | `thinking`、`none` | 在 `kimi` 命令上追加 `--thinking` / `--no-thinking` | 上游 CLI 直接提供 `--thinking/--no-thinking` |
 | `qwen` | `cakit run` 中不支持 | cakit 中不支持 | 上游在配置中支持 `model.generationConfig.reasoning`（以及 provider `extra_body`），但没有独立的按次运行 reasoning-effort 参数 |
 | `openhands` | `cakit run` 中不支持 | cakit 中不支持 | 上游在 LLM 配置/环境变量中支持 `reasoning_effort`（`LLM_REASONING_EFFORT`），但无独立 reasoning-effort CLI 参数 |

@@ -289,6 +289,42 @@ def _run_all_cases(
     return cases_by_agent
 
 
+def _preinstall_agents(
+    *,
+    agents: List[str],
+    timeout_seconds: int,
+) -> Tuple[bool, List[Dict[str, Any]]]:
+    """Install each agent once before parallel case execution to avoid install races."""
+    errors: List[Dict[str, Any]] = []
+    for agent in agents:
+        cmd = ["cakit", "install", agent]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            errors.append(
+                {
+                    "agent": agent,
+                    "error": "install timeout",
+                    "command": cmd,
+                    "stdout": exc.stdout or "",
+                    "stderr": exc.stderr or "",
+                }
+            )
+            continue
+        if proc.returncode != 0:
+            errors.append(
+                {
+                    "agent": agent,
+                    "error": "install failed",
+                    "command": cmd,
+                    "exit_code": proc.returncode,
+                    "stdout": proc.stdout,
+                    "stderr": proc.stderr,
+                }
+            )
+    return len(errors) == 0, errors
+
+
 def _test_agents(
     *,
     agents: List[str],
@@ -369,8 +405,25 @@ def main() -> int:
         return 2
 
     started = time.time()
-    run_root = Path("/tmp") / f"cakit-availability-{int(started)}"
+    run_root = Path("/tmp") / f"cakit-availability-{time.time_ns()}"
     run_root.mkdir(parents=True, exist_ok=True)
+    install_ok, install_errors = _preinstall_agents(
+        agents=args.agents,
+        timeout_seconds=args.timeout_seconds,
+    )
+    if not install_ok:
+        report = {
+            "timestamp": int(started),
+            "ok": False,
+            "runtime_seconds": round(time.time() - started, 3),
+            "parallel": not args.no_parallel,
+            "max_workers": args.max_workers,
+            "run_root": str(run_root),
+            "install_errors": install_errors,
+            "agents": [],
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
     agents_reports = _test_agents(
         agents=args.agents,
         image_path=image_path,

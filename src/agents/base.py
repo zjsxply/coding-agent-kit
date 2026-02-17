@@ -242,7 +242,7 @@ class CodingAgent(abc.ABC):
         else:
             output_dir = Path.home() / ".cache" / "cakit"
         output_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
+        stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
         path = output_dir / f"{agent}-{stamp}.log"
         path.write_text(output, encoding="utf-8")
         return path
@@ -256,7 +256,7 @@ class CodingAgent(abc.ABC):
         else:
             output_dir = Path.home() / ".cache" / "cakit"
         output_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
+        stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
         path = output_dir / f"{agent}-{stamp}.trajectory.log"
         path.write_text(content, encoding="utf-8")
         return path

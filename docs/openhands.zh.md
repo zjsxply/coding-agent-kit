@@ -18,7 +18,9 @@
   - `LLM_MODEL`
 - 可选环境变量：
   - `LLM_BASE_URL`
-- 若模型名不含 provider 前缀且设置了 base URL，cakit 会按 `openai/<model>` 运行，以满足 LiteLLM 路由要求。
+- cakit 会为 OpenHands 按 LiteLLM 路由规则归一化模型格式：
+  - `provider:model` 会改写为 `provider/model`。
+  - 裸模型名（例如 `kimi-k2.5`）会改写为 `openai/<model>`。
 
 **图像/视频输入**
 - OpenHands headless CLI 未提供已文档化的 `--image` / `--video` 运行参数。

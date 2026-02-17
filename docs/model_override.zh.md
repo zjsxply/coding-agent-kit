@@ -11,7 +11,15 @@
 | `cursor` | `CURSOR_MODEL` | `--model <name>` |
 | `copilot` | `COPILOT_MODEL` | `--model <name>` |
 | `gemini` | `GEMINI_MODEL` | `--model <name>` |
+| `crush` | `CAKIT_CRUSH_MODEL` | API 模式：生成临时运行配置（large/small 都设为所选模型）；OAuth 模式：`--model <name>` + `--small-model <name>` |
+| `auggie` | `CAKIT_AUGGIE_MODEL` | `--model <name>` |
+| `continue` | `CAKIT_CONTINUE_OPENAI_MODEL` | 生成临时运行配置（`cn -p --config`） |
+| `goose` | `CAKIT_GOOSE_MODEL` | `--model <name>` |
+| `kilocode` | 无（运行时配置会按 `--model` 生成模型字段） | `--model <name>` |
+| `openclaw` | `CAKIT_OPENCLAW_MODEL` | 无（`openclaw agent` 无按次 `--model` 参数） |
+| `deepagents` | `DEEPAGENTS_OPENAI_MODEL` | `--model <name>` |
 | `kimi` | `KIMI_MODEL_NAME` | `--model <name>` |
+| `trae-cn` | `CAKIT_TRAE_CN_MODEL` | 无 |
 | `qwen` | `QWEN_OPENAI_MODEL` | `--model <name>` |
 | `openhands` | `LLM_MODEL` | 无 |
 | `swe-agent` | `SWE_AGENT_MODEL` | `--agent.model.name <name>` |

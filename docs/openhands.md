@@ -18,7 +18,9 @@ This document explains how cakit runs OpenHands CLI and extracts run metadata.
   - `LLM_MODEL`
 - Optional environment variable:
   - `LLM_BASE_URL`
-- If the model has no provider prefix and a base URL is set, cakit runs OpenHands with `openai/<model>` to satisfy LiteLLM provider routing.
+- cakit normalizes OpenHands model format for LiteLLM routing:
+  - `provider:model` is rewritten to `provider/model`.
+  - bare model name (for example `kimi-k2.5`) is rewritten to `openai/<model>`.
 
 **Image and Video Input**
 - OpenHands headless CLI does not provide documented `--image` / `--video` run flags.

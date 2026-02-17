@@ -17,15 +17,20 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 默认无限制模式（Yolo）。
 
 ```bash
-cakit install <agent> [--scope user|global] [--version <value>]
+cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 ```
 
 默认 `--scope user` 会把 npm 类 agent 安装到 `~/.npm-global`（无需 sudo），请确保 `~/.npm-global/bin` 在 `PATH` 中。
 如需全局安装，使用 `--scope global`（等价于 `npm install -g`，可能需要 sudo）。
+`all` 和 `*` 可用于安装全部已支持 agent（`*` 需加引号，避免被 shell 展开）。
+省略 `<agent>` 时，默认等同于 `all`。
+未传 `--version` 时，`cakit install` 始终安装执行当下可获得的上游最新版本（latest）。
 可使用 `--version` 指定安装版本/引用：
-- `codex` / `claude` / `copilot` / `gemini` / `qwen`：npm 版本号或 tag（例如 `0.98.0`）。
+- `codex` / `claude` / `copilot` / `gemini` / `qwen` / `continue` / `crush` / `auggie` / `kilocode` / `openclaw` / `kimi`：npm 包版本号或 tag（例如 `0.98.0`、`2026.2.15`、`1.9.0`）。
 - `cursor`：Cursor 构建号（例如 `2026.01.28-fd13201`）。
-- `kimi`：`kimi-cli` 包版本（例如 `1.9.0`）。
+- `goose`：Goose CLI release 版本（例如 `v1.2.3` 或 `1.2.3`）。
+- `deepagents`：`deepagents-cli` 包版本（例如 `0.0.21`）。
+- `trae-cn`：TRAE CLI 版本（例如 `0.111.5`）。
 - `openhands`：`openhands` 包版本（例如 `1.12.1`）。
 - `swe-agent`：上游 release tag（例如 `v1.0.0`）。
 - `trae-oss`：git 引用（tag / branch / commit）。
@@ -39,7 +44,15 @@ cakit install <agent> [--scope user|global] [--version <value>]
 | cursor | [Cursor](https://cursor.com) | [CLI](https://docs.cursor.com/en/cli/using) | — | — |
 | copilot | [GitHub Copilot CLI](https://github.com/github/copilot-cli) | [Using Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli) | — | — |
 | gemini | [Gemini CLI](https://google-gemini.github.io/gemini-cli/) | [Auth](https://google-gemini.github.io/gemini-cli/docs/get-started/authentication.html) | [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) | — |
+| crush | [Crush](https://github.com/charmbracelet/crush) | [README](https://github.com/charmbracelet/crush#readme) | [charmbracelet/crush](https://github.com/charmbracelet/crush) | 原项目为 opencode（`opencode-ai/opencode`） |
+| auggie | [Auggie](https://github.com/augmentcode/auggie) | [CLI Overview](https://docs.augmentcode.com/cli/overview) | [augmentcode/auggie](https://github.com/augmentcode/auggie) | 开源仓库主要发布文档/示例；npm 包内置 CLI 运行时 |
+| continue | [Continue](https://www.continue.dev/) | [Continue CLI](https://github.com/continuedev/continue/tree/main/extensions/cli) | [continuedev/continue](https://github.com/continuedev/continue) | CLI 可执行名为 `cn` |
+| goose | [Goose](https://block.github.io/goose/) | [Goose CLI Commands](https://block.github.io/goose/docs/guides/goose-cli-commands) | [block/goose](https://github.com/block/goose) | cakit 以 headless `run` 模式运行 goose，并对 session export 做严格解析 |
+| kilocode | [Kilo Code](https://kilo.ai) | [README](https://github.com/Kilo-Org/kilocode#readme) | [Kilo-Org/kilocode](https://github.com/Kilo-Org/kilocode) | cakit 安装 `@kilocode/cli`，并严格解析运行产物 |
+| openclaw | [OpenClaw](https://openclaw.ai/) | [Getting Started](https://docs.openclaw.ai/start/getting-started) | [openclaw/openclaw](https://github.com/openclaw/openclaw) | cakit 运行 `openclaw agent --local --json`，并严格解析会话 transcript |
+| deepagents | [Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) | [Deep Agents CLI](https://docs.langchain.com/oss/python/deepagents/cli) | [langchain-ai/deepagents](https://github.com/langchain-ai/deepagents) | cakit 安装 `deepagents-cli`，并严格解析会话 checkpoint |
 | kimi | [Kimi Code](https://www.kimi.com/code) | [Kimi CLI Docs](https://moonshotai.github.io/kimi-cli/en/) | [moonshotai/kimi-cli](https://github.com/moonshotai/kimi-cli) | — |
+| trae-cn | [TRAE](https://www.trae.cn/) | [TRAE CLI Docs](https://docs.trae.cn/cli) | — | 来自 trae.cn 的官方 TRAE CLI |
 | qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) | — |
 | openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | — |
 | swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) | — |
@@ -54,7 +67,15 @@ OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.templat
 - cursor：`cursor-agent login`
 - copilot：运行 `copilot`，输入 `/login`；也支持 `GH_TOKEN`/`GITHUB_TOKEN`
 - gemini：运行 `gemini`，按提示选择 Login with Google
+- crush：OAuth 方式使用 `crush login`（例如 `crush login hyper`）；API 方式为 `CRUSH_OPENAI_API_KEY` + `CRUSH_OPENAI_BASE_URL` + `CAKIT_CRUSH_MODEL`
+- auggie：OAuth 方式使用 `auggie login`；API 方式为 `AUGMENT_API_TOKEN` + `AUGMENT_API_URL`（可选 `AUGMENT_SESSION_AUTH`）
+- continue：OAuth 方式使用 `cn login`；API 方式为 `CAKIT_CONTINUE_OPENAI_API_KEY` + `CAKIT_CONTINUE_OPENAI_MODEL` + `cakit configure continue`
+- goose：API 方式为 `CAKIT_GOOSE_PROVIDER` + `CAKIT_GOOSE_MODEL` + `CAKIT_GOOSE_OPENAI_API_KEY`（OpenAI 兼容端点可再配 `CAKIT_GOOSE_OPENAI_BASE_URL`）
+- kilocode：API 方式为 `KILO_OPENAI_API_KEY` + `KILO_OPENAI_MODEL_ID` + `cakit configure kilocode`
+- openclaw：API 方式为 `CAKIT_OPENCLAW_API_KEY` + `CAKIT_OPENCLAW_BASE_URL` + `CAKIT_OPENCLAW_MODEL` + `cakit configure openclaw`
+- deepagents：仅 API，使用 `DEEPAGENTS_OPENAI_API_KEY` + `DEEPAGENTS_OPENAI_MODEL`
 - kimi：OAuth 方式为运行 `kimi` 后输入 `/login`；API 方式为设置 `KIMI_API_KEY` 并执行 `cakit configure kimi`
+- trae-cn：OAuth 方式为运行 `traecli` 后输入 `/login`；API 方式为设置 `CAKIT_TRAE_CN_API_KEY` 并执行 `cakit configure trae-cn`
 - qwen：运行 `qwen`，按提示完成浏览器登录
 - openhands：仅 API（`LLM_API_KEY` + `LLM_MODEL`，见 `.env.template`）
 - swe-agent：仅 API（见 `.env.template`）
@@ -71,11 +92,12 @@ cakit env --output .env
 ### 配置 agent
 
 ```bash
-cakit configure <agent>
+cakit configure [<agent|all|*>]
 ```
 
 用于根据当前环境变量重新生成 agent 配置。
-如更新了环境变量，请先重新执行 `set -a; source .env; set +a`，再执行 `cakit configure <agent>`。
+省略 `<agent>` 时，默认等同于 `all`。
+如更新了环境变量，请先重新执行 `set -a; source .env; set +a`，再执行 `cakit configure [<agent|all|*>]`。
 若某个 agent 不需要配置文件，`cakit configure` 可能返回 `"config_path": null` 但仍表示成功。
 注：Claude Code 直接读取环境变量，`cakit configure claude` 是空操作（不会写入配置文件）。
 
@@ -113,6 +135,8 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 - Claude Code / Codex：通过 OpenTelemetry（OTEL）导出（需配置 OTEL endpoint），日志地址为 OTEL endpoint
 - Copilot CLI：默认日志目录 `~/.copilot/logs/`（cakit 会传 `--log-dir`）
 - Gemini CLI：本地日志 `~/.gemini/telemetry.log`
+- Crush：本地日志 `<run_data_dir>/logs/crush.log`（来自 run 级 `--data-dir`）
+- Auggie CLI：run 临时目录日志 `<tmp_run_dir>/auggie.log`（cakit 传 `--log-file`）
 - Qwen Code：本地日志 `~/.qwen/telemetry.log`
 
 图像/视频输入支持：
@@ -123,8 +147,16 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 | codex | ✓ | ✗ | `--image`（支持多图） |
 | cursor | ✗ | ✗ |  |
 | copilot | ✓ | ✗ | `--image` 通过自然语言路径注入实现 |
-| gemini | ✓ | ✓ | staged 媒体 + `@{path}` 注入 |
+| gemini | ✓ | ✓ | 通过符号化本地路径注入（`@{path}`）；已用 `--model gemini-2.5-pro` 验证（能力依赖模型） |
+| crush | ✗ | ✗ | `crush run` 无 `--image` / `--video` 参数 |
+| auggie | ✓ | ✗ | 原生 `--image`；未文档化 `--video` 参数 |
+| continue | ✗ | ✗ | `cn` 的 headless 模式无已文档化 `--image` / `--video` 参数 |
+| goose | ✓ | ✓ | 通过自然语言本地路径注入 + 内置 `developer` 处理器实现 |
+| kilocode | ✓ | ✗ | 原生 `--attach`；无已文档化 `--video` 参数 |
+| openclaw | ✗ | ✗ | `openclaw agent` 无已文档化 `--image` / `--video` 参数 |
+| deepagents | ✗ | ✗ | `deepagents` 非交互 CLI 无已文档化 `--image` / `--video` 参数 |
 | kimi | ✓ | ✓ | `ReadMediaFile` + 模型能力（`image_in`/`video_in`） |
+| trae-cn | ✗ | ✗ | `traecli` 无 `--image` / `--video` 参数 |
 | qwen | ✓ | ✓ | `@{path}` 注入；是否有效取决于模型能力 |
 | openhands | ✗ | ✗ | headless CLI 未提供已文档化的 `--image` / `--video` 参数 |
 | swe-agent | ✗ | ✗ | 上游多模态仅支持 `swe_bench_multimodal` 的 issue 图片 URL；`sweagent run` 无通用 `--image` / `--video` 参数 |
@@ -172,15 +204,7 @@ cakit tools
 
 ## 环境变量
 
-- 完整列表见 `.env.template`。
-- `CAKIT_OUTPUT_DIR`：覆盖日志输出目录。
-- `CAKIT_TRAE_TRAJECTORY`：覆盖 Trae trajectory 输出路径。
-- `CAKIT_NPM_PREFIX`：覆盖 npm 类 agent 的用户安装前缀（默认 `~/.npm-global`）。
-- `CAKIT_CODEX_USE_OAUTH`：若设置（如 `1`），Codex 使用 OAuth 登录而非 API Key。
-- `CAKIT_CLAUDE_USE_OAUTH`：若设置（如 `1`）且 Claude 的 API key/token 同时存在时，优先使用 OAuth token。
-- `CAKIT_KIMI_PROVIDER_TYPE`：Kimi provider `type`（`kimi`、`openai_legacy`、`openai_responses`）。
-- `GOOGLE_API_KEY`：Gemini CLI 使用的上游 Gemini/Vertex API key。
-- `CAKIT_QWEN_GOOGLE_API_KEY`：Qwen 专用的 cakit 覆盖变量，用于避免 `GOOGLE_API_KEY` 冲突。
+详见 `.env.template`，其中有完整且最新的环境变量说明。
 
 ## 测试覆盖矩阵
 
@@ -188,13 +212,21 @@ cakit tools
 
 | Agent | OAuth | API | 图像输入 | 视频输入 | MCP | Skills | 遥测 | 联网 | 测试版本 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.37 |
-| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.98.0 |
+| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.44 |
+| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.101.0 |
 | cursor |  |  | ✗ | ✗ |  |  |  |  |  |
-| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 0.0.408 |
-| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.27.3 |
-| kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.9.0 |
-| qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.0 |
+| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 0.0.410 |
+| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.28.2 |
+| crush |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.43.0 |
+| auggie |  | ⚠ | ⚠ | ✗ |  |  | ✓ | ⚠ | 0.16.1 |
+| continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.43 |
+| goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.24.0 |
+| kilocode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.0.22 |
+| openclaw |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 2026.2.15 |
+| deepagents | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.0.21 |
+| kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.12.0 |
+| trae-cn | ✗ | ⚠ | ✗ | ✗ |  |  |  | ⚠ | 0.111.5 |
+| qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.3 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
 | swe-agent | ✗ | ⚠ | ✗ | ✗ |  |  |  | ⚠ | 1.1.0 |
 | trae-oss | ✗ | ⚠ | ✗ | ✗ |  |  |  | ⚠ | 0.1.0 |
@@ -206,6 +238,8 @@ cakit tools
 - [ ] `cakit run` 支持 `--timeout`，并在超时时返回半成品运行产物
 - [x] 支持 skills
 - [ ] 支持 `AGENTS.md`
+- [ ] 对所有 agent，每次 `cakit run` 都在 `/tmp` 创建独立的本次运行 `HOME` 并写入该次运行专用配置，避免跨 run 会话冲突并保证统计匹配到本次运行产物；`cakit` 不再需要 `configure` 命令（默认由 `run` 自动配置并完全托管）
+- [ ] 新增构建 Docker 镜像指令：构建包含 cakit 的镜像，并可指定 base image
 - [ ] 调整所有 agent 配置/数据路径（如 `KIMI_SHARE_DIR`），避免与主机其他 agent 冲突
 - [ ] 支持 MCP
 - [ ] 支持 balanced 模式

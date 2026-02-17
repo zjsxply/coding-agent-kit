@@ -13,6 +13,7 @@
 - For API auth, generate `.env` from `.env.template` and run `set -a; source .env; set +a` in the current shell.
 - In agent implementation code, read cakit-managed env vars directly from `os.environ` (do not read managed vars from `base_env`).
 - `--env-file` is for extra pass-through variables that are not managed by `.env.template`; managed keys should come from the current shell env (for example via `.env` + `source`).
+- Do not implement compatibility fallbacks from agent-specific env vars to shared `LLM_*` env vars in cakit code. If tests need `LLM_*`, map them externally in the test shell/command instead of adding fallback logic to product code.
 
 ## Common Commands
 - Generate `.env` template: `cakit env --output .env`
@@ -26,6 +27,9 @@
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
   - `python tests/availability_test.py <agent...>`
+- Agent availability tests can take a long time; use a 10-minute timeout (`--timeout-seconds 600`) to reduce interruption risk.
+- Run multiple coding-agent invocation tasks in parallel to save total test time and reduce expected timeout risk.
+- If parallel execution causes race conditions (for example concurrent installation), fix the code before relying on the test result.
 - By default, repeated stability runs are not required. If one run succeeds with correct response semantics and required stats fields, treat the capability as available.
 - Do not add code-level unit/integration test points for coding agent availability or stats extraction. Validate with `tests/availability_test.py` and manual, subjective review of real outputs.
 - Do not treat automated pass/fail in scripts as sufficient by itself; always inspect response content and judge correctness manually.
@@ -37,6 +41,7 @@
   5. `cakit run <agent> "What happens in this video? List any visible text." --video tests/video.mp4 > /tmp/cakit-<agent>-video.json` (video input check; use a small local mp4)
   6. `cakit run <agent> "Visit https://github.com/algorithmicsuperintelligence/openevolve and summarize what is on that page." > /tmp/cakit-<agent>-web.json` (web access check)
 - Prompt-path multimodal check is required: test whether the coding agent can read local image/video files when only file paths are included in prompt text (without `--image`/`--video`) and report the observed behavior.
+- For image/video capability checks, the configured base model must natively support the corresponding modality. If the current model does not support image/video input (for example text-only variants), switch to a modality-capable model before concluding support status.
 - Record whether each check passes based on the actual response content (not just process start).
 - Verify stats field extraction from JSON outputs:
   1. `response`: key exists and value is non-empty text.
@@ -49,7 +54,7 @@
 - Model name in `models_usage` must come from run artifacts (stdout payload/session logs). Do not fill it from config/env/`--model` input.
 - Parsing must be strict and format-aware: read only exact, documented fields; if structure is unexpected, return `None` immediately instead of stacking fallback parsers.
 - Field names must be exact and stable. Do not try multiple alternative field names or fallback chains for the same signal; if a required field is missing, return `None`.
-- Usage extraction must be source-verified. When a coding agent CLI has an open-source repository, clone it under `/tmp` for local inspection and confirm how usage is produced before implementing or changing token accounting. This verification must cover `llm_calls`, token usage, and `tool_calls` behavior. If the environment blocks cloning, provide the exact `git clone ... /tmp/<repo>` command and ask the user to run it, then continue with local inspection.
+- Usage extraction must be source-verified. When a coding agent CLI has an open-source repository, first check whether the repo already exists under `/tmp`; if it exists, `cd` into it and run `git pull` to update, otherwise clone it under `/tmp` for local inspection. Confirm how usage is produced before implementing or changing token accounting. This verification must cover `llm_calls`, token usage, and `tool_calls` behavior. If the environment blocks cloning, provide the exact `git clone ... /tmp/<repo>` command and ask the user to run it, then continue with local inspection.
 - Token usage is defined as the sum of prompt tokens and completion tokens across all LLM calls made during the agent run (including subagents when applicable).
 - Code and documentation must stay consistent. When behavior changes, update docs in the same PR/patch and ensure they reflect the exact implementation (no mismatched fallbacks or fields).
 - On extraction failure, inspect:
@@ -74,6 +79,7 @@
 - If an agent is not installed, `cakit run` must auto-run `cakit install <agent>` with a notice.
 - Commands that are expected to succeed must return exit code 0; usage parsing failures or missing critical fields must return non-zero.
 - `cakit install` must auto-install missing runtime dependencies (e.g., Node.js, uv) and work without `sudo` or in root environments.
+- Default install behavior must always target latest upstream release: when `--version` is not provided, do not pin a hardcoded default version in code.
 - `cakit tools` is Linux-only; handle no-`sudo`/root cases; on non-`x86_64/amd64`, provide a clear message and skip.
 - For debugging, store temporary files under `/tmp` instead of writing into the project directory.
 - No output truncation (no `_preview`); output field is `raw_output`.
@@ -109,3 +115,10 @@
   - `docs/<agent>.zh.md` (for example `docs/codex.zh.md`)
   - Supported agents list, login methods, test coverage matrix, and Todo
 - When updating `AGENTS.md`, update `AGENTS.zh.md` as well.
+
+## New Agent Workflow
+- When adding support for a new coding agent, you must implement install and availability validation for both unspecified version and specified `--version`.
+- You must update `README.md` and `README.zh.md` supported-agent list/table and test coverage matrix for the new coding agent.
+- New and modified files for the coding agent should follow existing project patterns in structure, naming, and strict parsing behavior.
+- Availability testing should use `.env` values `LLM_API_KEY`, `LLM_MODEL`, and `LLM_BASE_URL` by remapping them to the new coding agent's env names in the test shell/command, without adding in-code compatibility fallback to `LLM_*`.
+- During concurrent collaboration with other codex instances, accept existing changes in the repository and avoid interfering with unrelated ongoing work.

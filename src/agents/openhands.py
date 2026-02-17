@@ -142,7 +142,7 @@ class OpenHandsAgent(CodingAgent):
         if missing:
             return {}, f"missing required environment variable(s): {', '.join(missing)}"
 
-        resolved_model = self._normalize_model(model=model, base_url=base_url)
+        resolved_model = self._normalize_model(model=model)
         env: Dict[str, str] = {
             "LLM_API_KEY": api_key,
             "LLM_MODEL": resolved_model,
@@ -152,13 +152,17 @@ class OpenHandsAgent(CodingAgent):
         return env, None
 
     @staticmethod
-    def _normalize_model(*, model: str, base_url: Optional[str]) -> str:
+    def _normalize_model(*, model: str) -> str:
         normalized = model.strip()
         if "/" in normalized:
             return normalized
-        if base_url:
-            return f"openai/{normalized}"
-        return normalized
+        if ":" in normalized:
+            provider, model_name = normalized.split(":", 1)
+            provider = provider.strip()
+            model_name = model_name.strip()
+            if provider and model_name:
+                return f"{provider}/{model_name}"
+        return f"openai/{normalized}"
 
     def _extract_conversation_id(self, output: str) -> Optional[str]:
         match = self._CONVERSATION_ID_RE.search(output)

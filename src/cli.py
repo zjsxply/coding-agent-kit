@@ -14,9 +14,13 @@ from .agents import create_agent, list_agents
 from .utils import load_env_file
 
 
+ALL_AGENT_SELECTORS = {"*", "all"}
+
+
 REASONING_EFFORT_OPTIONS: Dict[str, tuple[str, ...]] = {
     "codex": ("minimal", "low", "medium", "high", "xhigh"),
     "claude": ("low", "medium", "high", "max"),
+    "openclaw": ("off", "minimal", "low", "medium", "high"),
     "kimi": ("thinking", "none"),
 }
 
@@ -26,7 +30,12 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     install = subparsers.add_parser("install", help="Install a coding agent")
-    install.add_argument("agent", choices=list_agents())
+    install.add_argument(
+        "agent",
+        nargs="?",
+        default="all",
+        help="Agent name, or `all` / `*` for all agents (`*` should be quoted). Omitted means `all`.",
+    )
     install.add_argument(
         "--scope",
         choices=("user", "global"),
@@ -42,7 +51,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     configure = subparsers.add_parser("configure", help="Configure a coding agent")
-    configure.add_argument("agent", choices=list_agents())
+    configure.add_argument(
+        "agent",
+        nargs="?",
+        default="all",
+        help="Agent name, or `all` / `*` for all agents (`*` should be quoted). Omitted means `all`.",
+    )
 
     run = subparsers.add_parser("run", help="Run a coding agent")
     run.add_argument("agent", choices=list_agents())
@@ -97,30 +111,102 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_agent_targets(agent_name: str) -> list[str]:
+    key = agent_name.strip().lower()
+    available_agents = list_agents()
+    if key in ALL_AGENT_SELECTORS:
+        return list(available_agents)
+    if key in available_agents:
+        return [key]
+    raise ValueError(f"Unsupported agent: {agent_name}")
+
+
 def _run_install(agent_name: str, scope: str, version: Optional[str]) -> int:
-    install_result = _install_agent(agent_name, scope=scope, version=version)
+    try:
+        targets = _resolve_agent_targets(agent_name)
+    except ValueError as exc:
+        payload = {"error": str(exc), "supported_agents": list(list_agents())}
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        return 2
+
+    if len(targets) == 1:
+        install_result = _install_agent(targets[0], scope=scope, version=version)
+        payload = {
+            "agent": install_result.agent,
+            "ok": install_result.ok,
+            "version": install_result.version,
+            "config_path": install_result.config_path,
+            "details": install_result.details,
+        }
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        return 0 if install_result.ok else 1
+
+    results = []
+    all_ok = True
+    for target in targets:
+        install_result = _install_agent(target, scope=scope, version=version)
+        all_ok = all_ok and install_result.ok
+        results.append(
+            {
+                "agent": install_result.agent,
+                "ok": install_result.ok,
+                "version": install_result.version,
+                "config_path": install_result.config_path,
+                "details": install_result.details,
+            }
+        )
+
     payload = {
-        "agent": install_result.agent,
-        "ok": install_result.ok,
-        "version": install_result.version,
-        "config_path": install_result.config_path,
-        "details": install_result.details,
+        "agent": agent_name,
+        "resolved_agents": targets,
+        "ok": all_ok,
+        "results": results,
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
-    return 0 if install_result.ok else 1
+    return 0 if all_ok else 1
 
 
 def _run_configure(agent_name: str) -> int:
-    agent = create_agent(agent_name)
-    config_path = agent.configure()
-    ok = True
+    try:
+        targets = _resolve_agent_targets(agent_name)
+    except ValueError as exc:
+        payload = {"error": str(exc), "supported_agents": list(list_agents())}
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        return 2
+
+    if len(targets) == 1:
+        target = targets[0]
+        agent = create_agent(target)
+        config_path = agent.configure()
+        payload = {
+            "agent": target,
+            "ok": True,
+            "config_path": config_path,
+        }
+        if config_path is None:
+            payload["details"] = "no config written"
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        return 0
+
+    results = []
+    for target in targets:
+        agent = create_agent(target)
+        config_path = agent.configure()
+        item = {
+            "agent": target,
+            "ok": True,
+            "config_path": config_path,
+        }
+        if config_path is None:
+            item["details"] = "no config written"
+        results.append(item)
+
     payload = {
         "agent": agent_name,
-        "ok": ok,
-        "config_path": config_path,
+        "resolved_agents": targets,
+        "ok": True,
+        "results": results,
     }
-    if config_path is None:
-        payload["details"] = "no config written"
     sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
     return 0
 
@@ -382,8 +468,19 @@ def _load_managed_env_keys() -> list[str]:
 
 
 def _ensure_dependencies(agent_name: str) -> bool:
-    needs_node = agent_name in {"codex", "claude", "copilot", "gemini", "qwen"}
-    needs_uv = agent_name in {"openhands", "swe-agent", "trae-oss", "kimi"}
+    needs_node = agent_name in {
+        "codex",
+        "claude",
+        "copilot",
+        "gemini",
+        "qwen",
+        "crush",
+        "auggie",
+        "continue",
+        "kilocode",
+        "openclaw",
+    }
+    needs_uv = agent_name in {"openhands", "swe-agent", "trae-oss", "kimi", "deepagents"}
     ok = True
 
     if needs_node and not _ensure_node_tools():
