@@ -202,6 +202,57 @@ class CodingAgent(abc.ABC):
             return False
         return shutil.which("uv") is not None or (Path.home() / ".local" / "bin" / "uv").exists()
 
+    def _pip_install(
+        self,
+        packages: list[str],
+        *,
+        no_cache_dir: bool = False,
+    ) -> CommandResult:
+        cmd = ["python", "-m", "pip", "install"]
+        if no_cache_dir:
+            cmd.append("--no-cache-dir")
+        cmd.extend(packages)
+        return self._run(cmd)
+
+    def _uv_tool_install(
+        self,
+        package_spec: str,
+        *,
+        python_version: Optional[str] = None,
+        force: bool = False,
+        with_packages: Optional[list[str]] = None,
+        fallback_no_cache_dir: bool = False,
+    ) -> CommandResult:
+        extras = [pkg for pkg in (with_packages or []) if pkg]
+        if self._ensure_uv():
+            cmd = ["uv", "tool", "install"]
+            if force:
+                cmd.append("--force")
+            if python_version:
+                cmd.extend(["--python", python_version])
+            for pkg in extras:
+                cmd.extend(["--with", pkg])
+            cmd.append(package_spec)
+            return self._run(cmd)
+        return self._pip_install(
+            [package_spec, *extras],
+            no_cache_dir=fallback_no_cache_dir,
+        )
+
+    def _uv_pip_install(
+        self,
+        packages: list[str],
+        *,
+        no_cache_dir: bool = False,
+    ) -> CommandResult:
+        if self._ensure_uv():
+            cmd = ["uv", "pip", "install"]
+            if no_cache_dir:
+                cmd.append("--no-cache-dir")
+            cmd.extend(packages)
+            return self._run(cmd)
+        return self._pip_install(packages, no_cache_dir=no_cache_dir)
+
     def _ensure_models_usage(
         self,
         models_usage: Dict[str, Dict[str, int]],
@@ -282,6 +333,12 @@ class CodingAgent(abc.ABC):
             subject = f"{unsupported[0]} and {unsupported[1]} input"
         message = f"{subject} is not supported by {self.display_name} CLI."
         output_path = self._write_output(self.name, message)
+        from ..utils import format_trace_text
+
+        trajectory_path = self._write_trajectory(
+            self.name,
+            format_trace_text(message, source=str(output_path)),
+        )
         return RunResult(
             agent=self.name,
             agent_version=self.get_version(),
@@ -295,7 +352,7 @@ class CodingAgent(abc.ABC):
             exit_code=2,
             output_path=str(output_path),
             raw_output=message,
-            trajectory_path=None,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     @staticmethod

@@ -21,7 +21,8 @@ cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 ```
 
 By default, `--scope user` installs npm-based agents under `~/.npm-global` (no sudo). Ensure `~/.npm-global/bin` is on `PATH`.
-Use `--scope global` to run `npm install -g` (may require sudo).
+For npm-based agents, use `--scope global` to run system-level install commands (may require sudo).
+For Python/uv-based agents, `--scope` is currently ignored; cakit uses the agent installer's default behavior.
 `all` and `*` install all supported agents (`*` should be quoted to avoid shell expansion).
 If `<agent>` is omitted, it defaults to `all`.
 When `--version` is omitted, `cakit install` always installs the latest upstream release available at install time.
@@ -130,6 +131,9 @@ Output fields:
 - `output_path` (path to a `.log` file containing raw output from the coding agent CLI)
 - `raw_output` (captured raw output from the coding agent CLI)
 - `trajectory_path` (path to a formatted, human-readable trace file for the run; no truncation)
+
+Strict success semantics:
+- If command execution succeeds but any critical stats field is missing/invalid (`response`, non-empty `models_usage`, `llm_calls >= 1`, `tool_calls >= 0`, `trajectory_path`), `cakit run` exits non-zero.
 
 Telemetry:
 - Claude Code / Codex: exported via OpenTelemetry (OTEL, requires an OTEL endpoint); `telemetry_log` is set to that endpoint

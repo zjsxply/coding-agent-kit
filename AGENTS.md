@@ -67,6 +67,8 @@
 - `src/agents/`: one file per agent, one class per agent. All agent-specific logic (install, run, usage extraction, etc.) must live in the corresponding class.
 - `src/utils.py`: only necessary shared utilities; do not wrap one-liners into functions.
 - Use the standard library to parse JSON; if custom parsing is unavoidable, put it in `src/utils.py`.
+- Reuse uv/pip install helpers via shared methods (prefer `src/agents/base.py`) instead of duplicating install command assembly in each coding agent.
+- Similar cross-coding-agent helper logic must be extracted into `src/utils.py` or `src/agents/base.py` (choose based on whether it is generic utility vs agent-runtime behavior).
 - Use the term “coding agent” consistently.
 - Use the name `trae-oss` to distinguish from other Trae products.
 - Keep media prompt-injection helpers in `src/agents/base.py`:
@@ -120,5 +122,6 @@
 - When adding support for a new coding agent, you must implement install and availability validation for both unspecified version and specified `--version`.
 - You must update `README.md` and `README.zh.md` supported-agent list/table and test coverage matrix for the new coding agent.
 - New and modified files for the coding agent should follow existing project patterns in structure, naming, and strict parsing behavior.
+- Before implementing a new coding agent, review `src/utils.py` and `src/agents/base.py` first and reuse existing helpers where applicable; only add new shared helpers when reuse is not possible.
 - Availability testing should use `.env` values `LLM_API_KEY`, `LLM_MODEL`, and `LLM_BASE_URL` by remapping them to the new coding agent's env names in the test shell/command, without adding in-code compatibility fallback to `LLM_*`.
 - During concurrent collaboration with other codex instances, accept existing changes in the repository and avoid interfering with unrelated ongoing work.

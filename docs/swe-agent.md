@@ -12,6 +12,7 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
 
 ## Install
 
+- `cakit install swe-agent` installs latest upstream release tag at install time.
 - `cakit install swe-agent --version <tag>` installs upstream release tarball.
 - cakit also prepares runtime assets (`config/`, `tools/`, `trajectories/`) under `~/.cache/cakit/swe-agent-assets/<tag>` and passes:
   - `SWE_AGENT_CONFIG_DIR`
@@ -49,9 +50,9 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
   - `llm_calls >= 1`
   - `tool_calls >= 0`
   - non-empty `response`
+  - non-empty `trajectory_path`
 - If any required field is missing on a command-success run, cakit returns non-zero `exit_code`.
 
 ## Media input
 
 - `--image` / `--video` are not supported by `sweagent run`.
-

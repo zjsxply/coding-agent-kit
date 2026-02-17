@@ -22,12 +22,13 @@ class KimiAgent(CodingAgent):
     _ALLOWED_PROVIDER_TYPES = {"kimi", "openai_legacy", "openai_responses"}
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        del scope
         if version and version.strip():
             package_spec = f"kimi-cli=={version.strip()}"
-            if self._ensure_uv():
-                result = self._run(["uv", "tool", "install", "--python", "3.13", package_spec])
-            else:
-                result = self._run(["python", "-m", "pip", "install", package_spec])
+            result = self._uv_tool_install(
+                package_spec,
+                python_version="3.13",
+            )
         else:
             result = self._run(["bash", "-lc", "curl -LsSf https://code.kimi.com/install.sh | bash"])
         config_path = self.configure()

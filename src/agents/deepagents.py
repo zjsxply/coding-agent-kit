@@ -22,10 +22,11 @@ class DeepAgentsAgent(CodingAgent):
         package_spec = "deepagents-cli"
         if version and version.strip():
             package_spec = f"deepagents-cli=={version.strip()}"
-        if self._ensure_uv():
-            result = self._run(["uv", "tool", "install", "--force", "--python", "3.12", package_spec])
-        else:
-            result = self._run(["python", "-m", "pip", "install", package_spec])
+        result = self._uv_tool_install(
+            package_spec,
+            python_version="3.12",
+            force=True,
+        )
         ok = result.exit_code == 0
         return InstallResult(
             agent=self.name,

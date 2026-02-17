@@ -22,30 +22,18 @@ class TraeOssAgent(CodingAgent):
         return result.exit_code == 0 and bool(result.output.strip())
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        del scope
         commit = version.strip() if version and version.strip() else os.environ.get("CAKIT_TRAE_OSS_COMMIT")
         url = "git+https://github.com/bytedance/trae-agent.git"
         if commit:
             url = f"{url}@{commit}"
-        if self._ensure_uv():
-            result = self._run(
-                [
-                    "uv",
-                    "tool",
-                    "install",
-                    "--force",
-                    "--python",
-                    "3.12",
-                    "--with",
-                    "docker",
-                    "--with",
-                    "pexpect",
-                    "--with",
-                    "unidiff",
-                    url,
-                ]
-            )
-        else:
-            result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url, "docker", "pexpect", "unidiff"])
+        result = self._uv_tool_install(
+            url,
+            python_version="3.12",
+            force=True,
+            with_packages=["docker", "pexpect", "unidiff"],
+            fallback_no_cache_dir=True,
+        )
         config_path = self.configure()
         ok = result.exit_code == 0
         return InstallResult(

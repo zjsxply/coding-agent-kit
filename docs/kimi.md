@@ -67,7 +67,7 @@ Kimi supports Agent Swarm style workflows. You can trigger it directly in prompt
 ## Runtime Model and Update Behavior
 
 - cakit always passes model via CLI flag: `kimi ... --model <KIMI_MODEL_NAME>`.
-- `cakit run kimi --model <name>` takes priority for that run (it overrides `KIMI_MODEL_NAME` in the run process, then restores it).
+- `cakit run kimi --model <name>` takes priority for that run.
 - cakit always sets `KIMI_CLI_NO_AUTO_UPDATE=1` when running Kimi.
 
 ## SearchWeb and FetchURL Behavior

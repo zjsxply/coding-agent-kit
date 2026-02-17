@@ -38,4 +38,4 @@ This document explains how cakit runs Qwen Code and extracts run metadata.
 **Parsing and Validation Rules**
 - cakit parses only the last JSON value from stdout, then selects the last `type == "result"` payload.
 - No model name fallback from config/env is used for `models_usage`.
-- If the Qwen command exits `0` but critical fields are missing/invalid (`response`, non-empty `models_usage`, `llm_calls >= 1`, `tool_calls >= 0`), cakit returns non-zero `exit_code`.
+- If the Qwen command exits `0` but critical fields are missing/invalid (`response`, non-empty `models_usage`, `llm_calls >= 1`, `tool_calls >= 0`, non-empty `trajectory_path`), cakit returns non-zero `exit_code`.

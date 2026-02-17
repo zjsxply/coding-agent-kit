@@ -67,6 +67,8 @@
 - `src/agents/`：每个 agent 一个文件、一个 class。所有 agent-specific 逻辑（安装、运行、usage 提取等）必须放在对应 class 内。
 - `src/utils.py`：仅放必要的通用工具函数；一行能解决的操作不要封装成函数。
 - 使用标准库解析 JSON；若必须自定义解析，放到 `src/utils.py`。
+- uv/pip 安装逻辑应优先复用共享方法（优先放在 `src/agents/base.py`），不要在各 coding agent 中重复拼装安装命令。
+- 跨 coding agent 的相似辅助逻辑必须下沉到 `src/utils.py` 或 `src/agents/base.py`（按“通用工具”与“agent 运行时行为”职责划分）。
 - 术语统一使用 “coding agent”。
 - 命名使用 `trae-oss` 以区分其他 Trae 产品。
 - 媒体 prompt 注入通用能力统一放在 `src/agents/base.py`：
@@ -120,5 +122,6 @@
 - 新增 coding agent 支持时，必须实现安装与可用性验证，并且同时验证“不指定版本安装”和“指定 `--version` 安装”。
 - 必须更新 `README.md` 与 `README.zh.md` 中该 coding agent 的支持列表/表格以及测试覆盖矩阵。
 - 新增与修改文件应仿照项目现有实现模式，保持结构、命名和严格解析行为一致。
+- 新增 coding agent 前，必须先检查 `src/utils.py` 与 `src/agents/base.py`，可复用则必须复用；确实无法复用时再补充新的共享函数。
 - 可用性测试时可使用 `.env` 中的 `LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`，但应在测试 shell/命令中重定向到新 coding agent 的环境变量名；禁止在 cakit 代码中新增对 `LLM_*` 的兼容回退。
 - 当仓库内有其他 codex 并行修改时，应接纳现有变更并避免干扰与当前任务无关的工作。

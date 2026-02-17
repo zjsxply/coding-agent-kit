@@ -12,6 +12,7 @@
 
 ## 安装
 
+- `cakit install swe-agent` 默认安装执行时可获得的上游最新 release tag。
 - `cakit install swe-agent --version <tag>` 安装上游 release tarball。
 - cakit 会额外准备运行资源到 `~/.cache/cakit/swe-agent-assets/<tag>`（`config/`、`tools/`、`trajectories/`），并传递：
   - `SWE_AGENT_CONFIG_DIR`
@@ -49,9 +50,9 @@
   - `llm_calls >= 1`
   - `tool_calls >= 0`
   - `response` 非空
+  - `trajectory_path` 非空
 - 若命令进程成功但关键字段缺失，cakit 返回非 0 `exit_code`。
 
 ## 多模态
 
 - `sweagent run` 不支持通用 `--image` / `--video`。
-

@@ -18,15 +18,16 @@ class OpenHandsAgent(CodingAgent):
     _CONVERSATION_ID_RE = re.compile(r"Conversation ID:\s*([0-9a-fA-F-]{32,36})")
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        del scope
         package_spec = "openhands"
         if version:
             normalized = version.strip()
             if normalized:
                 package_spec = f"openhands=={normalized}"
-        if self._ensure_uv():
-            result = self._run(["uv", "tool", "install", package_spec, "--python", "3.12"])
-        else:
-            result = self._run(["python", "-m", "pip", "install", package_spec])
+        result = self._uv_tool_install(
+            package_spec,
+            python_version="3.12",
+        )
         ok = result.exit_code == 0
         return InstallResult(
             agent=self.name,

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .base import CodingAgent, CommandResult
 from ..models import InstallResult, RunResult
-from ..utils import load_json_payloads
+from ..utils import format_trace_text, load_json_payloads
 
 
 class CursorAgent(CodingAgent):
@@ -72,6 +72,7 @@ class CursorAgent(CodingAgent):
         usage = self._extract_usage(payloads)
         tool_calls = self._count_tool_calls(payloads)
         output_path = self._write_output(self.name, output)
+        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
         models_usage = self._ensure_models_usage({}, usage, model)
         response = self._extract_response(payloads, output)
         return RunResult(
@@ -84,6 +85,7 @@ class CursorAgent(CodingAgent):
             exit_code=result.exit_code,
             output_path=str(output_path),
             raw_output=output,
+            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
     def get_version(self) -> Optional[str]:

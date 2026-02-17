@@ -49,4 +49,4 @@ This document explains how cakit runs OpenHands CLI and extracts run metadata.
 - cakit marks OpenHands runs as failed (non-zero `exit_code`) when any of the following is true:
   - OpenHands process exits non-zero.
   - `ConversationErrorEvent`/`AgentErrorEvent` appears.
-  - Successful-looking run is missing critical fields (`models_usage`, `llm_calls`, `tool_calls`, `response`).
+  - Successful-looking run is missing critical fields (`models_usage`, `llm_calls`, `tool_calls`, `response`, `trajectory_path`).

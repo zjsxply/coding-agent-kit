@@ -28,12 +28,10 @@ class SweAgent(CodingAgent):
         return result.exit_code == 0 and bool(result.output.strip())
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        del scope
         version = self._resolve_version(version)
         url = f"https://github.com/SWE-agent/SWE-agent/archive/refs/tags/{version}.tar.gz"
-        if self._ensure_uv():
-            result = self._run(["uv", "pip", "install", url])
-        else:
-            result = self._run(["python", "-m", "pip", "install", "--no-cache-dir", url])
+        result = self._uv_pip_install([url], no_cache_dir=True)
         assets_ok = self._prepare_runtime_assets(version)
         config_path = self.configure()
         ok = result.exit_code == 0 and assets_ok

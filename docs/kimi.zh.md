@@ -67,7 +67,7 @@ Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：
 ## 运行时模型与更新行为
 
 - cakit 会始终通过命令行参数传模型：`kimi ... --model <KIMI_MODEL_NAME>`。
-- `cakit run kimi --model <name>` 在该次运行中优先（会在 run 进程内覆盖 `KIMI_MODEL_NAME`，运行后恢复）。
+- `cakit run kimi --model <name>` 在该次运行中优先。
 - cakit 在运行 Kimi 时始终设置 `KIMI_CLI_NO_AUTO_UPDATE=1`。
 
 ## SearchWeb 与 FetchURL 行为

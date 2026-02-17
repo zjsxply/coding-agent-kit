@@ -38,4 +38,4 @@
 **解析与校验规则**
 - cakit 仅解析 stdout 中最后一个 JSON 值，再从中选取最后一个 `type == "result"` 负载。
 - `models_usage` 不会从配置或环境变量回填模型名。
-- 若 Qwen 命令退出码为 `0` 但关键字段缺失/无效（`response`、非空 `models_usage`、`llm_calls >= 1`、`tool_calls >= 0`），cakit 会返回非零 `exit_code`。
+- 若 Qwen 命令退出码为 `0` 但关键字段缺失/无效（`response`、非空 `models_usage`、`llm_calls >= 1`、`tool_calls >= 0`、非空 `trajectory_path`），cakit 会返回非零 `exit_code`。

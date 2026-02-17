@@ -40,7 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--scope",
         choices=("user", "global"),
         default="user",
-        help="Install scope for npm-based agents (default: user).",
+        help="Install scope for npm-based agents; non-npm installers may ignore this option (default: user).",
     )
     install.add_argument(
         "--version",
@@ -353,7 +353,11 @@ def _run_agent(
         sys.stdout.write(json.dumps(result.to_dict(), ensure_ascii=True, indent=2, sort_keys=True) + "\n")
         exit_code = result.exit_code if result.exit_code is not None else 1
         usage_ok = bool(result.models_usage)
-        if exit_code == 0 and not usage_ok:
+        llm_calls_ok = isinstance(result.llm_calls, int) and result.llm_calls >= 1
+        tool_calls_ok = isinstance(result.tool_calls, int) and result.tool_calls >= 0
+        response_ok = isinstance(result.response, str) and bool(result.response.strip())
+        trajectory_ok = isinstance(result.trajectory_path, str) and bool(result.trajectory_path.strip())
+        if exit_code == 0 and not (usage_ok and llm_calls_ok and tool_calls_ok and response_ok and trajectory_ok):
             return 3
         return 0 if exit_code == 0 else 1
     finally:

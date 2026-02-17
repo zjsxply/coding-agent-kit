@@ -12,6 +12,7 @@
 
 ## 安装
 
+- `cakit install trae-oss` 默认安装执行时可获得的上游最新引用。
 - `cakit install trae-oss --version <git_ref>` 从 `bytedance/trae-agent` 安装。
 - 为满足上游运行时导入依赖，cakit 会额外安装：
   - `docker`
@@ -51,9 +52,9 @@
   - `llm_calls >= 1`
   - `tool_calls >= 0`
   - `response` 非空
+  - `trajectory_path` 非空
 - 关键字段缺失会返回非 0 `exit_code`。
 
 ## 多模态
 
 - `trae-cli run` 无通用 `--image` / `--video` 参数。
-

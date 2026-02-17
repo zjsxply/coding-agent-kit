@@ -49,4 +49,4 @@
 - cakit 会将 OpenHands run 置为失败（`exit_code` 非 0），当出现任一情况：
   - OpenHands 进程本身非 0 退出；
   - 出现 `ConversationErrorEvent` 或 `AgentErrorEvent`；
-  - 看似成功但缺失关键字段（`models_usage`、`llm_calls`、`tool_calls`、`response`）。
+  - 看似成功但缺失关键字段（`models_usage`、`llm_calls`、`tool_calls`、`response`、`trajectory_path`）。

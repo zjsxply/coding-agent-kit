@@ -99,6 +99,6 @@ kilocode run --auto --format json [--file <image>] [--model openai/<name>] "<pro
   - 再回退 run 事件流中的 `type == "error"` 消息
 - `total_cost`：汇总 export 中 assistant `info.cost`
 
-若命令本身成功但关键字段缺失/无效（`response`、非空 `models_usage`、`llm_calls >= 1`、`tool_calls >= 0`），cakit 会返回非零 `exit_code`。
+若命令本身成功但关键字段缺失/无效（`response`、非空 `models_usage`、`llm_calls >= 1`、`tool_calls >= 0`、非空 `trajectory_path`），cakit 会返回非零 `exit_code`。
 
 `trajectory_path` 指向由运行产物转换得到的 YAML 人类可读轨迹文件（不截断）。

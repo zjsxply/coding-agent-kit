@@ -52,6 +52,7 @@ This document describes how `cakit` runs official `traecli` from `trae.cn` and e
   - `llm_calls >= 1`
   - `tool_calls >= 0`
   - non-empty `response`
+  - non-empty `trajectory_path`
 - Missing required fields returns non-zero `exit_code`.
 
 ## Media input

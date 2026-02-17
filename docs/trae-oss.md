@@ -12,6 +12,7 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
 
 ## Install
 
+- `cakit install trae-oss` installs latest upstream ref at install time.
 - `cakit install trae-oss --version <git_ref>` installs from `bytedance/trae-agent`.
 - cakit installs runtime extras required by upstream imports:
   - `docker`
@@ -51,9 +52,9 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
   - `llm_calls >= 1`
   - `tool_calls >= 0`
   - non-empty `response`
+  - non-empty `trajectory_path`
 - Missing required fields result in non-zero `exit_code`.
 
 ## Media input
 
 - `trae-cli run` has no generic `--image` / `--video` flags.
-

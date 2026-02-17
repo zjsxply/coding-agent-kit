@@ -99,6 +99,6 @@ Strict extraction rules:
   - then: error message from stream `type == "error"`
 - `total_cost`: sum assistant `info.cost` from export payload
 
-If command succeeds but critical fields are missing/invalid (`response`, non-empty `models_usage`, `llm_calls >= 1`, `tool_calls >= 0`), cakit returns non-zero `exit_code`.
+If command succeeds but critical fields are missing/invalid (`response`, non-empty `models_usage`, `llm_calls >= 1`, `tool_calls >= 0`, non-empty `trajectory_path`), cakit returns non-zero `exit_code`.
 
 `trajectory_path` points to a YAML-formatted, human-readable trace converted from run artifacts (no truncation).

@@ -21,7 +21,8 @@ cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 ```
 
 默认 `--scope user` 会把 npm 类 agent 安装到 `~/.npm-global`（无需 sudo），请确保 `~/.npm-global/bin` 在 `PATH` 中。
-如需全局安装，使用 `--scope global`（等价于 `npm install -g`，可能需要 sudo）。
+对于 npm 类 agent，如需全局安装，使用 `--scope global`（会执行系统级安装命令，可能需要 sudo）。
+对于 Python/uv 类 agent，`--scope` 当前会被忽略，安装行为按对应 agent 安装器默认逻辑执行。
 `all` 和 `*` 可用于安装全部已支持 agent（`*` 需加引号，避免被 shell 展开）。
 省略 `<agent>` 时，默认等同于 `all`。
 未传 `--version` 时，`cakit install` 始终安装执行当下可获得的上游最新版本（latest）。
@@ -130,6 +131,9 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 - `output_path`（写入的 `.log` 文件路径，内容为 coding agent CLI 的原始输出）
 - `raw_output`（本次运行捕获到的 coding agent CLI 原始输出）
 - `trajectory_path`（本次运行的格式化、人类可读轨迹文件路径，不做截断）
+
+严格成功语义：
+- 若命令本身执行成功，但关键统计字段缺失/无效（`response`、非空 `models_usage`、`llm_calls >= 1`、`tool_calls >= 0`、`trajectory_path`），`cakit run` 仍返回非零退出码。
 
 遥测支持：
 - Claude Code / Codex：通过 OpenTelemetry（OTEL）导出（需配置 OTEL endpoint），日志地址为 OTEL endpoint
