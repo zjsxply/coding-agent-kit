@@ -6,9 +6,9 @@
 
 - 支持 OAuth 或 API。
 - API 模式环境变量：
-  - `CAKIT_TRAE_CN_API_KEY`
-  - `CAKIT_TRAE_CN_BASE_URL`
-  - `CAKIT_TRAE_CN_MODEL`
+  - `CAKIT_TRAE_CN_API_KEY`（回退：`OPENAI_API_KEY`）
+  - `CAKIT_TRAE_CN_BASE_URL`（回退：`OPENAI_BASE_URL`）
+  - `CAKIT_TRAE_CN_MODEL`（回退：`OPENAI_DEFAULT_MODEL`）
   - 可选：`CAKIT_TRAE_CN_MODEL_NAME`（默认 `cakit-openai`）
   - 可选：`CAKIT_TRAE_CN_BY_AZURE`（`1/true` 时按 Azure 兼容请求）
 
@@ -29,6 +29,7 @@
   - `XDG_CONFIG_HOME=~/.config/cakit/trae-cn`
 - `cakit run trae-cn` 调用：
   - `traecli --print --json --yolo <prompt>`
+- 模型优先级为：`--model` > `CAKIT_TRAE_CN_MODEL` > `OPENAI_DEFAULT_MODEL`。
 
 ## 统计提取
 

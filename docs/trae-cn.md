@@ -6,9 +6,9 @@ This document describes how `cakit` runs official `traecli` from `trae.cn` and e
 
 - OAuth or API.
 - API-mode env vars:
-  - `CAKIT_TRAE_CN_API_KEY`
-  - `CAKIT_TRAE_CN_BASE_URL`
-  - `CAKIT_TRAE_CN_MODEL`
+  - `CAKIT_TRAE_CN_API_KEY` (fallback: `OPENAI_API_KEY`)
+  - `CAKIT_TRAE_CN_BASE_URL` (fallback: `OPENAI_BASE_URL`)
+  - `CAKIT_TRAE_CN_MODEL` (fallback: `OPENAI_DEFAULT_MODEL`)
   - optional: `CAKIT_TRAE_CN_MODEL_NAME` (default `cakit-openai`)
   - optional: `CAKIT_TRAE_CN_BY_AZURE` (`1/true` to enable Azure-compatible request shape)
 
@@ -29,6 +29,7 @@ This document describes how `cakit` runs official `traecli` from `trae.cn` and e
   - `XDG_CONFIG_HOME=~/.config/cakit/trae-cn`
 - `cakit run trae-cn` calls:
   - `traecli --print --json --yolo <prompt>`
+- Model priority is: `--model` > `CAKIT_TRAE_CN_MODEL` > `OPENAI_DEFAULT_MODEL`.
 
 ## Stats extraction
 

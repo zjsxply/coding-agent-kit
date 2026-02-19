@@ -12,13 +12,14 @@
 
 | 环境变量 | 用途 | 是否必填 |
 | --- | --- | --- |
-| `CAKIT_CONTINUE_OPENAI_API_KEY` | Continue 模型配置使用的 API Key | 必填 |
-| `CAKIT_CONTINUE_OPENAI_MODEL` | 基础聊天模型名 | 必填 |
-| `CAKIT_CONTINUE_OPENAI_BASE_URL` | OpenAI 兼容 base URL | 可选 |
+| `CAKIT_CONTINUE_OPENAI_API_KEY` | Continue 模型配置使用的 API Key（回退：`OPENAI_API_KEY`） | 必填 |
+| `CAKIT_CONTINUE_OPENAI_MODEL` | 基础聊天模型名（回退：`OPENAI_DEFAULT_MODEL`） | 必填 |
+| `CAKIT_CONTINUE_OPENAI_BASE_URL` | OpenAI 兼容 base URL（回退：`OPENAI_BASE_URL`） | 可选 |
 
 Continue 的模型/鉴权解析优先级为：
 - 本次运行的 `--model` 覆盖优先
 - 然后读取 `CAKIT_CONTINUE_OPENAI_*`
+- 再回退到共享 `OPENAI_DEFAULT_MODEL`（模型）/`OPENAI_API_KEY`/`OPENAI_BASE_URL`
 
 若缺少必填值，`cakit configure continue` 返回 `config_path: null`，且不会写入文件。
 

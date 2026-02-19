@@ -8,9 +8,9 @@ This document explains how cakit runs Crush and extracts run metadata.
 **Auth**
 - OAuth: use `crush login` (for example `crush login hyper` or `crush login copilot`).
 - API mode in cakit:
-  - `CRUSH_OPENAI_API_KEY`
-  - `CRUSH_OPENAI_BASE_URL`
-  - `CAKIT_CRUSH_MODEL`
+  - `CRUSH_OPENAI_API_KEY` (fallback: `OPENAI_API_KEY`)
+  - `CRUSH_OPENAI_BASE_URL` (fallback: `OPENAI_BASE_URL`)
+  - `CAKIT_CRUSH_MODEL` (fallback: `OPENAI_DEFAULT_MODEL`)
 - `cakit configure crush` writes `~/.config/crush/crush.json` when all API mode variables above are present.
 - `cakit run crush` uses a run-local runtime config in API mode; OAuth mode uses your existing Crush config/auth.
 
@@ -22,6 +22,7 @@ This document explains how cakit runs Crush and extracts run metadata.
 
 **Model Selection**
 - `cakit run crush --model <name>` takes precedence over `CAKIT_CRUSH_MODEL`.
+- If `--model` is omitted, cakit resolves model from `CAKIT_CRUSH_MODEL`, then `OPENAI_DEFAULT_MODEL`.
 - API mode: cakit generates run-local Crush config with that model.
 - OAuth mode: when a model is selected, cakit passes both `--model <name>` and `--small-model <name>` to `crush run`.
 

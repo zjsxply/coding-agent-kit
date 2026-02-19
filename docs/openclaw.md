@@ -34,9 +34,9 @@ Environment variables used by cakit:
 
 | Variable | Description | Required |
 | --- | --- | --- |
-| `CAKIT_OPENCLAW_API_KEY` | API key for OpenClaw custom provider onboarding | yes |
-| `CAKIT_OPENCLAW_BASE_URL` | OpenAI-compatible base URL | yes |
-| `CAKIT_OPENCLAW_MODEL` | Model ref (`provider/model` or bare `model`) | yes |
+| `CAKIT_OPENCLAW_API_KEY` | API key for OpenClaw custom provider onboarding (fallback: `OPENAI_API_KEY`) | yes |
+| `CAKIT_OPENCLAW_BASE_URL` | OpenAI-compatible base URL (fallback: `OPENAI_BASE_URL`) | yes |
+| `CAKIT_OPENCLAW_MODEL` | Model ref (`provider/model` or bare `model`, fallback: `OPENAI_DEFAULT_MODEL`) | yes |
 | `CAKIT_OPENCLAW_PROVIDER_ID` | Optional custom provider id | no |
 
 ## Run
@@ -51,6 +51,7 @@ openclaw agent --local --agent main --session-id <generated_id> --message "<prom
 Run behavior notes:
 - cakit creates an isolated temporary `OPENCLAW_HOME` per run, so parallel runs do not share session/config state.
 - cakit runs non-interactive onboarding before `openclaw agent` so `--model` override is applied to the active custom model.
+- Model priority is: `--model` > `CAKIT_OPENCLAW_MODEL` > `OPENAI_DEFAULT_MODEL`.
 
 Reasoning effort mapping:
 - `cakit run openclaw ... --reasoning-effort off|minimal|low|medium|high`

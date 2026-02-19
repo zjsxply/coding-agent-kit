@@ -32,8 +32,9 @@ cursor-agent -p "<prompt>" --print --output-format stream-json --force
 ```
 
 - Optional model override: `cakit run cursor --model <model>`
-- Optional API endpoint override: `CURSOR_API_BASE`
-- API key: `CURSOR_API_KEY`
+- Model priority: `--model` > `CURSOR_MODEL` > `OPENAI_DEFAULT_MODEL`
+- Optional API endpoint override: `CURSOR_API_BASE` (fallback: `OPENAI_BASE_URL`)
+- API key: `CURSOR_API_KEY` (fallback: `OPENAI_API_KEY`)
 
 Image/video flags are not supported in cakit for Cursor (`--image` / `--video` return unsupported).
 

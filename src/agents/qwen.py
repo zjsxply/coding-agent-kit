@@ -73,11 +73,9 @@ class QwenAgent(CodingAgent):
             )
 
         telemetry_path = str(Path.home() / ".qwen" / "telemetry.log")
-        qwen_key = os.environ.get("QWEN_OPENAI_API_KEY")
-        qwen_base = os.environ.get("QWEN_OPENAI_BASE_URL")
-        qwen_model = model_override or os.environ.get("QWEN_OPENAI_MODEL")
-        if isinstance(qwen_model, str):
-            qwen_model = qwen_model.strip() or None
+        qwen_key = self._resolve_openai_api_key("QWEN_OPENAI_API_KEY")
+        qwen_base = self._resolve_openai_base_url("QWEN_OPENAI_BASE_URL")
+        qwen_model = self._resolve_openai_model("QWEN_OPENAI_MODEL", model_override=model_override)
         qwen_google_api_key = os.environ.get("CAKIT_QWEN_GOOGLE_API_KEY")
         env = {
             "OPENAI_API_KEY": qwen_key,

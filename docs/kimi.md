@@ -28,9 +28,9 @@ Environment variable mapping:
 
 | Environment variable | Meaning | Requirement |
 | --- | --- | --- |
-| `KIMI_API_KEY` | Provider API key | required |
-| `KIMI_BASE_URL` | Provider base URL | required |
-| `KIMI_MODEL_NAME` | Upstream model ID (`model`), used for runtime `--model` | optional |
+| `KIMI_API_KEY` | Provider API key (fallback: `OPENAI_API_KEY`) | required |
+| `KIMI_BASE_URL` | Provider base URL (fallback: `OPENAI_BASE_URL`) | required |
+| `KIMI_MODEL_NAME` | Upstream model ID (`model`), used for runtime `--model` (fallback: `OPENAI_DEFAULT_MODEL`) | optional |
 | `CAKIT_KIMI_PROVIDER_TYPE` | Provider `type` in Kimi config | required (`kimi`, `openai_legacy`, `openai_responses`) |
 
 If any required variable above is missing, or `CAKIT_KIMI_PROVIDER_TYPE` is outside the allowed set, `cakit configure kimi` returns `config_path: null` and does not write a config file.
@@ -66,8 +66,11 @@ Kimi supports Agent Swarm style workflows. You can trigger it directly in prompt
 
 ## Runtime Model and Update Behavior
 
-- cakit always passes model via CLI flag: `kimi ... --model <KIMI_MODEL_NAME>`.
+- cakit passes the resolved model via both:
+  - CLI flag: `kimi ... --model <resolved_model>`
+  - env var: `KIMI_MODEL_NAME=<resolved_model>`
 - `cakit run kimi --model <name>` takes priority for that run.
+- If `--model` is omitted, cakit resolves model from `KIMI_MODEL_NAME`, then `OPENAI_DEFAULT_MODEL`.
 - cakit always sets `KIMI_CLI_NO_AUTO_UPDATE=1` when running Kimi.
 
 ## SearchWeb and FetchURL Behavior

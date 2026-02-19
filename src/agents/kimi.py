@@ -43,8 +43,8 @@ class KimiAgent(CodingAgent):
         )
 
     def configure(self) -> Optional[str]:
-        api_key = os.environ.get("KIMI_API_KEY")
-        base_url = os.environ.get("KIMI_BASE_URL")
+        api_key = self._resolve_openai_api_key("KIMI_API_KEY")
+        base_url = self._resolve_openai_base_url("KIMI_BASE_URL")
         provider_type = self._normalize_provider_type(os.environ.get("CAKIT_KIMI_PROVIDER_TYPE"))
 
         required = [api_key, base_url]
@@ -85,13 +85,17 @@ class KimiAgent(CodingAgent):
         images = images or []
         videos = videos or []
         run_started = time.time()
-        requested_model_name = model_override or os.environ.get("KIMI_MODEL_NAME")
+        requested_model_name = self._resolve_openai_model("KIMI_MODEL_NAME", model_override=model_override)
         session_id = str(uuid.uuid4())
         env = {
-            "KIMI_API_KEY": os.environ.get("KIMI_API_KEY"),
-            "KIMI_BASE_URL": os.environ.get("KIMI_BASE_URL"),
+            "KIMI_API_KEY": self._resolve_openai_api_key("KIMI_API_KEY"),
+            "KIMI_BASE_URL": self._resolve_openai_base_url("KIMI_BASE_URL"),
             "KIMI_CLI_NO_AUTO_UPDATE": "1",
         }
+        if requested_model_name:
+            # Kimi CLI can require env-based model resolution in some flows.
+            # Keep --model for explicit run control and also set env for compatibility.
+            env["KIMI_MODEL_NAME"] = requested_model_name
         run_prompt = prompt
         cmd = [
             "kimi",

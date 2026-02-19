@@ -11,9 +11,6 @@ This document describes how cakit runs Auggie and extracts run metadata.
   - `AUGMENT_API_TOKEN`
   - `AUGMENT_API_URL`
   - optional: `AUGMENT_SESSION_AUTH`
-- If you keep provider credentials in `LLM_API_KEY` / `LLM_BASE_URL`, map them in the current shell before running:
-  - `export AUGMENT_API_TOKEN="$LLM_API_KEY"`
-  - `export AUGMENT_API_URL="$LLM_BASE_URL"`
 
 **Run Behavior**
 - cakit runs:

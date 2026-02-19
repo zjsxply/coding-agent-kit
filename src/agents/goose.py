@@ -147,16 +147,15 @@ class GooseAgent(CodingAgent):
             self._normalize_text(model_override)
             or self._normalize_text(env_source.get("CAKIT_GOOSE_MODEL"))
             or self._normalize_text(env_source.get("GOOSE_MODEL"))
+            or self._normalize_text(env_source.get("OPENAI_DEFAULT_MODEL"))
         )
 
-        openai_api_key = self._normalize_text(env_source.get("CAKIT_GOOSE_OPENAI_API_KEY")) or self._normalize_text(
-            env_source.get("OPENAI_API_KEY")
-        )
+        openai_api_key = self._resolve_openai_api_key("CAKIT_GOOSE_OPENAI_API_KEY", source_env=env_source)
         openai_host = self._normalize_text(env_source.get("OPENAI_HOST"))
         openai_base_path = self._normalize_text(env_source.get("CAKIT_GOOSE_OPENAI_BASE_PATH")) or self._normalize_text(
             env_source.get("OPENAI_BASE_PATH")
         )
-        openai_base_url = self._normalize_text(env_source.get("CAKIT_GOOSE_OPENAI_BASE_URL"))
+        openai_base_url = self._resolve_openai_base_url("CAKIT_GOOSE_OPENAI_BASE_URL", source_env=env_source)
         if openai_base_url:
             endpoint = self._derive_openai_endpoint(openai_base_url)
             if endpoint is None:
@@ -175,16 +174,22 @@ class GooseAgent(CodingAgent):
             "CAKIT_GOOSE_OPENAI_BASE_PATH",
         )
         cakit_configured = any(self._normalize_text(env_source.get(key)) for key in cakit_keys)
-        if cakit_configured:
-            missing: List[str] = []
+        generic_openai_configured = any(
+            self._normalize_text(env_source.get(key))
+            for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_DEFAULT_MODEL")
+        )
+        if provider is None and (cakit_configured or generic_openai_configured):
+            provider = "openai"
+        if cakit_configured or generic_openai_configured:
+            missing: List[tuple[str, str]] = []
             if provider is None:
-                missing.append("CAKIT_GOOSE_PROVIDER")
+                missing.append(("CAKIT_GOOSE_PROVIDER", "GOOSE_PROVIDER"))
             if model is None:
-                missing.append("CAKIT_GOOSE_MODEL")
+                missing.append(("CAKIT_GOOSE_MODEL", "OPENAI_DEFAULT_MODEL"))
             if provider == "openai" and openai_api_key is None:
-                missing.append("CAKIT_GOOSE_OPENAI_API_KEY")
+                missing.append(("CAKIT_GOOSE_OPENAI_API_KEY", "OPENAI_API_KEY"))
             if missing:
-                return {}, self._missing_env_message(missing)
+                return {}, self._missing_env_with_fallback_message(missing)
 
         env: Dict[str, str] = {
             "GOOSE_MODE": "auto",

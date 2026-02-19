@@ -51,7 +51,7 @@ class CrushAgent(CodingAgent):
         env: Dict[str, str] = {
             "CRUSH_DISABLE_PROVIDER_AUTO_UPDATE": "1",
         }
-        selected_model = self._normalize_text(model_override or os.environ.get("CAKIT_CRUSH_MODEL"))
+        selected_model = self._resolve_openai_model("CAKIT_CRUSH_MODEL", model_override=model_override)
         if settings is not None:
             config_dir = Path(tempfile.mkdtemp(prefix="cakit-crush-config-"))
             runtime_config_path = config_dir / "crush.json"
@@ -116,27 +116,27 @@ class CrushAgent(CodingAgent):
         return first
 
     def _resolve_api_settings(self, *, model_override: Optional[str]) -> tuple[Optional[Dict[str, str]], Optional[str]]:
-        api_key = os.environ.get("CRUSH_OPENAI_API_KEY")
-        base_url = os.environ.get("CRUSH_OPENAI_BASE_URL")
-        model = self._normalize_text(model_override or os.environ.get("CAKIT_CRUSH_MODEL"))
+        api_key = self._resolve_openai_api_key("CRUSH_OPENAI_API_KEY")
+        base_url = self._resolve_openai_base_url("CRUSH_OPENAI_BASE_URL")
+        model = self._resolve_openai_model("CAKIT_CRUSH_MODEL", model_override=model_override)
 
-        any_set = bool((api_key and api_key.strip()) or (base_url and base_url.strip()) or model)
+        any_set = bool(api_key or base_url or model)
         if not any_set:
             return None, None
 
-        missing: list[str] = []
-        if not api_key or not api_key.strip():
-            missing.append("CRUSH_OPENAI_API_KEY")
-        if not base_url or not base_url.strip():
-            missing.append("CRUSH_OPENAI_BASE_URL")
+        missing: list[tuple[str, str]] = []
+        if not api_key:
+            missing.append(("CRUSH_OPENAI_API_KEY", "OPENAI_API_KEY"))
+        if not base_url:
+            missing.append(("CRUSH_OPENAI_BASE_URL", "OPENAI_BASE_URL"))
         if not model:
-            missing.append("CAKIT_CRUSH_MODEL")
+            missing.append(("CAKIT_CRUSH_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return None, self._missing_env_message(missing)
+            return None, self._missing_env_with_fallback_message(missing)
 
         return {
-            "api_key": api_key.strip(),
-            "base_url": base_url.strip(),
+            "api_key": api_key,
+            "base_url": base_url,
             "model": model,
         }, None
 

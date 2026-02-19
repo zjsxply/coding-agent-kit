@@ -6,9 +6,9 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
 
 - API only.
 - Required env vars:
-  - `TRAE_AGENT_API_KEY`
-  - `TRAE_AGENT_API_BASE`
-  - `TRAE_AGENT_MODEL`
+  - `TRAE_AGENT_API_KEY` (fallback: `OPENAI_API_KEY`)
+  - `TRAE_AGENT_API_BASE` (fallback: `OPENAI_BASE_URL`)
+  - `TRAE_AGENT_MODEL` (fallback: `OPENAI_DEFAULT_MODEL`)
 
 ## Install
 
@@ -28,6 +28,10 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
   - `--trajectory-file <path>`
   - `--config-file ~/.config/trae/config.yaml` (if present)
   - `--model <...>` when model is configured or overridden.
+- Trajectory file path for `--trajectory-file`:
+  - `CAKIT_TRAE_TRAJECTORY` when set (supports `~` expansion)
+  - fallback: `<cwd>/trae_trajectory.json`
+- Model priority is: `--model` > `TRAE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`.
 
 ## Stats extraction
 

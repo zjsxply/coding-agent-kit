@@ -166,17 +166,19 @@ class KiloCodeAgent(CodingAgent):
     ) -> RunResult:
         del videos, reasoning_effort
         images = images or []
-        api_key = self._normalize_text(os.environ.get("KILO_OPENAI_API_KEY"))
-        model = self._normalize_model_id(model_override) or self._normalize_model_id(os.environ.get("KILO_OPENAI_MODEL_ID"))
-        base_url = self._normalize_text(os.environ.get("KILO_OPENAI_BASE_URL"))
+        api_key = self._resolve_openai_api_key("KILO_OPENAI_API_KEY")
+        model = self._normalize_model_id(
+            self._resolve_openai_model("KILO_OPENAI_MODEL_ID", model_override=model_override)
+        )
+        base_url = self._resolve_openai_base_url("KILO_OPENAI_BASE_URL")
 
-        missing: List[str] = []
+        missing: List[tuple[str, str]] = []
         if api_key is None:
-            missing.append("KILO_OPENAI_API_KEY")
+            missing.append(("KILO_OPENAI_API_KEY", "OPENAI_API_KEY"))
         if model is None:
-            missing.append("KILO_OPENAI_MODEL_ID")
+            missing.append(("KILO_OPENAI_MODEL_ID", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            message = self._missing_env_message(missing) or "missing required Kilo Code API settings"
+            message = self._missing_env_with_fallback_message(missing) or "missing required Kilo Code API settings"
             return self._build_error_run_result(
                 message=message,
                 cakit_exit_code=1,
@@ -243,21 +245,19 @@ class KiloCodeAgent(CodingAgent):
         return self._version_first_line(["kilocode", "--version"])
 
     def _build_runtime_config_payload(self, model_override: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        api_key = self._normalize_text(os.environ.get("KILO_OPENAI_API_KEY"))
+        api_key = self._resolve_openai_api_key("KILO_OPENAI_API_KEY")
+        base_url = self._resolve_openai_base_url("KILO_OPENAI_BASE_URL")
+        model = self._normalize_model_id(
+            self._resolve_openai_model("KILO_OPENAI_MODEL_ID", model_override=model_override)
+        )
 
-        base_url = self._normalize_text(os.environ.get("KILO_OPENAI_BASE_URL"))
-
-        model = self._normalize_model_id(model_override)
-        if model is None:
-            model = self._normalize_model_id(os.environ.get("KILO_OPENAI_MODEL_ID"))
-
-        missing: List[str] = []
+        missing: List[tuple[str, str]] = []
         if api_key is None:
-            missing.append("KILO_OPENAI_API_KEY")
+            missing.append(("KILO_OPENAI_API_KEY", "OPENAI_API_KEY"))
         if model is None:
-            missing.append("KILO_OPENAI_MODEL_ID")
+            missing.append(("KILO_OPENAI_MODEL_ID", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return None, self._missing_env_message(missing)
+            return None, self._missing_env_with_fallback_message(missing)
 
         provider: Dict[str, Any] = {
             "id": "default",

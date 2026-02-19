@@ -31,10 +31,12 @@ cakit-managed Goose API variables:
 | Environment variable | Meaning | Requirement |
 | --- | --- | --- |
 | `CAKIT_GOOSE_PROVIDER` | Provider name (for example `openai`) | required in cakit API mode |
-| `CAKIT_GOOSE_MODEL` | Model name used for Goose run | required in cakit API mode (`--model` can override per run) |
-| `CAKIT_GOOSE_OPENAI_API_KEY` | OpenAI-compatible API key | required when provider is `openai` in cakit API mode |
-| `CAKIT_GOOSE_OPENAI_BASE_URL` | OpenAI-compatible base URL (for example `https://host/v1`) | optional |
+| `CAKIT_GOOSE_MODEL` | Model name used for Goose run (fallback: `OPENAI_DEFAULT_MODEL`) | required in cakit API mode (`--model` can override per run) |
+| `CAKIT_GOOSE_OPENAI_API_KEY` | OpenAI-compatible API key (fallback: `OPENAI_API_KEY`) | required when provider is `openai` in cakit API mode |
+| `CAKIT_GOOSE_OPENAI_BASE_URL` | OpenAI-compatible base URL (for example `https://host/v1`; fallback: `OPENAI_BASE_URL`) | optional |
 | `CAKIT_GOOSE_OPENAI_BASE_PATH` | Optional API path override (for example `v1/chat/completions`) | optional |
+
+When shared `OPENAI_*` vars are set and Goose provider is unset, cakit defaults provider to `openai`.
 
 When `CAKIT_GOOSE_OPENAI_BASE_URL` is set, cakit derives Goose upstream OpenAI settings:
 - `OPENAI_HOST`
@@ -50,6 +52,7 @@ goose run -t "<prompt>" --name <unique_name> --output-format stream-json
 
 - cakit always sets `GOOSE_MODE=auto` for non-interactive runs.
 - `cakit run goose --model <name>` passes `--model <name>` and sets run-local `GOOSE_MODEL`.
+- Model priority is: `--model` > `CAKIT_GOOSE_MODEL`/`GOOSE_MODEL` > `OPENAI_DEFAULT_MODEL`.
 - `cakit run goose --image/--video` is supported through natural-language local-path injection.
 
 ## Stats Extraction

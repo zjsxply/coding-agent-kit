@@ -25,13 +25,13 @@ class CodexAgent(CodingAgent):
 
     def configure(self) -> Optional[str]:
         use_oauth = self._use_oauth()
-        model = os.environ.get("CODEX_MODEL")
+        model = self._resolve_openai_model("CODEX_MODEL")
         lines = ["project_root_markers = []"]
         if model:
             lines.append(f"model = \"{model}\"")
-        api_key = os.environ.get("CODEX_API_KEY")
+        api_key = self._resolve_openai_api_key("CODEX_API_KEY")
         if not use_oauth and api_key:
-            base_url = os.environ.get("CODEX_API_BASE")
+            base_url = self._resolve_openai_base_url("CODEX_API_BASE")
             provider = "custom"
             lines.extend(
                 [
@@ -87,11 +87,12 @@ class CodexAgent(CodingAgent):
         if self._use_oauth() and not self._auth_path().exists():
             message = f"codex OAuth is enabled but auth file not found at {self._auth_path()}; run `codex login`."
             return self._build_error_run_result(message=message, cakit_exit_code=2)
+        api_base = self._resolve_openai_base_url("CODEX_API_BASE")
         env = {
-            "OPENAI_API_BASE": os.environ.get("CODEX_API_BASE"),
+            "OPENAI_API_BASE": api_base,
         }
         use_oauth = self._use_oauth()
-        api_key = None if use_oauth else os.environ.get("CODEX_API_KEY")
+        api_key = None if use_oauth else self._resolve_openai_api_key("CODEX_API_KEY")
         if api_key:
             env["CODEX_API_KEY"] = api_key
             env["OPENAI_API_KEY"] = api_key
@@ -105,7 +106,7 @@ class CodexAgent(CodingAgent):
             "--output-last-message",
             str(last_message_path),
         ]
-        model = model_override or os.environ.get("CODEX_MODEL")
+        model = self._resolve_openai_model("CODEX_MODEL", model_override=model_override)
         if model:
             cmd.extend(["--model", model])
         if reasoning_effort:

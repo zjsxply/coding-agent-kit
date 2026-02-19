@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import os
 import subprocess
 import sys
 import time
@@ -25,11 +26,20 @@ DEFAULT_WEB_KEYWORDS = [
     "open-source implementation",
     "autonomous code optimizer",
 ]
+DEFAULT_WEB_KEYWORD_GROUPS = [
+    ["alphaevolve", "evolutionary coding agent", "autonomous code optimizer", "automated code optimizer"],
+    ["map-elites", "map elites", "evolutionary search", "variants", "population"],
+    ["circle packing", "benchmark", "speedup", "2-3x", "2x", "3x"],
+    ["open-source implementation", "open source implementation", "open-source", "open source"],
+]
 DEFAULT_BASIC_EXPECTED = "CAKIT_HEALTHCHECK_OK"
 DEFAULT_VIDEO_EXPECTED = "CAKIT VIDEO TEST 123"
 DEFAULT_BASIC_PROMPT = f"Reply with exactly this text and nothing else: {DEFAULT_BASIC_EXPECTED}"
 CASE_ORDER = {"basic": 0, "image": 1, "video": 2, "web": 3}
 TASK_CHOICES = ("basic", "image", "video", "web")
+
+def _build_agent_env(_agent: str) -> Dict[str, str]:
+    return dict(os.environ)
 
 
 def _extract_last_json(text: str) -> Dict[str, Any]:
@@ -68,9 +78,14 @@ def _empty_payload() -> Dict[str, Any]:
     }
 
 
-def _run_cakit(args: List[str], timeout_seconds: int) -> Tuple[int, Dict[str, Any], str, str, Optional[str]]:
+def _run_cakit(
+    args: List[str],
+    timeout_seconds: int,
+    *,
+    env: Optional[Dict[str, str]] = None,
+) -> Tuple[int, Dict[str, Any], str, str, Optional[str]]:
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout_seconds)
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout_seconds, env=env)
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout or ""
         stderr = exc.stderr or ""
@@ -132,6 +147,28 @@ def _contains_any(text: str, keywords: List[str]) -> bool:
     return any(keyword.lower() in lowered for keyword in keywords)
 
 
+def _count_contains_any(text: str, keywords: List[str]) -> int:
+    lowered = text.lower()
+    return sum(1 for keyword in keywords if keyword.lower() in lowered)
+
+
+def _check_web_semantics(response_text: str) -> Tuple[bool, str]:
+    lowered = response_text.lower()
+    group_hits = 0
+    for group in DEFAULT_WEB_KEYWORD_GROUPS:
+        if _contains_any(lowered, group):
+            group_hits += 1
+    if group_hits >= 2:
+        return True, "ok"
+    legacy_hits = _count_contains_any(lowered, DEFAULT_WEB_KEYWORDS)
+    if legacy_hits >= 2:
+        return True, "ok"
+    return (
+        False,
+        f"web semantic match too weak: group_hits={group_hits}, legacy_hits={legacy_hits}",
+    )
+
+
 def _run_case(
     *,
     agent: str,
@@ -148,13 +185,21 @@ def _run_case(
         cmd.extend(["--image", str(image)])
     if video is not None:
         cmd.extend(["--video", str(video)])
-    rc, payload, stdout, stderr, parse_error = _run_cakit(cmd, timeout_seconds)
+    rc, payload, stdout, stderr, parse_error = _run_cakit(
+        cmd,
+        timeout_seconds,
+        env=_build_agent_env(agent),
+    )
 
     stats_ok, stat_errors = _check_common_stats(payload)
     semantic_ok = True
     semantic_error = None
-    if expected_keywords:
-        response_text = str(payload.get("response") or "")
+    response_text = str(payload.get("response") or "")
+    if label == "web":
+        semantic_ok, semantic_msg = _check_web_semantics(response_text)
+        if not semantic_ok:
+            semantic_error = semantic_msg
+    elif expected_keywords:
         if not _contains_any(response_text, expected_keywords):
             semantic_ok = False
             semantic_error = f"response missing expected keywords: {expected_keywords}"
@@ -323,7 +368,13 @@ def _preinstall_agents(
     for agent in agents:
         cmd = ["cakit", "install", agent]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                env=_build_agent_env(agent),
+            )
         except subprocess.TimeoutExpired as exc:
             errors.append(
                 {

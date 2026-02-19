@@ -14,13 +14,14 @@ This document explains how cakit runs OpenHands CLI and extracts run metadata.
 **Auth**
 - cakit currently supports API mode for OpenHands.
 - Required environment variables:
-  - `LLM_API_KEY`
-  - `LLM_MODEL`
+  - `LLM_API_KEY` (fallback: `OPENAI_API_KEY`)
+  - `LLM_MODEL` (fallback: `OPENAI_DEFAULT_MODEL`)
 - Optional environment variable:
-  - `LLM_BASE_URL`
+  - `LLM_BASE_URL` (fallback: `OPENAI_BASE_URL`)
 - cakit normalizes OpenHands model format for LiteLLM routing:
   - `provider:model` is rewritten to `provider/model`.
   - bare model name (for example `kimi-k2.5`) is rewritten to `openai/<model>`.
+- Model priority is: `--model` > `LLM_MODEL` > `OPENAI_DEFAULT_MODEL`.
 
 **Image and Video Input**
 - OpenHands headless CLI does not provide documented `--image` / `--video` run flags.

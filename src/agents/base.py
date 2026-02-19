@@ -501,6 +501,50 @@ class CodingAgent(abc.ABC):
             return None
         return f"missing required environment variable(s): {', '.join(missing)}"
 
+    def _resolve_openai_api_key(
+        self,
+        env_key: str,
+        *,
+        source_env: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
+        env_source = source_env if source_env is not None else os.environ
+        return self._normalize_text(env_source.get(env_key)) or self._normalize_text(env_source.get("OPENAI_API_KEY"))
+
+    def _resolve_openai_base_url(
+        self,
+        env_key: str,
+        *,
+        source_env: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
+        env_source = source_env if source_env is not None else os.environ
+        return self._normalize_text(env_source.get(env_key)) or self._normalize_text(env_source.get("OPENAI_BASE_URL"))
+
+    def _resolve_openai_model(
+        self,
+        env_key: str,
+        *,
+        model_override: Optional[str] = None,
+        source_env: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
+        env_source = source_env if source_env is not None else os.environ
+        return (
+            self._normalize_text(model_override)
+            or self._normalize_text(env_source.get(env_key))
+            or self._normalize_text(env_source.get("OPENAI_DEFAULT_MODEL"))
+        )
+
+    @staticmethod
+    def _missing_env_with_fallback_message(missing: list[tuple[str, str]]) -> Optional[str]:
+        if not missing:
+            return None
+        formatted: list[str] = []
+        for primary, fallback in missing:
+            if primary == fallback:
+                formatted.append(primary)
+            else:
+                formatted.append(f"{primary} (or {fallback})")
+        return f"missing required environment variable(s): {', '.join(formatted)}"
+
     def _extract_gemini_style_stats(
         self,
         payload: Optional[Dict[str, Any]],

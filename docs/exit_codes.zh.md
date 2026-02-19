@@ -58,5 +58,5 @@
 
 ## `cakit env`
 
-- `0`：成功将 `.env.template` 写入目标路径。
-- `1`：`.env.template` 不存在。
+- `0`：成功将所选模板（`--lang en` 使用 `.env.template`，`--lang zh` 使用 `.env.template.zh`）写入目标路径。
+- `1`：所选模板文件不存在。

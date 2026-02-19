@@ -119,28 +119,24 @@ class OpenClawAgent(CodingAgent):
     def _resolve_runtime_settings(
         self, *, model_override: Optional[str]
     ) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
-        api_key = self._normalize_text(os.environ.get("CAKIT_OPENCLAW_API_KEY"))
-
-        base_url = self._normalize_text(os.environ.get("CAKIT_OPENCLAW_BASE_URL"))
-
-        model_ref = self._normalize_text(model_override)
-        if model_ref is None:
-            model_ref = self._normalize_text(os.environ.get("CAKIT_OPENCLAW_MODEL"))
+        api_key = self._resolve_openai_api_key("CAKIT_OPENCLAW_API_KEY")
+        base_url = self._resolve_openai_base_url("CAKIT_OPENCLAW_BASE_URL")
+        model_ref = self._resolve_openai_model("CAKIT_OPENCLAW_MODEL", model_override=model_override)
 
         provider_id = self._normalize_provider_id(os.environ.get("CAKIT_OPENCLAW_PROVIDER_ID"))
         model_id, provider_from_model = self._split_model_ref(model_ref)
         if provider_id is None:
             provider_id = provider_from_model
 
-        missing: list[str] = []
+        missing: list[tuple[str, str]] = []
         if api_key is None:
-            missing.append("CAKIT_OPENCLAW_API_KEY")
+            missing.append(("CAKIT_OPENCLAW_API_KEY", "OPENAI_API_KEY"))
         if base_url is None:
-            missing.append("CAKIT_OPENCLAW_BASE_URL")
+            missing.append(("CAKIT_OPENCLAW_BASE_URL", "OPENAI_BASE_URL"))
         if model_id is None:
-            missing.append("CAKIT_OPENCLAW_MODEL")
+            missing.append(("CAKIT_OPENCLAW_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return None, self._missing_env_message(missing)
+            return None, self._missing_env_with_fallback_message(missing)
 
         resolved: Dict[str, str] = {
             "api_key": api_key,

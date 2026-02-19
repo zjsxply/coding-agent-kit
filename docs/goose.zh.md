@@ -31,10 +31,12 @@ cakit 管理的 Goose API 变量如下：
 | 环境变量 | 含义 | 要求 |
 | --- | --- | --- |
 | `CAKIT_GOOSE_PROVIDER` | provider 名称（例如 `openai`） | cakit API 模式必填 |
-| `CAKIT_GOOSE_MODEL` | Goose 运行模型名 | cakit API 模式必填（可被 `--model` 单次覆盖） |
-| `CAKIT_GOOSE_OPENAI_API_KEY` | OpenAI 兼容 API key | provider 为 `openai` 时必填 |
-| `CAKIT_GOOSE_OPENAI_BASE_URL` | OpenAI 兼容 base URL（例如 `https://host/v1`） | 可选 |
+| `CAKIT_GOOSE_MODEL` | Goose 运行模型名（回退：`OPENAI_DEFAULT_MODEL`） | cakit API 模式必填（可被 `--model` 单次覆盖） |
+| `CAKIT_GOOSE_OPENAI_API_KEY` | OpenAI 兼容 API key（回退：`OPENAI_API_KEY`） | provider 为 `openai` 时必填 |
+| `CAKIT_GOOSE_OPENAI_BASE_URL` | OpenAI 兼容 base URL（例如 `https://host/v1`；回退：`OPENAI_BASE_URL`） | 可选 |
 | `CAKIT_GOOSE_OPENAI_BASE_PATH` | 可选 API path 覆盖（例如 `v1/chat/completions`） | 可选 |
+
+当共享 `OPENAI_*` 变量已设置且 Goose provider 未设置时，cakit 会默认 provider 为 `openai`。
 
 当设置 `CAKIT_GOOSE_OPENAI_BASE_URL` 时，cakit 会推导 Goose 上游 OpenAI 变量：
 - `OPENAI_HOST`
@@ -50,6 +52,7 @@ goose run -t "<prompt>" --name <unique_name> --output-format stream-json
 
 - cakit 运行时固定设置 `GOOSE_MODE=auto`（非交互）。
 - `cakit run goose --model <name>` 会传递 `--model <name>`，并在子进程设置 `GOOSE_MODEL`。
+- 模型优先级为：`--model` > `CAKIT_GOOSE_MODEL`/`GOOSE_MODEL` > `OPENAI_DEFAULT_MODEL`。
 - 支持 `cakit run goose --image/--video`，实现方式为自然语言本地路径注入。
 
 ## 统计提取

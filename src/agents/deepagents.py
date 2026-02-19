@@ -119,20 +119,17 @@ class DeepAgentsAgent(CodingAgent):
     def _build_run_env(
         self, *, model_override: Optional[str]
     ) -> tuple[Dict[str, str], Optional[str], str]:
-        api_key = self._normalize_text(os.environ.get("DEEPAGENTS_OPENAI_API_KEY"))
-        base_url = self._normalize_text(os.environ.get("DEEPAGENTS_OPENAI_BASE_URL"))
-        model = (
-            self._normalize_text(model_override)
-            or self._normalize_text(os.environ.get("DEEPAGENTS_OPENAI_MODEL"))
-        )
+        api_key = self._resolve_openai_api_key("DEEPAGENTS_OPENAI_API_KEY")
+        base_url = self._resolve_openai_base_url("DEEPAGENTS_OPENAI_BASE_URL")
+        model = self._resolve_openai_model("DEEPAGENTS_OPENAI_MODEL", model_override=model_override)
 
-        missing: list[str] = []
+        missing: list[tuple[str, str]] = []
         if not api_key:
-            missing.append("DEEPAGENTS_OPENAI_API_KEY")
+            missing.append(("DEEPAGENTS_OPENAI_API_KEY", "OPENAI_API_KEY"))
         if not model:
-            missing.append("DEEPAGENTS_OPENAI_MODEL")
+            missing.append(("DEEPAGENTS_OPENAI_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return {}, self._missing_env_message(missing), ""
+            return {}, self._missing_env_with_fallback_message(missing), ""
 
         normalized_model = self._normalize_model_spec(model)
         env: Dict[str, str] = {

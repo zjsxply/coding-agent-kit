@@ -26,12 +26,13 @@ cakit 默认使用 `uv tool install` 安装 `deepagents-cli`（带 `--force`）�
 
 | 环境变量 | 含义 | 要求 |
 | --- | --- | --- |
-| `DEEPAGENTS_OPENAI_API_KEY` | OpenAI 兼容端点 API Key | 必填 |
-| `DEEPAGENTS_OPENAI_BASE_URL` | OpenAI 兼容 base URL | 可选 |
-| `DEEPAGENTS_OPENAI_MODEL` | 基础模型 | 必填 |
+| `DEEPAGENTS_OPENAI_API_KEY` | OpenAI 兼容端点 API Key（回退：`OPENAI_API_KEY`） | 必填 |
+| `DEEPAGENTS_OPENAI_BASE_URL` | OpenAI 兼容 base URL（回退：`OPENAI_BASE_URL`） | 可选 |
+| `DEEPAGENTS_OPENAI_MODEL` | 基础模型（回退：`OPENAI_DEFAULT_MODEL`） | 必填 |
 
 模型选择规则：
 - 单次运行中 `--model` 优先级最高。
+- 若未传 `--model`，cakit 先用 `DEEPAGENTS_OPENAI_MODEL`，再回退到 `OPENAI_DEFAULT_MODEL`。
 - 若模型是 `provider/model`，cakit 会改写为 Deep Agents 可识别的 `provider:model`。
 - 若模型不带 provider 前缀，cakit 归一化为 `openai:<model>`。
 

@@ -11,9 +11,6 @@
   - `AUGMENT_API_TOKEN`
   - `AUGMENT_API_URL`
   - 可选：`AUGMENT_SESSION_AUTH`
-- 若你把凭据放在 `LLM_API_KEY` / `LLM_BASE_URL`，可在当前 shell 做映射后再运行：
-  - `export AUGMENT_API_TOKEN="$LLM_API_KEY"`
-  - `export AUGMENT_API_URL="$LLM_BASE_URL"`
 
 **运行行为**
 - cakit 执行命令：

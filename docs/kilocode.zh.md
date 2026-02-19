@@ -23,9 +23,9 @@ cakit install kilocode --version <npm_version_or_tag>
 
 | 环境变量 | 含义 | 要求 |
 | --- | --- | --- |
-| `KILO_OPENAI_API_KEY` | OpenAI 兼容 API key | 必填 |
-| `KILO_OPENAI_MODEL_ID` | 上游模型 ID | 必填 |
-| `KILO_OPENAI_BASE_URL` | OpenAI 兼容 base URL | 可选 |
+| `KILO_OPENAI_API_KEY` | OpenAI 兼容 API key（回退：`OPENAI_API_KEY`） | 必填 |
+| `KILO_OPENAI_MODEL_ID` | 上游模型 ID（回退：`OPENAI_DEFAULT_MODEL`） | 必填 |
+| `KILO_OPENAI_BASE_URL` | OpenAI 兼容 base URL（回退：`OPENAI_BASE_URL`） | 可选 |
 
 若必填的 key/model 缺失，cakit 不会写配置，且运行返回非零。
 
@@ -44,6 +44,7 @@ kilocode run --auto --format json [--file <image>] [--model openai/<name>] "<pro
 - cakit 每次运行会在 `/tmp` 下创建独立 HOME，并写入该次运行专用配置。
 - 这样可避免跨 run 的会话冲突，并保证统计匹配到本次运行产物。
 - `cakit run kilocode --model <name>` 在该次运行优先。
+- 若未传 `--model`，cakit 会先读取 `KILO_OPENAI_MODEL_ID`，再回退到 `OPENAI_DEFAULT_MODEL`。
 - cakit 不支持视频输入（`--video` 会返回不支持）。
 
 ## 图像输入

@@ -85,17 +85,17 @@ class SweAgent(CodingAgent):
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
+        api_key = self._resolve_openai_api_key("SWE_AGENT_API_KEY")
+        api_base = self._resolve_openai_base_url("SWE_AGENT_API_BASE")
         env = {
-            "SWE_AGENT_API_KEY": os.environ.get("SWE_AGENT_API_KEY"),
-            "SWE_AGENT_API_BASE": os.environ.get("SWE_AGENT_API_BASE"),
-            "OPENAI_API_KEY": os.environ.get("SWE_AGENT_API_KEY"),
-            "OPENAI_API_BASE": os.environ.get("SWE_AGENT_API_BASE"),
-            "OPENAI_BASE_URL": os.environ.get("SWE_AGENT_API_BASE"),
+            "SWE_AGENT_API_KEY": api_key,
+            "SWE_AGENT_API_BASE": api_base,
+            "OPENAI_API_KEY": api_key,
+            "OPENAI_API_BASE": api_base,
+            "OPENAI_BASE_URL": api_base,
         }
         env.update(self._runtime_asset_env(create_if_missing=True))
-        model = model_override or os.environ.get("SWE_AGENT_MODEL")
-        if isinstance(model, str):
-            model = model.strip() or None
+        model = self._resolve_openai_model("SWE_AGENT_MODEL", model_override=model_override)
         repo_path = self._resolve_repo_path(base_env=base_env)
         output_dir = Path(tempfile.mkdtemp(prefix="cakit-sweagent-"))
         cmd = [
@@ -170,9 +170,6 @@ class SweAgent(CodingAgent):
             normalized = requested.strip()
             if normalized:
                 return normalized
-        configured = os.environ.get("CAKIT_SWE_AGENT_VERSION")
-        if configured:
-            return configured
         url = "https://api.github.com/repos/SWE-agent/SWE-agent/releases/latest"
         request = urllib.request.Request(url, headers=self._github_headers())
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -180,7 +177,6 @@ class SweAgent(CodingAgent):
         tag = (payload.get("tag_name") or "").strip()
         if not tag:
             raise RuntimeError("Failed to resolve latest SWE-agent release tag from GitHub.")
-        os.environ["CAKIT_SWE_AGENT_VERSION"] = tag
         return tag
 
     def _github_headers(self) -> Dict[str, str]:
@@ -192,12 +188,6 @@ class SweAgent(CodingAgent):
 
     def _runtime_asset_env(self, *, create_if_missing: bool) -> Dict[str, str]:
         versions: list[str] = []
-        configured = os.environ.get("CAKIT_SWE_AGENT_VERSION")
-        if isinstance(configured, str):
-            configured = configured.strip()
-            if configured:
-                versions.append(configured)
-
         installed = self._installed_package_version()
         if installed and installed not in versions:
             versions.append(installed)

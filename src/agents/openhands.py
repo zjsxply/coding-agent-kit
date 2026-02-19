@@ -113,17 +113,17 @@ class OpenHandsAgent(CodingAgent):
         return self._version_text(["openhands", "--version"])
 
     def _build_run_env(self, *, model_override: Optional[str] = None) -> tuple[Dict[str, str], Optional[str]]:
-        api_key = os.environ.get("LLM_API_KEY")
-        model = model_override or os.environ.get("LLM_MODEL")
-        base_url = os.environ.get("LLM_BASE_URL")
+        api_key = self._resolve_openai_api_key("LLM_API_KEY")
+        model = self._resolve_openai_model("LLM_MODEL", model_override=model_override)
+        base_url = self._resolve_openai_base_url("LLM_BASE_URL")
 
-        missing: list[str] = []
+        missing: list[tuple[str, str]] = []
         if not api_key:
-            missing.append("LLM_API_KEY")
+            missing.append(("LLM_API_KEY", "OPENAI_API_KEY"))
         if not model:
-            missing.append("LLM_MODEL")
+            missing.append(("LLM_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return {}, self._missing_env_message(missing)
+            return {}, self._missing_env_with_fallback_message(missing)
 
         resolved_model = self._normalize_model(model=model)
         env: Dict[str, str] = {

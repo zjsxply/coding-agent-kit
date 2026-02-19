@@ -12,13 +12,14 @@ When required env vars are present, cakit writes `~/.continue/config.yaml` for O
 
 | Env var | Purpose | Required |
 | --- | --- | --- |
-| `CAKIT_CONTINUE_OPENAI_API_KEY` | API key for Continue model config | required |
-| `CAKIT_CONTINUE_OPENAI_MODEL` | Base chat model name | required |
-| `CAKIT_CONTINUE_OPENAI_BASE_URL` | OpenAI-compatible base URL | optional |
+| `CAKIT_CONTINUE_OPENAI_API_KEY` | API key for Continue model config (fallback: `OPENAI_API_KEY`) | required |
+| `CAKIT_CONTINUE_OPENAI_MODEL` | Base chat model name (fallback: `OPENAI_DEFAULT_MODEL`) | required |
+| `CAKIT_CONTINUE_OPENAI_BASE_URL` | OpenAI-compatible base URL (fallback: `OPENAI_BASE_URL`) | optional |
 
 Runtime/env resolution for Continue is:
 - `--model` (per-run override) first
 - then `CAKIT_CONTINUE_OPENAI_*`
+- then shared `OPENAI_DEFAULT_MODEL` (for model) / `OPENAI_API_KEY` / `OPENAI_BASE_URL`
 
 If required values are missing, `cakit configure continue` returns `config_path: null` and writes nothing.
 

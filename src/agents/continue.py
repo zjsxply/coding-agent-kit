@@ -107,17 +107,17 @@ class ContinueAgent(CodingAgent):
         return Path.home() / ".continue"
 
     def _resolve_openai_auth(self, *, model_override: Optional[str]) -> tuple[Dict[str, str], Optional[str]]:
-        api_key = os.environ.get("CAKIT_CONTINUE_OPENAI_API_KEY")
-        model = model_override or os.environ.get("CAKIT_CONTINUE_OPENAI_MODEL")
-        base_url = os.environ.get("CAKIT_CONTINUE_OPENAI_BASE_URL")
+        api_key = self._resolve_openai_api_key("CAKIT_CONTINUE_OPENAI_API_KEY")
+        model = self._resolve_openai_model("CAKIT_CONTINUE_OPENAI_MODEL", model_override=model_override)
+        base_url = self._resolve_openai_base_url("CAKIT_CONTINUE_OPENAI_BASE_URL")
 
-        missing: list[str] = []
+        missing: list[tuple[str, str]] = []
         if not api_key:
-            missing.append("CAKIT_CONTINUE_OPENAI_API_KEY")
+            missing.append(("CAKIT_CONTINUE_OPENAI_API_KEY", "OPENAI_API_KEY"))
         if not model:
-            missing.append("CAKIT_CONTINUE_OPENAI_MODEL")
+            missing.append(("CAKIT_CONTINUE_OPENAI_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return {}, self._missing_env_message(missing)
+            return {}, self._missing_env_with_fallback_message(missing)
 
         resolved: Dict[str, str] = {
             "api_key": api_key,

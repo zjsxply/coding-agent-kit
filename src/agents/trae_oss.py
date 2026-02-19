@@ -23,7 +23,7 @@ class TraeOssAgent(CodingAgent):
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
         del scope
-        commit = version.strip() if version and version.strip() else os.environ.get("CAKIT_TRAE_OSS_COMMIT")
+        commit = version.strip() if version and version.strip() else None
         url = "git+https://github.com/bytedance/trae-agent.git"
         if commit:
             url = f"{url}@{commit}"
@@ -45,9 +45,9 @@ class TraeOssAgent(CodingAgent):
         )
 
     def configure(self) -> Optional[str]:
-        api_key = os.environ.get("TRAE_AGENT_API_KEY")
-        api_base = os.environ.get("TRAE_AGENT_API_BASE")
-        model = os.environ.get("TRAE_AGENT_MODEL")
+        api_key = self._resolve_openai_api_key("TRAE_AGENT_API_KEY")
+        api_base = self._resolve_openai_base_url("TRAE_AGENT_API_BASE")
+        model = self._resolve_openai_model("TRAE_AGENT_MODEL")
         if not api_key or not api_base or not model:
             return None
 
@@ -88,12 +88,14 @@ class TraeOssAgent(CodingAgent):
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
+        api_key = self._resolve_openai_api_key("TRAE_AGENT_API_KEY")
+        api_base = self._resolve_openai_base_url("TRAE_AGENT_API_BASE")
         env = {
-            "TRAE_AGENT_API_KEY": os.environ.get("TRAE_AGENT_API_KEY"),
-            "TRAE_AGENT_API_BASE": os.environ.get("TRAE_AGENT_API_BASE"),
-            "OPENAI_API_KEY": os.environ.get("TRAE_AGENT_API_KEY"),
-            "OPENAI_API_BASE": os.environ.get("TRAE_AGENT_API_BASE"),
-            "OPENAI_BASE_URL": os.environ.get("TRAE_AGENT_API_BASE"),
+            "TRAE_AGENT_API_KEY": api_key,
+            "TRAE_AGENT_API_BASE": api_base,
+            "OPENAI_API_KEY": api_key,
+            "OPENAI_API_BASE": api_base,
+            "OPENAI_BASE_URL": api_base,
         }
         traj_env = os.environ.get("CAKIT_TRAE_TRAJECTORY")
         if traj_env:
@@ -112,9 +114,7 @@ class TraeOssAgent(CodingAgent):
         config_path = Path.home() / ".config" / "trae" / "config.yaml"
         if config_path.exists():
             cmd.extend(["--config-file", str(config_path)])
-        model = model_override or os.environ.get("TRAE_AGENT_MODEL")
-        if isinstance(model, str):
-            model = model.strip() or None
+        model = self._resolve_openai_model("TRAE_AGENT_MODEL", model_override=model_override)
         if model:
             cmd.extend(["--model", model])
         result = self._run(cmd, env, base_env=base_env)

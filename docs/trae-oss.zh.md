@@ -6,9 +6,9 @@
 
 - 仅 API 模式。
 - 必需环境变量：
-  - `TRAE_AGENT_API_KEY`
-  - `TRAE_AGENT_API_BASE`
-  - `TRAE_AGENT_MODEL`
+  - `TRAE_AGENT_API_KEY`（回退：`OPENAI_API_KEY`）
+  - `TRAE_AGENT_API_BASE`（回退：`OPENAI_BASE_URL`）
+  - `TRAE_AGENT_MODEL`（回退：`OPENAI_DEFAULT_MODEL`）
 
 ## 安装
 
@@ -28,6 +28,10 @@
   - `--trajectory-file <path>`
   - `--config-file ~/.config/trae/config.yaml`（若存在）
   - 配置了模型时追加 `--model <...>`
+- `--trajectory-file` 的路径来源：
+  - 设置了 `CAKIT_TRAE_TRAJECTORY` 时使用该值（支持 `~` 展开）
+  - 未设置时回退为 `<cwd>/trae_trajectory.json`
+- 模型优先级为：`--model` > `TRAE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`。
 
 ## 统计提取
 

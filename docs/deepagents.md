@@ -26,12 +26,13 @@ Environment variable mapping for `cakit run deepagents`:
 
 | Environment variable | Meaning | Requirement |
 | --- | --- | --- |
-| `DEEPAGENTS_OPENAI_API_KEY` | API key for OpenAI-compatible endpoint | required |
-| `DEEPAGENTS_OPENAI_BASE_URL` | OpenAI-compatible base URL | optional |
-| `DEEPAGENTS_OPENAI_MODEL` | Base model | required |
+| `DEEPAGENTS_OPENAI_API_KEY` | API key for OpenAI-compatible endpoint (fallback: `OPENAI_API_KEY`) | required |
+| `DEEPAGENTS_OPENAI_BASE_URL` | OpenAI-compatible base URL (fallback: `OPENAI_BASE_URL`) | optional |
+| `DEEPAGENTS_OPENAI_MODEL` | Base model (fallback: `OPENAI_DEFAULT_MODEL`) | required |
 
 Model resolution:
 - `--model` has highest priority for the run.
+- If `--model` is omitted, cakit uses `DEEPAGENTS_OPENAI_MODEL`, then `OPENAI_DEFAULT_MODEL`.
 - If model is `provider/model`, cakit rewrites it to `provider:model` for Deep Agents CLI.
 - If model has no provider prefix, cakit normalizes it to `openai:<model>`.
 

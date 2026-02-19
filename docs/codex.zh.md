@@ -10,6 +10,10 @@
 - `codex exec --output-last-message <path>` 输出的响应文件（写入 `CAKIT_OUTPUT_DIR`，默认 `~/.cache/cakit`）。
 - `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*<thread_id>.jsonl` 的会话 JSONL（`YYYY/MM/DD` 由 `thread_id` 的 UUIDv7 时间戳推导；若 `thread_id` 不是 UUIDv7，则不返回 `models_usage`）。
 - 环境变量，例如 `CODEX_MODEL`、`CODEX_API_BASE`、`CAKIT_CODEX_USE_OAUTH`、`CODEX_OTEL_ENDPOINT`、`OTEL_EXPORTER_OTLP_ENDPOINT`。
+- 当 agent 专属变量未设置时，支持共享回退：
+  - `OPENAI_API_KEY` -> `CODEX_API_KEY`
+  - `OPENAI_BASE_URL` -> `CODEX_API_BASE`
+  - `OPENAI_DEFAULT_MODEL` -> `CODEX_MODEL`
 
 **图像输入**
 - `cakit run codex --image <path>`：直接传给 Codex CLI 的 `--image` 参数（支持多图）。
@@ -35,6 +39,7 @@
 **备注**
 - 若设置了 `CAKIT_CODEX_USE_OAUTH`，cakit 会要求 `${CODEX_HOME}/auth.json`（由 `codex login` 生成）。
 - 若使用 API Key 模式，请设置 `CODEX_API_KEY`，并在需要时设置 `CODEX_API_BASE`。
+- 模型优先级为：`--model` > `CODEX_MODEL` > `OPENAI_DEFAULT_MODEL`。
 - 为避免意外的鉴权路径选择：当启用 OAuth 时，cakit 会从 Codex CLI 子进程环境中移除 `OPENAI_API_KEY` 与 `CODEX_API_KEY`。
 - 若请求 API Key 模式但未设置 `CODEX_API_KEY`，cakit 会避免向 Codex 传递 `OPENAI_API_KEY`/`CODEX_API_KEY`（这样在已登录 OAuth 的情况下仍可工作）。
 - 目前尚未测试仅支持 Chat Completions 且不支持 Responses 的 API Base。

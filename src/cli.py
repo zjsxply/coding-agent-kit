@@ -28,6 +28,7 @@ ALL_AGENT_SELECTORS = {"*", "all"}
 REASONING_EFFORT_OPTIONS: Dict[str, tuple[str, ...]] = {
     "codex": ("minimal", "low", "medium", "high", "xhigh"),
     "claude": ("low", "medium", "high", "max"),
+    "factory": ("off", "none", "low", "medium", "high"),
     "openclaw": ("off", "minimal", "low", "medium", "high"),
     "kimi": ("thinking", "none"),
 }
@@ -86,7 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--model",
         help=(
             "Override the base LLM model for this run. `--model` takes precedence over "
-            "agent-specific model values from the current shell environment."
+            "agent-specific model values and `OPENAI_DEFAULT_MODEL` from the current shell environment."
         ),
     )
     run.add_argument(
@@ -106,8 +107,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     tools = subparsers.add_parser("tools", help="Install fast shell power tools (Linux only)")
 
-    env_cmd = subparsers.add_parser("env", help="Write .env.template to a file")
+    env_cmd = subparsers.add_parser("env", help="Write an env template to a file")
     env_cmd.add_argument("--output", default=".env", help="Output path for the template file")
+    env_cmd.add_argument(
+        "--lang",
+        choices=("en", "zh"),
+        default="en",
+        help="Template language (default: en).",
+    )
 
     skills = subparsers.add_parser("skills", help="Manage Skills (delegates to `npx skills`)")
     skills.add_argument(
@@ -390,7 +397,7 @@ def main() -> int:
     if args.command == "tools":
         return _run_tools()
     if args.command == "env":
-        return _run_env(args.output)
+        return _run_env(args.output, args.lang)
     parser.print_help()
     return 1
 
@@ -512,16 +519,19 @@ def _with_sudo(cmd: list[str], *, use_sudo: bool, preserve_env: bool = False) ->
 
 def _ensure_dependencies(agent_name: str) -> bool:
     needs_node = agent_name in {
+        "codebuddy",
         "codex",
         "claude",
         "copilot",
         "gemini",
         "qwen",
+        "qoder",
         "crush",
         "auggie",
         "continue",
         "kilocode",
         "openclaw",
+        "opencode",
     }
     needs_uv = agent_name in {"openhands", "swe-agent", "trae-oss", "kimi", "deepagents"}
     ok = True
@@ -626,10 +636,17 @@ def _run_tools() -> int:
     return 0 if ok else 1
 
 
-def _run_env(output: str) -> int:
-    template_path = Path(__file__).resolve().parents[1] / ".env.template"
+def _run_env(output: str, lang: str) -> int:
+    template_name = ".env.template" if lang == "en" else ".env.template.zh"
+    template_path = Path(__file__).resolve().parents[1] / template_name
     if not template_path.exists():
-        sys.stdout.write(json.dumps({"ok": False, "details": "env template not found"}, ensure_ascii=True) + "\n")
+        sys.stdout.write(
+            json.dumps(
+                {"ok": False, "details": f"env template not found for lang={lang}", "template": template_name},
+                ensure_ascii=True,
+            )
+            + "\n"
+        )
         return 1
     template = template_path.read_text(encoding="utf-8")
     output_path = Path(output).expanduser().resolve()
@@ -649,7 +666,10 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
     arch = platform.machine().lower()
     arch_supported = arch in {"x86_64", "amd64"}
     if not arch_supported:
-        print(f"[tools] unsupported arch {arch}; only linux amd64 is supported. Skipping ast-grep install.")
+        print(
+            f"[tools] unsupported arch {arch}; only linux amd64 is supported. "
+            "Skipping ast-grep and Playwright Chromium install."
+        )
     use_sudo = os.geteuid() != 0
     if use_sudo and shutil.which("sudo") is None:
         return False, "sudo not found; run as root to install tools"
@@ -730,6 +750,28 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
             _with_sudo(["tar", "-xzf", str(sg_tmp), "-C", "/usr/local/bin", "sg"], use_sudo=use_sudo),
         ):
             return False, "command failed: install ast-grep"
+
+    if arch_supported:
+        if not _ensure_node_tools():
+            return False, "command failed: install nodejs/npm for Playwright"
+
+        playwright_cmd: Optional[list[str]] = None
+        if shutil.which("npx") is not None:
+            playwright_cmd = ["npx", "-y", "playwright@latest"]
+        elif shutil.which("npm") is not None:
+            playwright_cmd = ["npm", "exec", "--yes", "playwright@latest", "--"]
+        if playwright_cmd is None:
+            return False, "command failed: npx/npm not found for Playwright"
+
+        print("[tools] installing Playwright Chromium runtime dependencies")
+        if not _run_logged_command(
+            "[tools]",
+            _with_sudo([*playwright_cmd, "install-deps", "chromium"], use_sudo=use_sudo),
+        ):
+            return False, "command failed: playwright install-deps chromium"
+        print("[tools] installing Playwright Chromium browser")
+        if not _run_logged_command("[tools]", [*playwright_cmd, "install", "chromium"]):
+            return False, "command failed: playwright install chromium"
 
     if shutil.which("fd") is None and shutil.which("fdfind") is not None:
         _run_logged_command("[tools]", _with_sudo(["ln", "-sf", "/usr/bin/fdfind", "/usr/local/bin/fd"], use_sudo=use_sudo))

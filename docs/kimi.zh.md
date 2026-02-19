@@ -28,9 +28,9 @@ cakit install kimi --version <kimi_cli_version>
 
 | 环境变量 | 含义 | 要求 |
 | --- | --- | --- |
-| `KIMI_API_KEY` | Provider API Key | 必填 |
-| `KIMI_BASE_URL` | Provider base URL | 必填 |
-| `KIMI_MODEL_NAME` | 上游模型名（`model`），用于运行时 `--model` | 可选 |
+| `KIMI_API_KEY` | Provider API Key（回退：`OPENAI_API_KEY`） | 必填 |
+| `KIMI_BASE_URL` | Provider base URL（回退：`OPENAI_BASE_URL`） | 必填 |
+| `KIMI_MODEL_NAME` | 上游模型名（`model`），用于运行时 `--model`（回退：`OPENAI_DEFAULT_MODEL`） | 可选 |
 | `CAKIT_KIMI_PROVIDER_TYPE` | Kimi 配置中的 provider `type` | 必填（`kimi`、`openai_legacy`、`openai_responses`） |
 
 若上表中的必填变量有任意缺失，或 `CAKIT_KIMI_PROVIDER_TYPE` 不在允许集合中，`cakit configure kimi` 会返回 `config_path: null`，并且不会写配置文件。
@@ -66,8 +66,11 @@ Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：
 
 ## 运行时模型与更新行为
 
-- cakit 会始终通过命令行参数传模型：`kimi ... --model <KIMI_MODEL_NAME>`。
+- cakit 会把解析后的模型同时通过两种方式传给 Kimi CLI：
+  - 命令行参数：`kimi ... --model <resolved_model>`
+  - 环境变量：`KIMI_MODEL_NAME=<resolved_model>`
 - `cakit run kimi --model <name>` 在该次运行中优先。
+- 若未传 `--model`，cakit 会先读取 `KIMI_MODEL_NAME`，再回退到 `OPENAI_DEFAULT_MODEL`。
 - cakit 在运行 Kimi 时始终设置 `KIMI_CLI_NO_AUTO_UPDATE=1`。
 
 ## SearchWeb 与 FetchURL 行为

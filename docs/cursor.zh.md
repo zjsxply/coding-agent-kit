@@ -32,8 +32,9 @@ cursor-agent -p "<prompt>" --print --output-format stream-json --force
 ```
 
 - 可选模型覆盖：`cakit run cursor --model <model>`
-- 可选端点覆盖：`CURSOR_API_BASE`
-- API key：`CURSOR_API_KEY`
+- 模型优先级：`--model` > `CURSOR_MODEL` > `OPENAI_DEFAULT_MODEL`
+- 可选端点覆盖：`CURSOR_API_BASE`（回退：`OPENAI_BASE_URL`）
+- API key：`CURSOR_API_KEY`（回退：`OPENAI_API_KEY`）
 
 Cursor 在 cakit 中不支持图像/视频参数（`--image` / `--video` 会返回不支持）。
 

@@ -9,14 +9,15 @@ This document explains how cakit runs Qwen Code and extracts run metadata.
 - CLI stdout/stderr from `qwen -p ... --output-format json --approval-mode yolo`.
 - Local telemetry log: `~/.qwen/telemetry.log`.
 - Runtime environment variables:
-  - `QWEN_OPENAI_API_KEY` -> `OPENAI_API_KEY`
-  - `QWEN_OPENAI_BASE_URL` -> `OPENAI_BASE_URL`
-  - `QWEN_OPENAI_MODEL` -> `OPENAI_MODEL` and `--model`
+  - `QWEN_OPENAI_API_KEY` -> `OPENAI_API_KEY` (fallback from shared `OPENAI_API_KEY` is supported)
+  - `QWEN_OPENAI_BASE_URL` -> `OPENAI_BASE_URL` (fallback from shared `OPENAI_BASE_URL` is supported)
+  - `QWEN_OPENAI_MODEL` -> `OPENAI_MODEL` and `--model` (fallback from shared `OPENAI_DEFAULT_MODEL` is supported)
   - `CAKIT_QWEN_GOOGLE_API_KEY` -> `GOOGLE_API_KEY`
   - `GOOGLE_SEARCH_ENGINE_ID`, `TAVILY_API_KEY`
 
 **Run Behavior**
 - When `QWEN_OPENAI_API_KEY` is set, cakit passes `--auth-type openai`.
+- Model priority is: `--model` > `QWEN_OPENAI_MODEL` > `OPENAI_DEFAULT_MODEL`.
 
 **Image and Video Input**
 - `cakit run qwen --image/--video` is supported through prompt injection.

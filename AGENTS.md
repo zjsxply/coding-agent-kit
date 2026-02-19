@@ -13,7 +13,6 @@
 - For API auth, generate `.env` from `.env.template` and run `set -a; source .env; set +a` in the current shell.
 - In agent implementation code, read cakit-managed env vars directly from `os.environ` (do not read managed vars from `base_env`).
 - `--env-file` is for extra pass-through variables that are not managed by `.env.template`; managed keys should come from the current shell env (for example via `.env` + `source`).
-- Do not implement compatibility fallbacks from agent-specific env vars to shared `LLM_*` env vars in cakit code. If tests need `LLM_*`, map them externally in the test shell/command instead of adding fallback logic to product code.
 
 ## Common Commands
 - Generate `.env` template: `cakit env --output .env`
@@ -99,7 +98,8 @@
 - Any environment variable defined only by cakit (not by upstream coding agents) must use the `CAKIT_` prefix.
 
 ## Auth and Stats Output Requirements
-- Both OAuth and API auth must be supported, and each agent’s login method must be documented in README.
+- If upstream supports both OAuth and custom API/BYOK auth, cakit must support both and document login methods in README.
+- If upstream does not support custom API/BYOK auth, do not add guessed API env var support; document the limitation and mark the README/README.zh Test Coverage Matrix `API` column as `✗`.
 - Stats output must include:
   - `agent`, `agent_version`
   - `runtime_seconds`
@@ -116,10 +116,11 @@
 ## Documentation and Config Sync
 - When adding or changing an agent, update:
   - `README.md`, `README.zh.md`
-  - `.env.template`
+  - `.env.template`, `.env.template.zh`
   - `docs/<agent>.md` (for example `docs/codex.md`)
   - `docs/<agent>.zh.md` (for example `docs/codex.zh.md`)
   - Supported agents list, login methods, test coverage matrix, and Todo
+- `.env.template` (English) and `.env.template.zh` (Chinese) are mirrored templates. Any change to one must be applied to the other in the same patch, keeping env keys and ordering identical.
 - When updating `AGENTS.md`, update `AGENTS.zh.md` as well.
 
 ## New Agent Workflow
@@ -127,5 +128,4 @@
 - You must update `README.md` and `README.zh.md` supported-agent list/table and test coverage matrix for the new coding agent.
 - New and modified files for the coding agent should follow existing project patterns in structure, naming, and strict parsing behavior.
 - Before implementing a new coding agent, review `src/utils.py` and `src/agents/base.py` first and reuse existing helpers where applicable; only add new shared helpers when reuse is not possible.
-- Availability testing should use `.env` values `LLM_API_KEY`, `LLM_MODEL`, and `LLM_BASE_URL` by remapping them to the new coding agent's env names in the test shell/command, without adding in-code compatibility fallback to `LLM_*`.
 - During concurrent collaboration with other codex instances, accept existing changes in the repository and avoid interfering with unrelated ongoing work.

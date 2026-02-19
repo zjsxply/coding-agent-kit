@@ -58,5 +58,5 @@ If any of the above is missing/invalid, cakit exits with `1`.
 
 ## `cakit env`
 
-- `0`: `.env.template` successfully written to the target output path.
-- `1`: `.env.template` not found.
+- `0`: selected env template (`.env.template` for `--lang en`, `.env.template.zh` for `--lang zh`) successfully written to the target output path.
+- `1`: selected env template file not found.

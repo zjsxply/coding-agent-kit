@@ -87,9 +87,9 @@ class TraeCnAgent(CodingAgent):
         )
 
     def configure(self) -> Optional[str]:
-        api_key = os.environ.get("CAKIT_TRAE_CN_API_KEY")
-        base_url = os.environ.get("CAKIT_TRAE_CN_BASE_URL")
-        model = os.environ.get("CAKIT_TRAE_CN_MODEL")
+        api_key = self._resolve_openai_api_key("CAKIT_TRAE_CN_API_KEY")
+        base_url = self._resolve_openai_base_url("CAKIT_TRAE_CN_BASE_URL")
+        model = self._resolve_openai_model("CAKIT_TRAE_CN_MODEL")
         model_name = os.environ.get("CAKIT_TRAE_CN_MODEL_NAME")
         by_azure_raw = os.environ.get("CAKIT_TRAE_CN_BY_AZURE")
         by_azure = bool(by_azure_raw and by_azure_raw.strip().lower() in {"1", "true", "yes", "on"})
@@ -355,9 +355,9 @@ class TraeCnAgent(CodingAgent):
         return self._config_root() / "trae_cli" / "trae_cli.yaml"
 
     def _write_runtime_config(self, model_override: Optional[str]) -> None:
-        api_key = os.environ.get("CAKIT_TRAE_CN_API_KEY")
-        base_url = os.environ.get("CAKIT_TRAE_CN_BASE_URL")
-        model = model_override or os.environ.get("CAKIT_TRAE_CN_MODEL")
+        api_key = self._resolve_openai_api_key("CAKIT_TRAE_CN_API_KEY")
+        base_url = self._resolve_openai_base_url("CAKIT_TRAE_CN_BASE_URL")
+        model = self._resolve_openai_model("CAKIT_TRAE_CN_MODEL", model_override=model_override)
         model_name = os.environ.get("CAKIT_TRAE_CN_MODEL_NAME")
         by_azure_raw = os.environ.get("CAKIT_TRAE_CN_BY_AZURE")
         by_azure = bool(by_azure_raw and by_azure_raw.strip().lower() in {"1", "true", "yes", "on"})

@@ -13,7 +13,6 @@
 - API 鉴权请使用 `.env.template` 生成 `.env`，并在当前 shell 执行 `set -a; source .env; set +a`。
 - 在 agent 实现代码中，cakit 受管控环境变量请直接从 `os.environ` 读取（不要从 `base_env` 读取受管控变量）。
 - `--env-file` 用于传递 `.env.template` 未管理的额外变量；受管控变量应来自当前 shell 环境（例如通过 `.env` + `source`）。
-- 不要在 cakit 代码里实现“agent 专用环境变量回退到通用 `LLM_*` 环境变量”的兼容逻辑。若测试需要使用 `LLM_*`，应在测试 shell/命令中做环境变量重定向，而不是把回退逻辑写入产品代码。
 
 ## 常用命令
 - 生成 `.env` 模板：`cakit env --output .env`
@@ -99,7 +98,8 @@
 - 所有只在 cakit 里定义、用于 cakit 的环境变量都加上 `CAKIT_` 前缀。
 
 ## 鉴权与统计输出要求
-- 必须同时支持 OAuth 与 API 两种鉴权方式，并在 README 中说明各 agent 的登录方式。
+- 若上游同时支持 OAuth 与自定义 API/BYOK 鉴权，cakit 必须同时支持并在 README 说明登录方式。
+- 若上游不支持自定义 API/BYOK 鉴权，不要新增猜测性的 API 环境变量支持；需明确记录该限制，并将 README/README.zh 测试覆盖矩阵中的 `API` 列标记为 `✗`。
 - 统计输出需包含：
   - `agent`, `agent_version`
   - `runtime_seconds`
@@ -116,10 +116,11 @@
 ## 文档与配置同步
 - 新增或修改 agent 时，需同步更新：
   - `README.md`、`README.zh.md`
-  - `.env.template`
+  - `.env.template`、`.env.template.zh`
   - `docs/<agent>.md`（例如 `docs/codex.md`）
   - `docs/<agent>.zh.md`（例如 `docs/codex.zh.md`）
   - 支持的 Agent 列表、登录方式说明、测试覆盖矩阵、Todo
+- `.env.template`（英文）与 `.env.template.zh`（中文）是镜像模板。修改任一文件时，必须在同一补丁中同步修改另一份，并保持环境变量键与顺序完全一致。
 - 修改 `AGENTS.md` 时，也需要同步更新 `AGENTS.zh.md`。
 
 ## 新 Agent 接入流程
@@ -127,5 +128,4 @@
 - 必须更新 `README.md` 与 `README.zh.md` 中该 coding agent 的支持列表/表格以及测试覆盖矩阵。
 - 新增与修改文件应仿照项目现有实现模式，保持结构、命名和严格解析行为一致。
 - 新增 coding agent 前，必须先检查 `src/utils.py` 与 `src/agents/base.py`，可复用则必须复用；确实无法复用时再补充新的共享函数。
-- 可用性测试时可使用 `.env` 中的 `LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`，但应在测试 shell/命令中重定向到新 coding agent 的环境变量名；禁止在 cakit 代码中新增对 `LLM_*` 的兼容回退。
 - 当仓库内有其他 codex 并行修改时，应接纳现有变更并避免干扰与当前任务无关的工作。

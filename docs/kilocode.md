@@ -23,9 +23,9 @@ Environment variable mapping:
 
 | Environment variable | Meaning | Requirement |
 | --- | --- | --- |
-| `KILO_OPENAI_API_KEY` | OpenAI-compatible API key | required |
-| `KILO_OPENAI_MODEL_ID` | Upstream model ID | required |
-| `KILO_OPENAI_BASE_URL` | OpenAI-compatible base URL | optional |
+| `KILO_OPENAI_API_KEY` | OpenAI-compatible API key (fallback: `OPENAI_API_KEY`) | required |
+| `KILO_OPENAI_MODEL_ID` | Upstream model ID (fallback: `OPENAI_DEFAULT_MODEL`) | required |
+| `KILO_OPENAI_BASE_URL` | OpenAI-compatible base URL (fallback: `OPENAI_BASE_URL`) | optional |
 
 If required key/model values are missing, cakit does not write config and run returns non-zero.
 
@@ -44,6 +44,7 @@ kilocode run --auto --format json [--file <image>] [--model openai/<name>] "<pro
 - cakit creates a run-local HOME under `/tmp` and writes run-local KiloCode config there.
 - This avoids cross-run/session conflicts and keeps artifact matching exact per run.
 - `cakit run kilocode --model <name>` takes priority for that run.
+- If `--model` is omitted, cakit resolves model from `KILO_OPENAI_MODEL_ID`, then `OPENAI_DEFAULT_MODEL`.
 - Video input is unsupported in cakit (`--video` returns unsupported).
 
 ## Image Input

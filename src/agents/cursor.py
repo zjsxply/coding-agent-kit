@@ -50,9 +50,9 @@ class CursorAgent(CodingAgent):
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        model = model_override or os.environ.get("CURSOR_MODEL")
-        endpoint = os.environ.get("CURSOR_API_BASE")
-        env = {"CURSOR_API_KEY": os.environ.get("CURSOR_API_KEY")}
+        model = self._resolve_openai_model("CURSOR_MODEL", model_override=model_override)
+        endpoint = self._resolve_openai_base_url("CURSOR_API_BASE")
+        env = {"CURSOR_API_KEY": self._resolve_openai_api_key("CURSOR_API_KEY")}
         cmd = [
             "cursor-agent",
             "-p",
