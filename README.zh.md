@@ -232,7 +232,7 @@ npx skills add --skill <skills> -g --agent '*' -y
 cakit tools
 ```
 
-安装以下常用工具（仅 Linux）：`rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, `git-delta`, `gh`，以及 Playwright Chromium（含运行依赖）。
+安装以下常用工具（仅 Linux）：`rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, `git-lfs`, `git-delta`, `gh`，以及 Playwright Chromium（含运行依赖）。
 
 ## 环境变量
 

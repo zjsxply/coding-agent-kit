@@ -232,7 +232,7 @@ npx skills add --skill <skills> -g --agent '*' -y
 cakit tools
 ```
 
-Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, `git-delta`, `gh`, and Playwright Chromium (including runtime deps).
+Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, `git-lfs`, `git-delta`, `gh`, and Playwright Chromium (including runtime deps).
 
 ## Environment Variables
 

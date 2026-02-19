@@ -402,10 +402,10 @@ def main() -> int:
     return 1
 
 
-def _ensure_node_tools() -> bool:
+def _ensure_node_tools(*, quiet_success: bool = False) -> bool:
     if shutil.which("node") is None or shutil.which("npm") is None:
         print("[deps] nodejs/npm not found, attempting auto-install (Linux + apt-get required).")
-        return _install_node_linux()
+        return _install_node_linux(quiet_success=quiet_success)
     return True
 
 
@@ -498,14 +498,37 @@ def _file_lock(name: str) -> Iterator[None]:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-def _run_logged_command(prefix: str, cmd: list[str], *, input_text: Optional[str] = None) -> bool:
-    print(f"{prefix} {' '.join(cmd)}")
+def _run_logged_command(
+    prefix: str,
+    cmd: list[str],
+    *,
+    input_text: Optional[str] = None,
+    quiet_success: bool = False,
+) -> bool:
+    if not quiet_success:
+        print(f"{prefix} {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd,
+            check=False,
+            input=input_text,
+            text=True,
+        )
+        return result.returncode == 0
+
     result = subprocess.run(
         cmd,
         check=False,
         input=input_text,
         text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
+    if result.returncode != 0:
+        print(f"{prefix} {' '.join(cmd)}")
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+            if not result.stdout.endswith("\n"):
+                sys.stdout.write("\n")
     return result.returncode == 0
 
 
@@ -562,7 +585,7 @@ def _install_agent(agent_name: str, scope: str, version: Optional[str] = None) -
         return agent.install(scope=scope, version=version)
 
 
-def _install_node_linux() -> bool:
+def _install_node_linux(*, quiet_success: bool = False) -> bool:
     if not sys.platform.startswith("linux") or shutil.which("apt-get") is None:
         print("[deps] unsupported OS for auto-install; please install Node.js manually.")
         return False
@@ -571,11 +594,16 @@ def _install_node_linux() -> bool:
         print("[deps] sudo not found; run as root to auto-install Node.js.")
         return False
     if shutil.which("curl") is None:
-        if not _run_logged_command("[deps]", _with_sudo(["apt-get", "update"], use_sudo=use_sudo)):
+        if not _run_logged_command(
+            "[deps]",
+            _with_sudo(["apt-get", "update"], use_sudo=use_sudo),
+            quiet_success=quiet_success,
+        ):
             return False
         if not _run_logged_command(
             "[deps]",
             _with_sudo(["apt-get", "install", "-y", "curl", "ca-certificates"], use_sudo=use_sudo),
+            quiet_success=quiet_success,
         ):
             return False
 
@@ -591,11 +619,13 @@ def _install_node_linux() -> bool:
         "[deps]",
         _with_sudo(["bash", "-"], use_sudo=use_sudo, preserve_env=True),
         input_text=setup_script.stdout,
+        quiet_success=quiet_success,
     ):
         return False
     if not _run_logged_command(
         "[deps]",
         _with_sudo(["apt-get", "install", "-y", "nodejs"], use_sudo=use_sudo),
+        quiet_success=quiet_success,
     ):
         return False
     return True
@@ -673,16 +703,31 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
     use_sudo = os.geteuid() != 0
     if use_sudo and shutil.which("sudo") is None:
         return False, "sudo not found; run as root to install tools"
+    installed_components: list[str] = [
+        "rg",
+        "fd",
+        "fzf",
+        "jq",
+        "yq",
+        "bat",
+        "git",
+        "git-lfs",
+        "git-delta",
+    ]
 
     def run_tool_cmd(cmd: list[str]) -> bool:
-        return _run_logged_command("[tools]", _with_sudo(cmd, use_sudo=use_sudo))
+        return _run_logged_command("[tools]", _with_sudo(cmd, use_sudo=use_sudo), quiet_success=True)
 
     if not run_tool_cmd(["apt-get", "update"]):
         return False, "command failed: apt-get update"
     if not run_tool_cmd(["apt-get", "install", "-y", "curl", "ca-certificates", "gnupg", "lsb-release", "unzip"]):
         return False, "command failed: apt-get install base tools"
-    if not run_tool_cmd(["apt-get", "install", "-y", "ripgrep", "fd-find", "fzf", "jq", "yq", "bat", "git", "git-delta"]):
+    if not run_tool_cmd(
+        ["apt-get", "install", "-y", "ripgrep", "fd-find", "fzf", "jq", "yq", "bat", "git", "git-lfs", "git-delta"]
+    ):
         return False, "command failed: apt-get install shell tools"
+    if not run_tool_cmd(["git", "lfs", "install", "--system"]):
+        return False, "command failed: git lfs install --system"
 
     if shutil.which("gh") is None:
         print("[tools] installing GitHub CLI (gh)")
@@ -693,11 +738,13 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
         if not _run_logged_command(
             "[tools]",
             ["curl", "-fsSL", "https://cli.github.com/packages/githubcli-archive-keyring.gpg", "-o", str(gh_key_tmp)],
+            quiet_success=True,
         ):
             return False, "command failed: download gh keyring"
         if not _run_logged_command(
             "[tools]",
             _with_sudo(["cp", str(gh_key_tmp), "/etc/apt/keyrings/githubcli-archive-keyring.gpg"], use_sudo=use_sudo),
+            quiet_success=True,
         ):
             return False, "command failed: install gh keyring"
         if not run_tool_cmd(["chmod", "go+r", "/etc/apt/keyrings/githubcli-archive-keyring.gpg"]):
@@ -724,12 +771,14 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
         if not _run_logged_command(
             "[tools]",
             _with_sudo(["cp", str(gh_list_tmp), "/etc/apt/sources.list.d/github-cli.list"], use_sudo=use_sudo),
+            quiet_success=True,
         ):
             return False, "command failed: install gh apt source"
         if not run_tool_cmd(["apt-get", "update"]):
             return False, "command failed: apt-get update (gh)"
         if not run_tool_cmd(["apt-get", "install", "-y", "gh"]):
             return False, "command failed: apt-get install gh"
+    installed_components.append("gh")
 
     if arch_supported and shutil.which("sg") is None:
         print("[tools] installing ast-grep (sg)")
@@ -743,16 +792,20 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
                 "-o",
                 str(sg_tmp),
             ],
+            quiet_success=True,
         ):
             return False, "command failed: download ast-grep"
         if not _run_logged_command(
             "[tools]",
             _with_sudo(["tar", "-xzf", str(sg_tmp), "-C", "/usr/local/bin", "sg"], use_sudo=use_sudo),
+            quiet_success=True,
         ):
             return False, "command failed: install ast-grep"
+    if arch_supported:
+        installed_components.append("ast-grep")
 
     if arch_supported:
-        if not _ensure_node_tools():
+        if not _ensure_node_tools(quiet_success=True):
             return False, "command failed: install nodejs/npm for Playwright"
 
         playwright_cmd: Optional[list[str]] = None
@@ -763,24 +816,31 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
         if playwright_cmd is None:
             return False, "command failed: npx/npm not found for Playwright"
 
-        print("[tools] installing Playwright Chromium runtime dependencies")
         if not _run_logged_command(
             "[tools]",
             _with_sudo([*playwright_cmd, "install-deps", "chromium"], use_sudo=use_sudo),
+            quiet_success=True,
         ):
             return False, "command failed: playwright install-deps chromium"
-        print("[tools] installing Playwright Chromium browser")
-        if not _run_logged_command("[tools]", [*playwright_cmd, "install", "chromium"]):
+        if not _run_logged_command("[tools]", [*playwright_cmd, "install", "chromium"], quiet_success=True):
             return False, "command failed: playwright install chromium"
+        installed_components.append("playwright-chromium (deps+browser)")
 
     if shutil.which("fd") is None and shutil.which("fdfind") is not None:
-        _run_logged_command("[tools]", _with_sudo(["ln", "-sf", "/usr/bin/fdfind", "/usr/local/bin/fd"], use_sudo=use_sudo))
+        _run_logged_command(
+            "[tools]",
+            _with_sudo(["ln", "-sf", "/usr/bin/fdfind", "/usr/local/bin/fd"], use_sudo=use_sudo),
+            quiet_success=True,
+        )
     if shutil.which("bat") is None and shutil.which("batcat") is not None:
         _run_logged_command(
             "[tools]",
             _with_sudo(["ln", "-sf", "/usr/bin/batcat", "/usr/local/bin/bat"], use_sudo=use_sudo),
+            quiet_success=True,
         )
-    return True, "installed"
+    if not arch_supported:
+        return True, f"installed: {', '.join(installed_components)}; skipped: ast-grep, playwright-chromium"
+    return True, f"installed: {', '.join(installed_components)}"
 
 
 if __name__ == "__main__":
