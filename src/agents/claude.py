@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text, load_json_payloads
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate
+from ..models import RunResult
+from .base import (
+    last_value,
+    opt_float,
+    parse_usage_by_model,
+    req_int,
+    req_str,
+    select_values,
+)
 
 
 class ClaudeAgent(CodingAgent):
@@ -15,12 +22,20 @@ class ClaudeAgent(CodingAgent):
     binary = "claude"
     supports_images = True
     supports_videos = False
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="@anthropic-ai/claude-code", scope=scope, version=version)
-
-    def configure(self) -> Optional[str]:
-        return None
+    install_strategy = InstallStrategy(kind="npm", package="@anthropic-ai/claude-code")
+    run_template = RunCommandTemplate(
+        base_args=(
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--dangerously-skip-permissions",
+        ),
+        prompt_mode="arg",
+        prompt_flag=None,
+        model_flag="--model",
+        media_injection="none",
+    )
 
     def _run_impl(
         self,
@@ -72,130 +87,82 @@ class ClaudeAgent(CodingAgent):
             "OTEL_EXPORTER_OTLP_ENDPOINT": otel_endpoint,
             "IS_SANDBOX": "1",
         }
-        cmd = [
-            "claude",
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--dangerously-skip-permissions",
-        ]
-        if model:
-            cmd.extend(["--model", model])
+        extra_args: list[str] = []
         for directory in add_dirs:
-            cmd.extend(["--add-dir", directory])
-        cmd.append("--")
-        cmd.append(injected_prompt)
+            extra_args.extend(["--add-dir", directory])
+        template = self.run_template
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=injected_prompt,
+            model=model,
+            extra_args=extra_args,
+        )
         result = self._run(cmd, env, unset_env=unset_env, base_env=base_env)
         output = result.output
-        payloads = load_json_payloads(output)
-        try:
-            parsed = self._parse_stream_payloads(payloads)
-        except Exception as exc:
-            message = f"failed to parse Claude Code JSON output: {exc}"
-            return self._build_error_run_result(
-                message=message,
-                cakit_exit_code=2,
-                command_exit_code=result.exit_code,
-                raw_output=output or message,
-                runtime_seconds=result.duration_seconds,
-            )
-        output_path = self._write_output(self.name, output)
-        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=parsed["duration_ms"] / 1000.0,
-            models_usage=parsed["models_usage"],
-            tool_calls=parsed["tool_calls"],
-            llm_calls=parsed["llm_calls"],
-            total_cost=parsed["total_cost_usd"],
+        payloads = self._load_output_json_payloads(output)
+        parsed = self._parse_stream_payloads(payloads)
+        runtime_seconds = result.duration_seconds
+        if parsed is not None and isinstance(parsed["duration_ms"], int):
+            runtime_seconds = parsed["duration_ms"] / 1000.0
+        return self.finalize_run(
+            command_result=result,
+            response=(parsed["response"] if parsed is not None else None),
+            models_usage=(parsed["models_usage"] if parsed is not None else {}),
+            llm_calls=(parsed["llm_calls"] if parsed is not None else None),
+            tool_calls=(parsed["tool_calls"] if parsed is not None else None),
+            total_cost=(parsed["total_cost_usd"] if parsed is not None else None),
             telemetry_log=otel_endpoint if telemetry_enabled and otel_endpoint else None,
-            response=parsed["response"],
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            runtime_seconds=runtime_seconds,
         )
 
-    def get_version(self) -> Optional[str]:
-        return self._version_text(["claude", "--version"])
-
-    def _parse_stream_payloads(self, payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _parse_stream_payloads(self, payloads: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not payloads:
-            raise ValueError("no JSON payloads found")
-
-        result_payload: Dict[str, Any] | None = None
-        for payload in reversed(payloads):
-            if payload.get("type") == "result":
-                result_payload = payload
-                break
-        if result_payload is None:
-            raise KeyError('missing payload with type="result"')
-
-        duration_ms = result_payload["duration_ms"]
-        if not isinstance(duration_ms, int):
-            raise TypeError("duration_ms is not an int")
-        llm_calls = result_payload["num_turns"]
-        if not isinstance(llm_calls, int):
-            raise TypeError("num_turns is not an int")
-
-        total_cost_usd = result_payload["total_cost_usd"]
-        if not isinstance(total_cost_usd, (int, float)):
-            raise TypeError("total_cost_usd is not a number")
-
-        response = result_payload["result"]
-        if not isinstance(response, str):
-            raise TypeError("result is not a string")
-
-        model_usage = result_payload["modelUsage"]
-        if not isinstance(model_usage, dict) or not model_usage:
-            raise TypeError("modelUsage is missing or empty")
-        models_usage: Dict[str, Dict[str, int]] = {}
-        for model_name, model_stats in model_usage.items():
-            if not isinstance(model_name, str):
-                raise TypeError("modelUsage key is not a string")
-            if not isinstance(model_stats, dict):
-                raise TypeError("modelUsage value is not an object")
-            prompt_tokens = model_stats.get("inputTokens")
-            completion_tokens = model_stats.get("outputTokens")
-            cache_read_tokens = model_stats.get("cacheReadInputTokens")
-            cache_creation_tokens = model_stats.get("cacheCreationInputTokens")
-            for key, value in (
-                ("inputTokens", prompt_tokens),
-                ("outputTokens", completion_tokens),
-                ("cacheReadInputTokens", cache_read_tokens),
-                ("cacheCreationInputTokens", cache_creation_tokens),
-            ):
-                if not isinstance(value, int):
-                    raise TypeError(f"modelUsage {key} is not an int")
-            prompt_tokens_total = prompt_tokens + cache_read_tokens + cache_creation_tokens
-            models_usage[model_name] = {
-                "prompt_tokens": prompt_tokens_total,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens_total + completion_tokens,
-            }
-
-        tool_calls = 0
-        for payload in payloads:
-            if payload.get("type") != "assistant":
-                continue
-            message = payload.get("message")
-            if not isinstance(message, dict):
-                continue
-            content = message.get("content")
-            if not isinstance(content, list):
-                continue
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    tool_calls += 1
-
+            return None
+        result_payload = last_value(payloads, '$[?(@.type == "result")]')
+        duration_ms = req_int(result_payload, "$.duration_ms") if isinstance(result_payload, dict) else None
+        llm_calls = req_int(result_payload, "$.num_turns") if isinstance(result_payload, dict) else None
+        total_cost_usd = opt_float(result_payload, "$.total_cost_usd") if isinstance(result_payload, dict) else None
+        response = req_str(result_payload, "$.result") if isinstance(result_payload, dict) else None
+        model_usage = last_value(result_payload, "$.modelUsage") if isinstance(result_payload, dict) else None
+        models_usage = self._parse_model_usage(model_usage)
+        tool_calls = self._count_selected(payloads, '$[?(@.type == "assistant")].message.content[?(@.type == "tool_use")]')
+        if (
+            duration_ms is None
+            and llm_calls is None
+            and total_cost_usd is None
+            and not models_usage
+            and tool_calls is None
+            and response is None
+        ):
+            return None
         return {
             "duration_ms": duration_ms,
             "llm_calls": llm_calls,
-            "total_cost_usd": float(total_cost_usd),
+            "total_cost_usd": total_cost_usd,
             "models_usage": models_usage,
             "tool_calls": tool_calls,
             "response": response,
         }
+
+    def _parse_model_usage(self, model_usage: Any) -> Dict[str, Dict[str, int]]:
+        if not isinstance(model_usage, dict):
+            return {}
+        models_usage: Dict[str, Dict[str, int]] = {}
+        for model_name, model_stats in model_usage.items():
+            if not isinstance(model_name, str) or not model_name.strip():
+                continue
+            if not isinstance(model_stats, dict):
+                continue
+            usage = parse_usage_by_model(
+                {
+                    "inputTokens": last_value(model_stats, "$.inputTokens"),
+                    "outputTokens": last_value(model_stats, "$.outputTokens"),
+                    "cacheReadInputTokens": last_value(model_stats, "$.cacheReadInputTokens"),
+                    "cacheCreationInputTokens": last_value(model_stats, "$.cacheCreationInputTokens"),
+                },
+                "claude_model_usage",
+            )
+            if usage is None:
+                continue
+            self._merge_model_usage(models_usage, model_name.strip(), usage)
+        return models_usage

@@ -65,10 +65,9 @@ goose run -t "<prompt>" --name <unique_name> --output-format stream-json
 3. Read exact fields:
    - `models_usage`:
      - `accumulated_input_tokens` / `accumulated_output_tokens` / `accumulated_total_tokens`
-     - falls back to non-accumulated `input_tokens` / `output_tokens` / `total_tokens` only when needed
    - model name:
-     - `stream-json` `model_change.model`, then session `model_config.model_name`
-   - `llm_calls`: count of `conversation.messages` with `role == "assistant"`
+     - session `model_config.model_name`
+   - `llm_calls`: count of assistant messages in session `conversation`
    - `tool_calls`: count of assistant message `content` items where `type` is `toolRequest` or `frontendToolRequest`
    - `response`: last assistant text block in session conversation
 

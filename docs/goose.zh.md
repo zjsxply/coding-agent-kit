@@ -64,11 +64,10 @@ goose run -t "<prompt>" --name <unique_name> --output-format stream-json
    - `goose session export --name <unique_name> --format json`
 3. 解析固定字段：
    - `models_usage`：
-     - 首选 `accumulated_input_tokens` / `accumulated_output_tokens` / `accumulated_total_tokens`
-     - 必要时回退到非累计 `input_tokens` / `output_tokens` / `total_tokens`
+     - `accumulated_input_tokens` / `accumulated_output_tokens` / `accumulated_total_tokens`
    - 模型名：
-     - 优先 `stream-json` 的 `model_change.model`，其次 session 的 `model_config.model_name`
-   - `llm_calls`：`conversation.messages` 中 `role == "assistant"` 的消息数
+     - session `model_config.model_name`
+   - `llm_calls`：session `conversation` 里 assistant 消息数
    - `tool_calls`：assistant 消息 `content` 中 `type` 为 `toolRequest` 或 `frontendToolRequest` 的条数
    - `response`：会话里最后一条 assistant 文本内容
 

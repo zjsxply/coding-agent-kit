@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text, load_json_payloads
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    RunCommandTemplate,
+    extract_gemini_style_stats,
+    extract_json_result_stats,
+)
+from ..models import RunResult
 
 
 class AuggieAgent(CodingAgent):
@@ -16,12 +20,14 @@ class AuggieAgent(CodingAgent):
     binary = "auggie"
     supports_images = True
     supports_videos = False
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="@augmentcode/auggie", scope=scope, version=version)
-
-    def configure(self) -> Optional[str]:
-        return None
+    install_strategy = InstallStrategy(kind="npm", package="@augmentcode/auggie")
+    run_template = RunCommandTemplate(
+        base_args=("--print", "--quiet", "--output-format", "json"),
+        prompt_mode="flag",
+        prompt_flag="--instruction",
+        model_flag="--model",
+        media_injection="none",
+    )
 
     def _run_impl(
         self,
@@ -33,7 +39,7 @@ class AuggieAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         images = images or []
-        log_dir = Path(tempfile.mkdtemp(prefix="cakit-auggie-"))
+        log_dir = self._make_temp_dir(prefix="cakit-auggie-", keep=True)
         log_path = log_dir / "auggie.log"
 
         requested_model = self._normalize_text(model_override or os.environ.get("CAKIT_AUGGIE_MODEL"))
@@ -44,74 +50,46 @@ class AuggieAgent(CodingAgent):
             "GITHUB_API_TOKEN": os.environ.get("GITHUB_API_TOKEN"),
             "AUGMENT_DISABLE_AUTO_UPDATE": "1",
         }
-        cmd = [
-            "auggie",
-            "--print",
-            "--quiet",
-            "--output-format",
-            "json",
+        template = self.run_template
+        extra_args = [
             "--workspace-root",
             str(self.workdir),
-            "--instruction",
-            prompt,
             "--log-file",
             str(log_path),
             "--log-level",
             "debug",
         ]
-        if requested_model:
-            cmd.extend(["--model", requested_model])
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=prompt,
+            model=requested_model,
+            extra_args=extra_args,
+        )
         for image in images:
             cmd.extend(["--image", str(image)])
 
         result = self._run(cmd, env=env, base_env=base_env)
         output = result.output
-        payloads = load_json_payloads(self._stdout_only(output))
-        result_payload = self._extract_result_payload(payloads)
-        models_usage, llm_calls, tool_calls = self._extract_stats(result_payload)
-
-        output_path = self._write_output(self.name, output)
-        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            telemetry_log=str(log_path),
-            response=self._extract_response(result_payload),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
+        payloads = self._load_output_json_payloads(output)
+        artifacts = self._build_stats_artifacts(
             raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            jsonl_payloads=payloads,
         )
-
-    def get_version(self) -> Optional[str]:
-        return self._version_first_line(["auggie", "--version"])
-
-    def _extract_result_payload(self, payloads: list[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        result_payload: Optional[Dict[str, Any]] = None
-        for payload in payloads:
-            if not isinstance(payload, dict):
-                continue
-            if payload.get("type") == "result":
-                result_payload = payload
-        return result_payload
-
-    def _extract_stats(
-        self, payload: Optional[Dict[str, Any]]
-    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
-        return self._extract_gemini_style_stats(payload)
-
-    def _extract_response(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(payload, dict):
-            return None
-        response = payload.get("result")
-        if not isinstance(response, str):
-            return None
-        cleaned = response.strip()
-        if not cleaned:
-            return None
-        return cleaned
+        stats = self._merge_stats_snapshots(
+            snapshots=[
+                extract_json_result_stats(
+                    artifacts,
+                    inner=extract_gemini_style_stats,
+                ),
+            ]
+        )
+        response = self._last_selected_text(payloads, '$[?(@.type == "result")].result')
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=stats.models_usage,
+            llm_calls=stats.llm_calls,
+            tool_calls=stats.tool_calls,
+            total_cost=stats.total_cost,
+            telemetry_log=str(log_path),
+        )

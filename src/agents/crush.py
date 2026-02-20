@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
+from .base import CodingAgent, InstallStrategy, VersionCommandTemplate
+from ..models import RunResult
+from .base import last_value, parse_usage_by_model, select_values, sum_int
 from ..utils import format_trace_text
 
 
@@ -18,9 +17,12 @@ class CrushAgent(CodingAgent):
     binary = "crush"
     supports_images = False
     supports_videos = False
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="@charmland/crush", scope=scope, version=version)
+    install_strategy = InstallStrategy(kind="npm", package="@charmland/crush")
+    version_template = VersionCommandTemplate(
+        args=("crush", "--version"),
+        parse_mode="regex_first_line",
+        regex=r"(?i)^(?:crush version )?([A-Za-z0-9._-]+)$",
+    )
 
     def configure(self) -> Optional[str]:
         settings, error = self._resolve_api_settings(model_override=None)
@@ -44,7 +46,7 @@ class CrushAgent(CodingAgent):
         if settings_error is not None:
             return self._build_error_run_result(message=settings_error, cakit_exit_code=1)
 
-        data_dir = Path(tempfile.mkdtemp(prefix="cakit-crush-data-"))
+        data_dir = self._make_temp_dir(prefix="cakit-crush-data-", keep=True)
         db_path = data_dir / "crush.db"
         telemetry_path = data_dir / "logs" / "crush.log"
 
@@ -53,7 +55,7 @@ class CrushAgent(CodingAgent):
         }
         selected_model = self._resolve_openai_model("CAKIT_CRUSH_MODEL", model_override=model_override)
         if settings is not None:
-            config_dir = Path(tempfile.mkdtemp(prefix="cakit-crush-config-"))
+            config_dir = self._make_temp_dir(prefix="cakit-crush-config-")
             runtime_config_path = config_dir / "crush.json"
             payload = self._build_api_config_payload(model=settings["model"])
             self._write_text(runtime_config_path, json.dumps(payload, ensure_ascii=True, indent=2))
@@ -73,47 +75,35 @@ class CrushAgent(CodingAgent):
             "--quiet",
         ]
         if selected_model:
-            provider_model = self._provider_model_id(selected_model)
+            provider_model = self._normalize_provider_model(
+                selected_model,
+                default_provider="cakit-openai",
+                colon_as_provider=False,
+            )
             cmd.extend(["--model", provider_model, "--small-model", provider_model])
         cmd.append(prompt)
 
         result = self._run(cmd, env=env, base_env=base_env)
         output = result.output
-        output_path = self._write_output(self.name, output)
 
         models_usage, llm_calls, tool_calls, trace_payload = self._extract_stats_from_db(db_path)
-        trajectory_content = self._build_trajectory_content(
-            db_path=db_path,
-            trace_payload=trace_payload,
-            raw_output=output,
-            output_path=output_path,
-        )
-        trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
+        if trace_payload is not None:
+            trajectory_content = format_trace_text(
+                json.dumps({"db_path": str(db_path), "trace": trace_payload}, ensure_ascii=True),
+                source=str(db_path),
+            )
+        else:
+            trajectory_content = format_trace_text(output, source=str(db_path))
+        response = self._last_stdout_line(output) or self._normalize_text(output)
+        return self.finalize_run(
+            command_result=result,
+            response=response,
             models_usage=models_usage,
-            tool_calls=tool_calls,
             llm_calls=llm_calls,
+            tool_calls=tool_calls,
             telemetry_log=str(telemetry_path),
-            response=self._extract_response(output),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            trajectory_content=trajectory_content,
         )
-
-    def get_version(self) -> Optional[str]:
-        first = self._version_first_line(["crush", "--version"])
-        if first is None:
-            return None
-        prefix = "crush version "
-        lowered = first.lower()
-        if lowered.startswith(prefix):
-            return first[len(prefix) :].strip() or None
-        return first
 
     def _resolve_api_settings(self, *, model_override: Optional[str]) -> tuple[Optional[Dict[str, str]], Optional[str]]:
         api_key = self._resolve_openai_api_key("CRUSH_OPENAI_API_KEY")
@@ -174,22 +164,6 @@ class CrushAgent(CodingAgent):
             },
         }
 
-    def _extract_response(self, output: str) -> Optional[str]:
-        stdout = self._stdout_only(output).strip()
-        if not stdout:
-            cleaned = output.strip()
-            if cleaned:
-                return cleaned
-            return None
-        return stdout
-
-    @staticmethod
-    def _provider_model_id(model: str) -> str:
-        normalized = model.strip()
-        if "/" in normalized:
-            return normalized
-        return f"cakit-openai/{normalized}"
-
     def _extract_stats_from_db(
         self, db_path: Path
     ) -> Tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int], Optional[Dict[str, Any]]]:
@@ -202,158 +176,117 @@ class CrushAgent(CodingAgent):
 
         conn.row_factory = sqlite3.Row
         try:
-            session = self._load_single_root_session(conn)
-            if session is None:
+            rows = conn.execute(
+                """
+                SELECT id, title, prompt_tokens, completion_tokens, cost, created_at, updated_at
+                FROM sessions
+                WHERE parent_session_id IS NULL
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+            sessions: list[Dict[str, Any]] = []
+            for row in rows:
+                payload = dict(row)
+                if self._normalize_text(last_value(payload, "$.id")) is None:
+                    return {}, None, None, None
+                sessions.append(payload)
+            if len(sessions) != 1:
                 return {}, None, None, None
-
-            session_id = session.get("id")
-            if not isinstance(session_id, str) or not session_id.strip():
+            session = sessions[0]
+            session_id = self._normalize_text(last_value(session, "$.id"))
+            if session_id is None:
                 return {}, None, None, None
-
-            prompt_tokens = self._as_int(session.get("prompt_tokens"))
-            completion_tokens = self._as_int(session.get("completion_tokens"))
-            if prompt_tokens is None or completion_tokens is None:
-                return {}, None, None, None
-
-            model_name = self._load_single_model_name(conn, session_id)
-            if model_name is None:
-                return {}, None, None, None
-
-            llm_calls = self._load_llm_calls(conn, session_id)
-            tool_calls = self._load_tool_calls(conn, session_id)
-            if llm_calls is None or tool_calls is None:
-                return {}, None, None, None
-
-            usage = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
+            trace_payload = {
+                "session": session,
+                "messages": self._load_session_messages(conn, session_id=session_id),
             }
-            models_usage = {model_name: usage}
-            trace_payload = self._build_trace_payload(conn, session=session, session_id=session_id)
-            return models_usage, llm_calls, tool_calls, trace_payload
+            if trace_payload is None:
+                return {}, None, None, None
+            session_payload = last_value(trace_payload, "$.session")
+            usage = (
+                parse_usage_by_model(
+                    {
+                        "prompt_tokens": last_value(session_payload, "$.prompt_tokens"),
+                        "completion_tokens": last_value(session_payload, "$.completion_tokens"),
+                    },
+                    "prompt_completion",
+                )
+                if isinstance(session_payload, dict)
+                else None
+            )
+            assistant_messages = select_values(
+                trace_payload,
+                '$.messages[?(@.is_non_summary_assistant == 1)]',
+            )
+            model_name: Optional[str] = None
+            if assistant_messages is not None:
+                model_names: set[str] = set()
+                model_name_invalid = False
+                for message in assistant_messages:
+                    current_name = self._normalize_text(last_value(message, "$.model"))
+                    if current_name is None:
+                        model_name_invalid = True
+                        break
+                    model_names.add(current_name)
+                if not model_name_invalid and len(model_names) == 1:
+                    model_name = sorted(model_names)[0]
+            models_usage = {model_name: usage} if usage is not None and model_name is not None else {}
+            return (
+                models_usage,
+                sum_int(
+                    trace_payload,
+                    '$.messages[?(@.is_non_summary_assistant == 1)].message_count',
+                ),
+                sum_int(
+                    trace_payload,
+                    '$.messages[?(@.is_non_summary_assistant == 1)].tool_call_count',
+                ),
+                trace_payload,
+            )
         except Exception:
             return {}, None, None, None
         finally:
             conn.close()
 
-    def _load_single_root_session(self, conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
+    def _load_session_messages(self, conn: sqlite3.Connection, *, session_id: str) -> list[Dict[str, Any]]:
         rows = conn.execute(
             """
-            SELECT id, title, prompt_tokens, completion_tokens, cost, created_at, updated_at
-            FROM sessions
-            WHERE parent_session_id IS NULL
-            ORDER BY created_at DESC
-            """
-        ).fetchall()
-        if len(rows) != 1:
-            return None
-        row = rows[0]
-        data = dict(row)
-        if not isinstance(data.get("id"), str) or not str(data.get("id")).strip():
-            return None
-        return data
-
-    def _load_single_model_name(self, conn: sqlite3.Connection, session_id: str) -> Optional[str]:
-        rows = conn.execute(
-            """
-            SELECT DISTINCT model
-            FROM messages
+            SELECT
+                m.id,
+                m.role,
+                m.model,
+                m.provider,
+                COALESCE(m.is_summary_message, 0) AS is_summary_message,
+                m.created_at,
+                m.updated_at,
+                m.finished_at,
+                m.parts,
+                CASE
+                    WHEN m.role = 'assistant' AND COALESCE(m.is_summary_message, 0) = 0 THEN 1
+                    ELSE 0
+                END AS is_non_summary_assistant,
+                1 AS message_count,
+                COALESCE(
+                    (
+                        SELECT COUNT(*)
+                        FROM json_each(m.parts) p
+                        WHERE json_extract(p.value, '$.type') = 'tool_call'
+                    ),
+                    0
+                ) AS tool_call_count
+            FROM messages m
             WHERE session_id = ?
-              AND role = 'assistant'
-              AND COALESCE(is_summary_message, 0) = 0
-            ORDER BY model ASC
-            """,
-            (session_id,),
-        ).fetchall()
-        models: list[str] = []
-        for row in rows:
-            value = row["model"] if isinstance(row, sqlite3.Row) else None
-            if not isinstance(value, str):
-                return None
-            cleaned = value.strip()
-            if not cleaned:
-                return None
-            models.append(cleaned)
-        if len(models) != 1:
-            return None
-        return models[0]
-
-    def _load_llm_calls(self, conn: sqlite3.Connection, session_id: str) -> Optional[int]:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS llm_calls
-            FROM messages
-            WHERE session_id = ?
-              AND role = 'assistant'
-              AND COALESCE(is_summary_message, 0) = 0
-            """,
-            (session_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._as_int(row["llm_calls"])
-
-    def _load_tool_calls(self, conn: sqlite3.Connection, session_id: str) -> Optional[int]:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS tool_calls
-            FROM messages m, json_each(m.parts) p
-            WHERE m.session_id = ?
-              AND m.role = 'assistant'
-              AND COALESCE(m.is_summary_message, 0) = 0
-              AND json_extract(p.value, '$.type') = 'tool_call'
-            """,
-            (session_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._as_int(row["tool_calls"])
-
-    def _build_trace_payload(
-        self,
-        conn: sqlite3.Connection,
-        *,
-        session: Dict[str, Any],
-        session_id: str,
-    ) -> Optional[Dict[str, Any]]:
-        rows = conn.execute(
-            """
-            SELECT id, role, model, provider, is_summary_message, created_at, updated_at, finished_at, parts
-            FROM messages
-            WHERE session_id = ?
-            ORDER BY created_at ASC
+            ORDER BY m.created_at ASC
             """,
             (session_id,),
         ).fetchall()
         messages: list[Dict[str, Any]] = []
         for row in rows:
             item = dict(row)
-            parts = item.get("parts")
+            parts = last_value(item, "$.parts")
             if isinstance(parts, str):
-                try:
-                    parsed = json.loads(parts)
-                except Exception:
-                    parsed = parts
-                item["parts"] = parsed
+                parsed_parts = self._parse_json(parts)
+                if parsed_parts is not None:
+                    item["parts"] = parsed_parts
             messages.append(item)
-        return {
-            "session": session,
-            "messages": messages,
-        }
-
-    def _build_trajectory_content(
-        self,
-        *,
-        db_path: Path,
-        trace_payload: Optional[Dict[str, Any]],
-        raw_output: str,
-        output_path: Path,
-    ) -> str:
-        if trace_payload is not None:
-            payload = {
-                "db_path": str(db_path),
-                "trace": trace_payload,
-            }
-            return format_trace_text(json.dumps(payload, ensure_ascii=True), source=str(db_path))
-        return format_trace_text(raw_output, source=str(output_path))
+        return messages

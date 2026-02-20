@@ -5,11 +5,10 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate, extract_jsonl_stats, last_value
+from ..models import RunResult
 
 
 class CopilotAgent(CodingAgent):
@@ -18,13 +17,16 @@ class CopilotAgent(CodingAgent):
     binary = "copilot"
     supports_images = True
     supports_videos = False
+    install_strategy = InstallStrategy(kind="npm", package="@github/copilot")
+    run_template = RunCommandTemplate(
+        base_args=("--yolo", "--no-ask-user", "--log-level", "debug"),
+        prompt_mode="flag",
+        prompt_flag="--prompt",
+        model_flag="--model",
+        media_injection="natural",
+        media_tool_name="view",
+    )
     _LOG_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[^ ]+\s+\[[A-Z]+\]\s?(.*)$")
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="@github/copilot", scope=scope, version=version)
-
-    def configure(self) -> Optional[str]:
-        return None
 
     def _run_impl(
         self,
@@ -35,205 +37,79 @@ class CopilotAgent(CodingAgent):
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        log_dir = self._prepare_log_dir()
-        prompt, _, _ = self._build_natural_media_prompt(
-            prompt,
-            images=images,
-            videos=None,
-            tool_name="view",
-        )
+        output_root = os.environ.get("CAKIT_OUTPUT_DIR")
+        base_output = Path(output_root) if output_root else Path.home() / ".cache" / "cakit"
+        stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
+        log_dir = base_output / "copilot-logs" / stamp
+        log_dir.mkdir(parents=True, exist_ok=True)
         model = model_override or os.environ.get("COPILOT_MODEL")
         env = {
             "GH_TOKEN": os.environ.get("GH_TOKEN"),
             "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN"),
         }
-        cmd = [
-            "copilot",
-            "--prompt",
-            prompt,
-            "--yolo",
-            "--no-ask-user",
-            "--log-level",
-            "debug",
-            "--log-dir",
-            str(log_dir),
-        ]
-        if model:
-            cmd.extend(["--model", model])
+        template = self.run_template
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=prompt,
+            model=model,
+            images=images,
+            videos=None,
+            extra_args=["--log-dir", str(log_dir)],
+        )
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        output_path = self._write_output(self.name, output)
-        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        model_calls = self._load_model_call_payloads(log_dir)
-        models_usage, llm_calls, tool_calls = self._extract_stats(model_calls)
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            telemetry_log=str(log_dir),
-            response=self._extract_response(model_calls, output),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
+        model_calls: List[Dict[str, Any]] = []
+        if log_dir.exists():
+            for path in sorted(log_dir.glob("process-*.log")):
+                log_text = self._read_text_lossy(path)
+                if log_text is None:
+                    continue
+                lines = log_text.splitlines()
+                messages = [self._LOG_LINE_RE.sub(r"\1", line) for line in lines]
+                data_indices = [index for index, message in enumerate(messages) if message.strip() == "data:"]
+                for current, start in enumerate(data_indices):
+                    next_start = data_indices[current + 1] if current + 1 < len(data_indices) else len(messages)
+                    raw_block = "\n".join(messages[start + 1 : next_start]).lstrip()
+                    if not raw_block.startswith("{"):
+                        continue
+                    try:
+                        payload, _ = json.JSONDecoder().raw_decode(raw_block)
+                    except Exception:
+                        continue
+                    if isinstance(payload, dict):
+                        model_calls.append(payload)
+        artifacts = self._build_stats_artifacts(
             raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            jsonl_payloads=model_calls,
         )
-
-    def get_version(self) -> Optional[str]:
-        return self._version_text(["copilot", "--version"])
-
-    def _prepare_log_dir(self) -> Path:
-        root = os.environ.get("CAKIT_OUTPUT_DIR")
-        base = Path(root) if root else Path.home() / ".cache" / "cakit"
-        stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
-        log_dir = base / "copilot-logs" / stamp
-        log_dir.mkdir(parents=True, exist_ok=True)
-        return log_dir
-
-    def _load_model_call_payloads(self, log_dir: Path) -> List[Dict[str, Any]]:
-        if not log_dir.exists():
-            return []
-        payloads: List[Dict[str, Any]] = []
-        for path in sorted(log_dir.glob("process-*.log")):
-            payloads.extend(self._parse_model_calls_from_log(path))
-        return payloads
-
-    def _parse_model_calls_from_log(self, path: Path) -> List[Dict[str, Any]]:
-        try:
-            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        except Exception:
-            return []
-        messages = [self._extract_log_message(line) for line in lines]
-        payloads: List[Dict[str, Any]] = []
-        index = 0
-        while index < len(messages):
-            if messages[index].strip() != "data:":
-                index += 1
-                continue
-            start = index + 1
-            while start < len(messages) and not messages[start].strip():
-                start += 1
-            if start >= len(messages):
+        stats = self._merge_stats_snapshots(
+            snapshots=[
+                extract_jsonl_stats(
+                    artifacts,
+                    payload_filter_paths=(
+                        '$[?(@.object == "chat.completion")]',
+                        '$[?(@.model != null)]',
+                        '$[?(@.usage != null)]',
+                        '$[?(@.choices != null)]',
+                    ),
+                    tool_calls_path="$[*].choices[*].message.tool_calls[*]",
+                ),
+            ]
+        )
+        response: Optional[str] = None
+        for payload in reversed(model_calls):
+            cleaned = self._normalize_text(last_value(payload, "$.choices[*].message.content"))
+            if cleaned is not None:
+                response = cleaned
                 break
-            payload, next_index = self._parse_json_block(messages, start)
-            index = max(next_index, index + 1)
-            if self._is_model_call_payload(payload):
-                payloads.append(payload)
-        return payloads
-
-    def _parse_json_block(self, messages: List[str], start: int) -> Tuple[Optional[Dict[str, Any]], int]:
-        if start >= len(messages):
-            return None, start
-        if not messages[start].lstrip().startswith("{"):
-            return None, start + 1
-        parts: List[str] = []
-        for index in range(start, len(messages)):
-            parts.append(messages[index])
-            candidate = "\n".join(parts).strip()
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                return parsed, index + 1
-            return None, index + 1
-        return None, len(messages)
-
-    def _extract_log_message(self, line: str) -> str:
-        match = self._LOG_LINE_RE.match(line)
-        if match:
-            return match.group(1)
-        return line
-
-    def _is_model_call_payload(self, payload: Any) -> bool:
-        if not isinstance(payload, dict):
-            return False
-        usage = payload.get("usage")
-        model = payload.get("model")
-        choices = payload.get("choices")
-        if not isinstance(usage, dict):
-            return False
-        if not isinstance(model, str) or not model.strip():
-            return False
-        if not isinstance(choices, list):
-            return False
-        return True
-
-    def _extract_stats(
-        self, payloads: List[Dict[str, Any]]
-    ) -> Tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
-        if not payloads:
-            return {}, None, None
-        models_usage: Dict[str, Dict[str, int]] = {}
-        llm_calls = 0
-        tool_calls = 0
-        for payload in payloads:
-            if not self._is_model_call_payload(payload):
-                return {}, None, None
-            model = str(payload.get("model")).strip()
-            usage = payload.get("usage")
-            if not isinstance(usage, dict):
-                return {}, None, None
-            prompt_tokens = self._as_int(usage.get("prompt_tokens"))
-            completion_tokens = self._as_int(usage.get("completion_tokens"))
-            total_tokens = self._as_int(usage.get("total_tokens"))
-            if prompt_tokens is None or completion_tokens is None or total_tokens is None:
-                return {}, None, None
-            entry = models_usage.setdefault(
-                model,
-                {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-            )
-            entry["prompt_tokens"] += prompt_tokens
-            entry["completion_tokens"] += completion_tokens
-            entry["total_tokens"] += total_tokens
-
-            call_tool_calls = self._extract_tool_calls(payload.get("choices"))
-            if call_tool_calls is None:
-                return {}, None, None
-            tool_calls += call_tool_calls
-            llm_calls += 1
-        return models_usage, llm_calls, tool_calls
-
-    def _extract_tool_calls(self, choices: Any) -> Optional[int]:
-        if not isinstance(choices, list):
-            return None
-        total = 0
-        for choice in choices:
-            if not isinstance(choice, dict):
-                return None
-            message = choice.get("message")
-            if message is None:
-                continue
-            if not isinstance(message, dict):
-                return None
-            tool_calls = message.get("tool_calls")
-            if tool_calls is None:
-                continue
-            if not isinstance(tool_calls, list):
-                return None
-            total += len(tool_calls)
-        return total
-
-    def _extract_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
-        for payload in reversed(payloads):
-            choices = payload.get("choices")
-            if not isinstance(choices, list):
-                continue
-            for choice in reversed(choices):
-                if not isinstance(choice, dict):
-                    continue
-                message = choice.get("message")
-                if not isinstance(message, dict):
-                    continue
-                content = message.get("content")
-                if isinstance(content, str):
-                    cleaned = content.strip()
-                    if cleaned:
-                        return cleaned
-        stdout = self._stdout_only(output).strip()
-        if stdout:
-            return stdout
-        return None
+        if response is None:
+            response = self._normalize_text(self._stdout_only(output))
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=stats.models_usage,
+            llm_calls=stats.llm_calls,
+            tool_calls=stats.tool_calls,
+            total_cost=stats.total_cost,
+            telemetry_log=str(log_dir),
+        )

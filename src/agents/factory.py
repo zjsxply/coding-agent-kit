@@ -12,10 +12,16 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .base import CodingAgent, CommandResult
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text
-
+from .base import CodingAgent, CommandResult, InstallStrategy, RunCommandTemplate
+from ..models import RunResult
+from .base import (
+    last_value,
+    opt_float,
+    parse_usage_by_model,
+    req_int,
+    req_str,
+    select_values,
+)
 
 class FactoryAgent(CodingAgent):
     name = "factory"
@@ -23,6 +29,15 @@ class FactoryAgent(CodingAgent):
     binary = "droid"
     supports_images = True
     supports_videos = False
+    required_runtimes = ("node",)
+    install_strategy = InstallStrategy(kind="custom")
+    run_template = RunCommandTemplate(
+        base_args=("exec", "--output-format", "json"),
+        prompt_mode="arg",
+        prompt_flag=None,
+        model_flag="--model",
+        media_injection="none",
+    )
 
     _VERSION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
     _BYOK_DISPLAY_NAME = "CAKIT BYOK"
@@ -32,23 +47,16 @@ class FactoryAgent(CodingAgent):
         "generic-chat-completion-api",
     }
 
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        del scope
+    def _install_with_custom_strategy(
+        self,
+        *,
+        strategy: InstallStrategy,
+        scope: str,
+        version: Optional[str],
+    ) -> CommandResult:
         if version and version.strip():
-            result = self._install_specific_version(version.strip())
-        else:
-            result = self._run(["bash", "-lc", "curl -fsSL https://app.factory.ai/cli | sh"])
-        ok = result.exit_code == 0
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version() if ok else None,
-            ok=ok,
-            details=result.output,
-            config_path=None,
-        )
-
-    def configure(self) -> Optional[str]:
-        return None
+            return self._install_specific_version(version.strip())
+        return self._run(["bash", "-lc", "curl -fsSL https://app.factory.ai/cli | sh"])
 
     def _run_impl(
         self,
@@ -59,7 +67,6 @@ class FactoryAgent(CodingAgent):
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        del videos
         images = images or []
         run_prompt = prompt
         if images:
@@ -83,188 +90,151 @@ class FactoryAgent(CodingAgent):
             "FACTORY_DISABLE_KEYRING": os.environ.get("FACTORY_DISABLE_KEYRING"),
         }
 
-        cmd = [
-            "droid",
-            "exec",
-            "--output-format",
-            "json",
+        template = self.run_template
+        extra_args = [
             "--cwd",
             str(self.workdir),
         ]
-        if selected_model:
-            cmd.extend(["--model", selected_model])
         if reasoning_effort:
-            cmd.extend(["--reasoning-effort", reasoning_effort])
-        cmd.append(run_prompt)
+            extra_args.extend(["--reasoning-effort", reasoning_effort])
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=run_prompt,
+            model=selected_model,
+            extra_args=extra_args,
+        )
 
         result = self._run(cmd, env=env, base_env=base_env)
         output = result.output
-        payload = self._parse_result_payload(output)
-        session_id = self._extract_session_id(payload)
-        usage = self._extract_usage(payload)
-        model_name = self._extract_model_name(payload, session_id)
+        parsed_output = self._parse_output_json_object(output)
+        result_payload = parsed_output if req_str(parsed_output, "$.type") == "result" else None
+        session_id = req_str(result_payload, "$.session_id")
 
-        output_path = self._write_output(self.name, output)
-        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
+        settings_payload: Optional[Dict[str, Any]] = None
+        transcript_payloads: Optional[list[Dict[str, Any]]] = None
+        if isinstance(session_id, str) and session_id.strip():
+            session_root = Path.home() / ".factory" / "sessions"
+            if session_root.exists():
+                normalized_session_id = session_id.strip()
 
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
-            tool_calls=self._extract_tool_calls(session_id),
-            llm_calls=self._extract_llm_calls(payload),
-            total_cost=self._extract_total_cost(payload),
-            telemetry_log=self._extract_telemetry_log(env),
-            response=self._extract_response(payload, output),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+                settings_matches = sorted(session_root.glob(f"**/{normalized_session_id}.settings.json"))
+                if len(settings_matches) == 1:
+                    settings_payload = self._load_json_dict(settings_matches[0])
+
+                transcript_matches = sorted(session_root.glob(f"**/{normalized_session_id}.jsonl"))
+                if len(transcript_matches) == 1:
+                    payloads: list[Dict[str, Any]] = []
+                    transcript_text = self._read_text(transcript_matches[0])
+                    if transcript_text is None:
+                        transcript_payloads = None
+                    else:
+                        try:
+                            for raw_line in transcript_text.splitlines():
+                                line = raw_line.strip()
+                                if not line:
+                                    continue
+                                payload = self._parse_json_dict(line)
+                                if payload is None:
+                                    continue
+                                if isinstance(payload, dict):
+                                    payloads.append(payload)
+                        except Exception:
+                            transcript_payloads = None
+                        else:
+                            transcript_payloads = payloads
+
+        models_usage, llm_calls, tool_calls, total_cost = self._extract_run_stats(
+            result_payload=result_payload,
+            settings_payload=settings_payload,
+            transcript_payloads=transcript_payloads,
         )
 
-    def get_version(self) -> Optional[str]:
-        return self._version_first_line(["droid", "--version"])
+        response = req_str(result_payload, "$.result")
+        if response is None:
+            response = self._last_stdout_line(output)
 
-    def _parse_result_payload(self, output: str) -> Optional[Dict[str, Any]]:
-        stdout = self._stdout_only(output).strip()
-        if not stdout:
-            return None
-        last_value = self._extract_last_json_value(stdout)
-        if not isinstance(last_value, dict):
-            return None
-        if last_value.get("type") != "result":
-            return None
-        return last_value
+        telemetry_log: Optional[str] = None
+        explicit_log = env.get("FACTORY_LOG_FILE")
+        if isinstance(explicit_log, str):
+            cleaned_log = explicit_log.strip()
+            if cleaned_log:
+                telemetry_log = cleaned_log
 
-    def _extract_response(self, payload: Optional[Dict[str, Any]], output: str) -> Optional[str]:
-        if isinstance(payload, dict):
-            result = payload.get("result")
-            if isinstance(result, str):
-                cleaned = result.strip()
-                if cleaned:
-                    return cleaned
-        stdout = self._stdout_only(output)
-        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-        if lines:
-            return lines[-1]
-        return None
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=models_usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            total_cost=total_cost,
+            telemetry_log=telemetry_log,
+        )
 
-    def _extract_usage(self, payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
-        if not isinstance(payload, dict):
-            return None
-        usage = payload.get("usage")
-        if not isinstance(usage, dict):
-            return None
-        input_tokens = self._as_int(usage.get("input_tokens"))
-        output_tokens = self._as_int(usage.get("output_tokens"))
-        cache_read = self._as_int(usage.get("cache_read_input_tokens"))
-        cache_creation = self._as_int(usage.get("cache_creation_input_tokens"))
-        if None in {input_tokens, output_tokens, cache_read, cache_creation}:
-            return None
-        prompt_tokens = input_tokens + cache_read + cache_creation
-        completion_tokens = output_tokens
-        total_tokens = prompt_tokens + completion_tokens
-        return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-        }
+    def _extract_run_stats(
+        self,
+        *,
+        result_payload: Optional[Dict[str, Any]],
+        settings_payload: Optional[Dict[str, Any]],
+        transcript_payloads: Optional[list[Dict[str, Any]]],
+    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int], Optional[float]]:
+        models_usage: Dict[str, Dict[str, int]] = {}
+        llm_calls: Optional[int] = None
+        total_cost: Optional[float] = None
+        if isinstance(result_payload, dict):
+            usage_raw = last_value(result_payload, "$.usage")
+            usage = parse_usage_by_model(usage_raw, "factory") if isinstance(usage_raw, dict) else None
+            model_name = req_str(settings_payload, "$.model")
+            if usage is not None and model_name is not None:
+                models_usage[model_name] = usage
+            llm_calls = req_int(result_payload, "$.num_turns")
+            total_cost = opt_float(result_payload, "$.total_cost")
+        tool_calls = self._extract_tool_calls(transcript_payloads)
+        return models_usage, llm_calls, tool_calls, total_cost
 
-    def _extract_llm_calls(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        if not isinstance(payload, dict):
+    def _extract_tool_calls(self, transcript_payloads: Optional[list[Dict[str, Any]]]) -> Optional[int]:
+        if not transcript_payloads:
             return None
-        num_turns = self._as_int(payload.get("num_turns"))
-        return num_turns
+        payloads = [payload for payload in transcript_payloads if isinstance(payload, dict)]
+        if len(payloads) != len(transcript_payloads):
+            return None
 
-    def _extract_total_cost(self, payload: Optional[Dict[str, Any]]) -> Optional[float]:
-        if not isinstance(payload, dict):
-            return None
-        for key in ("total_cost", "cost"):
-            value = payload.get(key)
-            if isinstance(value, bool):
-                continue
-            if isinstance(value, (int, float)):
-                return float(value)
-        return None
+        tool_call_events = [
+            event
+            for event in (select_values(payloads, '$[?(@.type == "tool_call")]') or [])
+            if isinstance(event, dict)
+        ]
+        if tool_call_events:
+            normalized_ids: set[str] = set()
+            for event_id in select_values(tool_call_events, "$[*].id") or []:
+                if not isinstance(event_id, str):
+                    return None
+                normalized_id = event_id.strip()
+                if not normalized_id:
+                    return None
+                normalized_ids.add(normalized_id)
+            idless_values = select_values(tool_call_events, '$[?(@.id == null)]')
+            idless_count = len(idless_values) if idless_values is not None else 0
+            return len(normalized_ids) + idless_count
 
-    def _extract_session_id(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(payload, dict):
-            return None
-        session_id = payload.get("session_id")
-        if not isinstance(session_id, str):
-            return None
-        cleaned = session_id.strip()
-        if not cleaned:
-            return None
-        return cleaned
-
-    def _extract_model_name(self, payload: Optional[Dict[str, Any]], session_id: Optional[str]) -> Optional[str]:
-        if isinstance(payload, dict):
-            model = payload.get("model")
-            if isinstance(model, str) and model.strip():
-                return model.strip()
-        settings_path = self._find_session_settings_file(session_id)
-        if settings_path is None:
-            return None
-        try:
-            data = json.loads(settings_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if not isinstance(data, dict):
-            return None
-        model = data.get("model")
-        if not isinstance(model, str):
-            return None
-        cleaned = model.strip()
-        if not cleaned:
-            return None
-        return cleaned
-
-    def _extract_tool_calls(self, session_id: Optional[str]) -> Optional[int]:
-        session_path = self._find_session_transcript_file(session_id)
-        if session_path is None:
+        pre_tool_use_events = [
+            event
+            for event in (select_values(payloads, '$[?(@.hook_event_name == "PreToolUse")]') or [])
+            if isinstance(event, dict)
+        ]
+        if not pre_tool_use_events:
+            return 0
+        tool_names = select_values(pre_tool_use_events, "$[*].tool_name")
+        if tool_names is None:
             return None
         count = 0
-        tool_call_ids: set[str] = set()
-        try:
-            for raw_line in session_path.read_text(encoding="utf-8").splitlines():
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    payload = json.loads(line)
-                except Exception:
-                    return None
-                for item in self._iter_dicts(payload):
-                    event_type = item.get("type")
-                    if event_type == "tool_call":
-                        event_id = item.get("id")
-                        if isinstance(event_id, str) and event_id.strip():
-                            tool_call_ids.add(event_id.strip())
-                        else:
-                            count += 1
-                        continue
-                    hook_event_name = item.get("hook_event_name")
-                    if hook_event_name == "PreToolUse":
-                        tool_name = item.get("tool_name")
-                        if not isinstance(tool_name, str) or not tool_name.strip():
-                            return None
-                        count += 1
-        except Exception:
-            return None
-        if tool_call_ids:
-            count += len(tool_call_ids)
+        for tool_name in tool_names:
+            if not isinstance(tool_name, str):
+                return None
+            normalized_name = tool_name.strip()
+            if not normalized_name:
+                return None
+            count += 1
         return count
-
-    def _extract_telemetry_log(self, env: Dict[str, str]) -> Optional[str]:
-        explicit = env.get("FACTORY_LOG_FILE")
-        if isinstance(explicit, str):
-            cleaned = explicit.strip()
-            if cleaned:
-                return cleaned
-        return None
 
     def _resolve_model_for_run(self, selected_model: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
         model_name = self._normalize_text(selected_model)
@@ -289,7 +259,18 @@ class FactoryAgent(CodingAgent):
         if missing:
             return None, self._missing_env_with_fallback_message(missing)
 
-        provider = self._resolve_byok_provider(base_url=byok_base_url, provider=byok_provider)
+        provider = byok_provider
+        if provider is not None:
+            if provider not in self._BYOK_PROVIDER_VALUES:
+                provider = None
+        else:
+            lowered_base_url = byok_base_url.lower()
+            if "api.anthropic.com" in lowered_base_url:
+                provider = "anthropic"
+            elif "api.openai.com" in lowered_base_url:
+                provider = "openai"
+            else:
+                provider = "generic-chat-completion-api"
         if provider is None:
             return (
                 None,
@@ -307,19 +288,6 @@ class FactoryAgent(CodingAgent):
             return None, "failed to write Factory BYOK settings at ~/.factory/settings.json"
         return custom_model_name, None
 
-    def _resolve_byok_provider(self, *, base_url: str, provider: Optional[str]) -> Optional[str]:
-        normalized_provider = self._normalize_text(provider)
-        if normalized_provider is not None:
-            if normalized_provider in self._BYOK_PROVIDER_VALUES:
-                return normalized_provider
-            return None
-        lowered_base_url = base_url.lower()
-        if "api.anthropic.com" in lowered_base_url:
-            return "anthropic"
-        if "api.openai.com" in lowered_base_url:
-            return "openai"
-        return "generic-chat-completion-api"
-
     def _upsert_byok_model(
         self,
         *,
@@ -329,19 +297,17 @@ class FactoryAgent(CodingAgent):
         provider: str,
     ) -> Optional[str]:
         settings_path = Path.home() / ".factory" / "settings.json"
-        settings: Dict[str, Any] = {}
-        if settings_path.exists():
-            try:
-                payload = json.loads(settings_path.read_text(encoding="utf-8"))
-            except Exception:
+        if not settings_path.exists():
+            settings: Dict[str, Any] = {}
+        else:
+            loaded_settings = self._load_json(settings_path)
+            if not isinstance(loaded_settings, dict):
                 return None
-            if not isinstance(payload, dict):
-                return None
-            settings = dict(payload)
+            settings = dict(loaded_settings)
 
         custom_models_value = settings.get("customModels")
         if custom_models_value is None:
-            custom_models: list[Any] = []
+            custom_models = []
         elif isinstance(custom_models_value, list):
             custom_models = list(custom_models_value)
         else:
@@ -367,7 +333,6 @@ class FactoryAgent(CodingAgent):
             }
         )
         settings["customModels"] = retained_custom_models
-
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_path = tempfile.mkstemp(
             prefix="settings.",
@@ -390,39 +355,6 @@ class FactoryAgent(CodingAgent):
         index = len(retained_custom_models) - 1
         return f"custom:{display_name_slug}-{index}"
 
-    @staticmethod
-    def _iter_dicts(obj: Any):
-        if isinstance(obj, dict):
-            yield obj
-            for value in obj.values():
-                yield from FactoryAgent._iter_dicts(value)
-            return
-        if isinstance(obj, list):
-            for value in obj:
-                yield from FactoryAgent._iter_dicts(value)
-
-    def _find_session_settings_file(self, session_id: Optional[str]) -> Optional[Path]:
-        if not isinstance(session_id, str) or not session_id.strip():
-            return None
-        root = Path.home() / ".factory" / "sessions"
-        if not root.exists():
-            return None
-        matches = sorted(root.glob(f"**/{session_id.strip()}.settings.json"))
-        if len(matches) != 1:
-            return None
-        return matches[0]
-
-    def _find_session_transcript_file(self, session_id: Optional[str]) -> Optional[Path]:
-        if not isinstance(session_id, str) or not session_id.strip():
-            return None
-        root = Path.home() / ".factory" / "sessions"
-        if not root.exists():
-            return None
-        matches = sorted(root.glob(f"**/{session_id.strip()}.jsonl"))
-        if len(matches) != 1:
-            return None
-        return matches[0]
-
     def _install_specific_version(self, version: str) -> CommandResult:
         start = time.monotonic()
         logs: list[str] = []
@@ -432,16 +364,43 @@ class FactoryAgent(CodingAgent):
             if not normalized or not self._VERSION_RE.fullmatch(normalized):
                 raise RuntimeError("invalid Factory version format")
 
-            os_name = self._map_os(platform.system())
-            arch = self._map_arch(platform.machine())
+            system_name = platform.system()
+            if system_name == "Linux":
+                os_name = "linux"
+            elif system_name == "Darwin":
+                os_name = "darwin"
+            else:
+                os_name = None
+
+            machine = platform.machine().lower()
+            if machine in {"x86_64", "amd64"}:
+                arch = "x64"
+            elif machine in {"arm64", "aarch64"}:
+                arch = "arm64"
+            else:
+                arch = None
+
             if os_name is None or arch is None:
                 raise RuntimeError(
                     f"unsupported platform for factory version install: {platform.system()}/{platform.machine()}"
                 )
 
             droid_arch = arch
-            if arch == "x64" and not self._has_avx2(os_name):
-                droid_arch = f"{arch}-baseline"
+            if arch == "x64":
+                has_avx2 = False
+                if os_name == "linux":
+                    cpuinfo = Path("/proc/cpuinfo")
+                    if cpuinfo.exists():
+                        cpuinfo_text = self._read_text_lossy(cpuinfo)
+                        if cpuinfo_text is not None:
+                            has_avx2 = "avx2" in cpuinfo_text.lower()
+                elif os_name == "darwin":
+                    try:
+                        has_avx2 = "avx2" in os.popen("sysctl -a 2>/dev/null").read().lower()
+                    except Exception:
+                        has_avx2 = False
+                if not has_avx2:
+                    droid_arch = f"{arch}-baseline"
 
             base_url = "https://downloads.factory.ai"
             droid_url = f"{base_url}/factory-cli/releases/{normalized}/{os_name}/{droid_arch}/droid"
@@ -490,40 +449,6 @@ class FactoryAgent(CodingAgent):
             stderr="",
             duration_seconds=duration,
         )
-
-    @staticmethod
-    def _map_os(system_name: str) -> Optional[str]:
-        if system_name == "Linux":
-            return "linux"
-        if system_name == "Darwin":
-            return "darwin"
-        return None
-
-    @staticmethod
-    def _map_arch(machine: str) -> Optional[str]:
-        lowered = machine.lower()
-        if lowered in {"x86_64", "amd64"}:
-            return "x64"
-        if lowered in {"arm64", "aarch64"}:
-            return "arm64"
-        return None
-
-    @staticmethod
-    def _has_avx2(os_name: str) -> bool:
-        if os_name == "linux":
-            cpuinfo = Path("/proc/cpuinfo")
-            if cpuinfo.exists():
-                try:
-                    return "avx2" in cpuinfo.read_text(encoding="utf-8", errors="ignore").lower()
-                except Exception:
-                    return False
-        if os_name == "darwin":
-            try:
-                result = os.popen("sysctl -a 2>/dev/null").read().lower()
-            except Exception:
-                return False
-            return "avx2" in result
-        return False
 
     def _download_with_checksum(self, *, target_path: Path, binary_url: str, checksum_url: str) -> None:
         with urllib.request.urlopen(binary_url, timeout=30) as response:

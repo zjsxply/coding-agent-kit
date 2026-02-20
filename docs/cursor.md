@@ -40,9 +40,20 @@ Image/video flags are not supported in cakit for Cursor (`--image` / `--video` r
 
 ## Stats Extraction
 
-cakit parses stream JSON output and extracts:
-- `models_usage` from usage-like fields in payloads
-- `tool_calls` by counting tool-like events in payloads
-- `response` from assistant/final message fields (stdout fallback)
+cakit parses stream-JSON output with strict event paths:
+- `response`:
+  - primary: last `type == "result"` payload field `result`
+  - fallback: last `type == "assistant"` payload `message.content[*].text`
+- `tool_calls`:
+  - count unique `call_id` from `type == "tool_call"` with `subtype == "started"`
+  - fallback to unique `call_id` across all `type == "tool_call"` payloads
+- `llm_calls`:
+  - primary: count unique `model_call_id` across `type == "assistant"` and `type == "tool_call"` payloads
+  - fallback: count of `type == "assistant"` payloads
+- `models_usage`:
+  - usage is read only from exact fields: `usage`, `message.usage`, `result.usage`
+  - usage schema: `input_tokens` + `output_tokens` (+ optional `total_tokens`) or `prompt_tokens` + `completion_tokens` (+ optional `total_tokens`)
+  - model name is read only from run artifacts (`type == "system"`, `subtype == "init"`, field `model`)
+  - no model-name backfill from `--model` or environment variables
 
 `trajectory_path` points to a YAML-formatted, human-readable trace converted from run output.

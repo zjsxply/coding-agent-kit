@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -20,18 +21,6 @@ except Exception:  # pragma: no cover
 from .agents import create_agent, list_agents
 from .models import InstallResult
 from .utils import load_env_file
-
-
-ALL_AGENT_SELECTORS = {"*", "all"}
-
-
-REASONING_EFFORT_OPTIONS: Dict[str, tuple[str, ...]] = {
-    "codex": ("minimal", "low", "medium", "high", "xhigh"),
-    "claude": ("low", "medium", "high", "max"),
-    "factory": ("off", "none", "low", "medium", "high"),
-    "openclaw": ("off", "minimal", "low", "medium", "high"),
-    "kimi": ("thinking", "none"),
-}
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -105,7 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    tools = subparsers.add_parser("tools", help="Install fast shell power tools (Linux only)")
+    subparsers.add_parser("tools", help="Install fast shell power tools (Linux only)")
 
     env_cmd = subparsers.add_parser("env", help="Write an env template to a file")
     env_cmd.add_argument("--output", default=".env", help="Output path for the template file")
@@ -124,6 +113,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+ALL_AGENT_SELECTORS = {"*", "all"}
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _resolve_agent_targets(agent_name: str) -> list[str]:
@@ -244,24 +237,26 @@ def _expand_media_args(items: list[str]) -> list[Path]:
     return expanded
 
 
-def _normalize_model_override(model: Optional[str]) -> Optional[str]:
-    if model is None:
-        return None
-    normalized = model.strip()
-    if not normalized:
-        return None
-    return normalized
-
-
-def _normalize_reasoning_effort(agent_name: str, reasoning_effort: Optional[str]) -> Optional[str]:
-    if reasoning_effort is None:
-        return None
-    effort = reasoning_effort.strip().lower()
-    effort_slug = effort.replace(" ", "-")
-    if not effort:
-        return None
-    if agent_name == "kimi":
-        aliases = {
+REASONING_EFFORT_RULES: Dict[str, Dict[str, Any]] = {
+    "codex": {
+        "allowed": ("minimal", "low", "medium", "high", "xhigh"),
+        "aliases": {},
+    },
+    "claude": {
+        "allowed": ("low", "medium", "high", "max"),
+        "aliases": {},
+    },
+    "factory": {
+        "allowed": ("off", "none", "low", "medium", "high"),
+        "aliases": {},
+    },
+    "openclaw": {
+        "allowed": ("off", "minimal", "low", "medium", "high"),
+        "aliases": {},
+    },
+    "kimi": {
+        "allowed": ("thinking", "none"),
+        "aliases": {
             "thinking": "thinking",
             "on": "thinking",
             "true": "thinking",
@@ -271,37 +266,38 @@ def _normalize_reasoning_effort(agent_name: str, reasoning_effort: Optional[str]
             "false": "none",
             "no": "none",
             "no-thinking": "none",
-        }
-        normalized = aliases.get(effort) or aliases.get(effort_slug)
-        if normalized:
-            return normalized
-        raise ValueError(
-            "unsupported reasoning effort for kimi: "
-            f"{reasoning_effort!r}; available: {', '.join(REASONING_EFFORT_OPTIONS['kimi'])}"
-        )
-    if agent_name == "claude":
-        aliases = {
-            "low": "low",
-            "medium": "medium",
-            "high": "high",
-            "max": "max",
-        }
-        normalized = aliases.get(effort) or aliases.get(effort_slug)
-        if normalized:
-            return normalized
-        raise ValueError(
-            "unsupported reasoning effort for claude: "
-            f"{reasoning_effort!r}; available: {', '.join(REASONING_EFFORT_OPTIONS['claude'])}"
-        )
-    allowed = REASONING_EFFORT_OPTIONS.get(agent_name)
+        },
+    },
+}
+
+REASONING_EFFORT_OPTIONS: Dict[str, tuple[str, ...]] = {
+    agent_name: tuple(rule["allowed"])
+    for agent_name, rule in REASONING_EFFORT_RULES.items()
+}
+
+
+def _normalize_reasoning_effort(agent_name: str, reasoning_effort: Optional[str]) -> Optional[str]:
+    if reasoning_effort is None:
+        return None
+    effort = reasoning_effort.strip().lower()
+    if not effort:
+        return None
+    rule = REASONING_EFFORT_RULES.get(agent_name)
+    allowed = tuple(rule.get("allowed", ())) if isinstance(rule, dict) else None
     if not allowed:
         raise ValueError(f"reasoning effort is not supported for {agent_name}")
-    if effort not in allowed:
-        raise ValueError(
-            f"unsupported reasoning effort for {agent_name}: {reasoning_effort!r}; "
-            f"available: {', '.join(allowed)}"
-        )
-    return effort
+    aliases = rule.get("aliases", {}) if isinstance(rule, dict) else {}
+    candidates = (effort, effort.replace(" ", "-"))
+    for candidate in candidates:
+        if candidate in allowed:
+            return candidate
+        normalized = aliases.get(candidate) if isinstance(aliases, dict) else None
+        if normalized in allowed:
+            return normalized
+    raise ValueError(
+        f"unsupported reasoning effort for {agent_name}: {reasoning_effort!r}; "
+        f"available: {', '.join(allowed)}"
+    )
 
 
 def _run_agent(
@@ -347,7 +343,9 @@ def _run_agent(
             payload["supported_reasoning_effort"] = list(options)
         sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
         return 2
-    resolved_model_override = _normalize_model_override(model)
+    resolved_model_override = model.strip() if isinstance(model, str) else None
+    if resolved_model_override == "":
+        resolved_model_override = None
     try:
         agent = create_agent(agent_name, workdir=workdir)
         if not agent.is_installed():
@@ -395,7 +393,10 @@ def main() -> int:
     if args.command == "skills":
         return _run_skills(args.args)
     if args.command == "tools":
-        return _run_tools()
+        ok, details = _install_fast_tools_linux()
+        payload = {"ok": ok, "details": details}
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+        return 0 if ok else 1
     if args.command == "env":
         return _run_env(args.output, args.lang)
     parser.print_help()
@@ -442,31 +443,28 @@ def _build_base_env(env_file: Optional[str]) -> Optional[Dict[str, str]]:
         if value is not None:
             base_env[key] = value
     if env_file:
-        env_file_values = _load_extra_env(env_file)
+        path = Path(env_file).expanduser().resolve()
+        if not path.exists():
+            payload = {"error": "env file not found", "env_file": str(path)}
+            sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+            return None
+        if not path.is_file():
+            payload = {"error": "env file is not a file", "env_file": str(path)}
+            sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
+            return None
+        env_file_values = load_env_file(path)
         if env_file_values is None:
             return None
         base_env.update(env_file_values)
     return base_env
 
 
-def _load_extra_env(env_file: str) -> Optional[Dict[str, str]]:
-    path = Path(env_file).expanduser().resolve()
-    if not path.exists():
-        payload = {"error": "env file not found", "env_file": str(path)}
-        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
-        return None
-    if not path.is_file():
-        payload = {"error": "env file is not a file", "env_file": str(path)}
-        sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
-        return None
-    return load_env_file(path)
-
-def _load_managed_env_keys() -> list[str]:
-    template_path = Path(__file__).resolve().parents[1] / ".env.template"
-    if not template_path.exists():
+def _load_managed_env_keys(template_path: Optional[Path] = None) -> list[str]:
+    resolved_template_path = template_path or (Path(__file__).resolve().parents[1] / ".env.template")
+    if not resolved_template_path.exists():
         return []
     keys: list[str] = []
-    for raw_line in template_path.read_text(encoding="utf-8").splitlines():
+    for raw_line in resolved_template_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("##"):
             continue
@@ -477,7 +475,7 @@ def _load_managed_env_keys() -> list[str]:
         if "=" not in line:
             continue
         key = line.split("=", 1)[0].strip()
-        if key and key not in keys:
+        if _ENV_KEY_RE.fullmatch(key) and key not in keys:
             keys.append(key)
     return keys
 
@@ -541,33 +539,22 @@ def _with_sudo(cmd: list[str], *, use_sudo: bool, preserve_env: bool = False) ->
 
 
 def _ensure_dependencies(agent_name: str) -> bool:
-    needs_node = agent_name in {
-        "codebuddy",
-        "codex",
-        "claude",
-        "copilot",
-        "gemini",
-        "qwen",
-        "qoder",
-        "crush",
-        "auggie",
-        "continue",
-        "kilocode",
-        "openclaw",
-        "opencode",
-    }
-    needs_uv = agent_name in {"openhands", "swe-agent", "trae-oss", "kimi", "deepagents"}
+    required_runtimes = create_agent(agent_name).runtime_dependencies()
     ok = True
-
-    if needs_node:
-        with _file_lock("deps-node"):
-            if not _ensure_node_tools():
-                ok = False
-    if needs_uv and shutil.which("uv") is None:
-        with _file_lock("deps-uv"):
-            if shutil.which("uv") is None:
-                print("[deps] uv not found, attempting auto-install.")
-                ok = _install_uv_linux() and ok
+    for runtime_name in required_runtimes:
+        if runtime_name == "node":
+            with _file_lock("deps-node"):
+                if not _ensure_node_tools():
+                    ok = False
+            continue
+        if runtime_name == "uv":
+            with _file_lock("deps-uv"):
+                if shutil.which("uv") is None:
+                    print("[deps] uv not found, attempting auto-install.")
+                    ok = _install_uv_linux() and ok
+            continue
+        print(f"[deps] unsupported runtime dependency for {agent_name}: {runtime_name}")
+        ok = False
     return ok
 
 
@@ -659,13 +646,6 @@ def _install_uv_linux() -> bool:
     return False
 
 
-def _run_tools() -> int:
-    ok, details = _install_fast_tools_linux()
-    payload = {"ok": ok, "details": details}
-    sys.stdout.write(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n")
-    return 0 if ok else 1
-
-
 def _run_env(output: str, lang: str) -> int:
     template_name = ".env.template" if lang == "en" else ".env.template.zh"
     template_path = Path(__file__).resolve().parents[1] / template_name
@@ -688,6 +668,39 @@ def _run_env(output: str, lang: str) -> int:
     return 0
 
 
+BASE_SHELL_TOOL_STEPS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("apt-get", "update"), "apt-get update"),
+    (("apt-get", "install", "-y", "curl", "ca-certificates", "gnupg", "lsb-release", "unzip"), "apt-get install base tools"),
+    (
+        ("apt-get", "install", "-y", "ripgrep", "fd-find", "fzf", "jq", "yq", "bat", "git", "git-lfs", "git-delta"),
+        "apt-get install shell tools",
+    ),
+    (("git", "lfs", "install", "--system"), "git lfs install --system"),
+)
+
+ARCH_SPECIFIC_TOOL_COMPONENTS: tuple[tuple[str, str], ...] = (
+    ("ast-grep", "_install_ast_grep"),
+    ("playwright-chromium (deps+browser)", "_install_playwright_chromium"),
+)
+
+TOOL_ALIAS_RULES: tuple[tuple[str, str, str, str], ...] = (
+    ("fd", "fdfind", "/usr/bin/fdfind", "/usr/local/bin/fd"),
+    ("bat", "batcat", "/usr/bin/batcat", "/usr/local/bin/bat"),
+)
+
+BASE_SHELL_COMPONENTS: tuple[str, ...] = (
+    "rg",
+    "fd",
+    "fzf",
+    "jq",
+    "yq",
+    "bat",
+    "git",
+    "git-lfs",
+    "git-delta",
+)
+
+
 def _install_fast_tools_linux() -> tuple[bool, str]:
     if not sys.platform.startswith("linux"):
         return False, "unsupported OS; only Linux is supported"
@@ -703,50 +716,44 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
     use_sudo = os.geteuid() != 0
     if use_sudo and shutil.which("sudo") is None:
         return False, "sudo not found; run as root to install tools"
-    installed_components: list[str] = [
-        "rg",
-        "fd",
-        "fzf",
-        "jq",
-        "yq",
-        "bat",
-        "git",
-        "git-lfs",
-        "git-delta",
-    ]
+    installed_components: list[str] = list(BASE_SHELL_COMPONENTS)
 
     def run_tool_cmd(cmd: list[str]) -> bool:
         return _run_logged_command("[tools]", _with_sudo(cmd, use_sudo=use_sudo), quiet_success=True)
 
-    if not run_tool_cmd(["apt-get", "update"]):
-        return False, "command failed: apt-get update"
-    if not run_tool_cmd(["apt-get", "install", "-y", "curl", "ca-certificates", "gnupg", "lsb-release", "unzip"]):
-        return False, "command failed: apt-get install base tools"
-    if not run_tool_cmd(
-        ["apt-get", "install", "-y", "ripgrep", "fd-find", "fzf", "jq", "yq", "bat", "git", "git-lfs", "git-delta"]
-    ):
-        return False, "command failed: apt-get install shell tools"
-    if not run_tool_cmd(["git", "lfs", "install", "--system"]):
-        return False, "command failed: git lfs install --system"
+    for command, description in BASE_SHELL_TOOL_STEPS:
+        if run_tool_cmd(list(command)):
+            continue
+        return False, f"command failed: {description}"
 
     if shutil.which("gh") is None:
         print("[tools] installing GitHub CLI (gh)")
         if not run_tool_cmd(["mkdir", "-p", "/etc/apt/keyrings"]):
             return False, "command failed: mkdir -p /etc/apt/keyrings"
 
-        gh_key_tmp = Path(tempfile.mkdtemp(prefix="cakit-gh-key-")) / "githubcli-archive-keyring.gpg"
-        if not _run_logged_command(
-            "[tools]",
-            ["curl", "-fsSL", "https://cli.github.com/packages/githubcli-archive-keyring.gpg", "-o", str(gh_key_tmp)],
-            quiet_success=True,
-        ):
-            return False, "command failed: download gh keyring"
-        if not _run_logged_command(
-            "[tools]",
-            _with_sudo(["cp", str(gh_key_tmp), "/etc/apt/keyrings/githubcli-archive-keyring.gpg"], use_sudo=use_sudo),
-            quiet_success=True,
-        ):
-            return False, "command failed: install gh keyring"
+        with tempfile.TemporaryDirectory(prefix="cakit-gh-key-") as key_tmp_dir:
+            gh_key_tmp = Path(key_tmp_dir) / "githubcli-archive-keyring.gpg"
+            if not _run_logged_command(
+                "[tools]",
+                [
+                    "curl",
+                    "-fsSL",
+                    "https://cli.github.com/packages/githubcli-archive-keyring.gpg",
+                    "-o",
+                    str(gh_key_tmp),
+                ],
+                quiet_success=True,
+            ):
+                return False, "command failed: download gh keyring"
+            if not _run_logged_command(
+                "[tools]",
+                _with_sudo(
+                    ["cp", str(gh_key_tmp), "/etc/apt/keyrings/githubcli-archive-keyring.gpg"],
+                    use_sudo=use_sudo,
+                ),
+                quiet_success=True,
+            ):
+                return False, "command failed: install gh keyring"
         if not run_tool_cmd(["chmod", "go+r", "/etc/apt/keyrings/githubcli-archive-keyring.gpg"]):
             return False, "command failed: chmod gh keyring"
 
@@ -760,84 +767,92 @@ def _install_fast_tools_linux() -> tuple[bool, str]:
             return False, "command failed: dpkg --print-architecture"
         dpkg_arch = arch_result.stdout.strip()
         if not dpkg_arch:
-            return False, "command failed: empty dpkg architecture"
+            return False, "command failed: dpkg --print-architecture"
 
-        gh_list_tmp = Path(tempfile.mkdtemp(prefix="cakit-gh-list-")) / "github-cli.list"
-        gh_list_content = (
-            f"deb [arch={dpkg_arch} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] "
-            "https://cli.github.com/packages stable main\n"
-        )
-        gh_list_tmp.write_text(gh_list_content, encoding="utf-8")
-        if not _run_logged_command(
-            "[tools]",
-            _with_sudo(["cp", str(gh_list_tmp), "/etc/apt/sources.list.d/github-cli.list"], use_sudo=use_sudo),
-            quiet_success=True,
-        ):
-            return False, "command failed: install gh apt source"
+        with tempfile.TemporaryDirectory(prefix="cakit-gh-list-") as list_tmp_dir:
+            gh_list_tmp = Path(list_tmp_dir) / "github-cli.list"
+            gh_list_content = (
+                f"deb [arch={dpkg_arch} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] "
+                "https://cli.github.com/packages stable main\n"
+            )
+            gh_list_tmp.write_text(gh_list_content, encoding="utf-8")
+            if not _run_logged_command(
+                "[tools]",
+                _with_sudo(["cp", str(gh_list_tmp), "/etc/apt/sources.list.d/github-cli.list"], use_sudo=use_sudo),
+                quiet_success=True,
+            ):
+                return False, "command failed: install gh apt source"
         if not run_tool_cmd(["apt-get", "update"]):
             return False, "command failed: apt-get update (gh)"
         if not run_tool_cmd(["apt-get", "install", "-y", "gh"]):
             return False, "command failed: apt-get install gh"
     installed_components.append("gh")
 
-    if arch_supported and shutil.which("sg") is None:
-        print("[tools] installing ast-grep (sg)")
-        sg_tmp = Path(tempfile.mkdtemp(prefix="cakit-ast-grep-")) / "ast-grep-linux-x86_64.tar.gz"
-        if not _run_logged_command(
-            "[tools]",
-            [
-                "curl",
-                "-fsSL",
-                "https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-linux-x86_64.tar.gz",
-                "-o",
-                str(sg_tmp),
-            ],
-            quiet_success=True,
-        ):
-            return False, "command failed: download ast-grep"
-        if not _run_logged_command(
-            "[tools]",
-            _with_sudo(["tar", "-xzf", str(sg_tmp), "-C", "/usr/local/bin", "sg"], use_sudo=use_sudo),
-            quiet_success=True,
-        ):
-            return False, "command failed: install ast-grep"
     if arch_supported:
-        installed_components.append("ast-grep")
+        for component_name, installer_key in ARCH_SPECIFIC_TOOL_COMPONENTS:
+            if installer_key == "_install_ast_grep":
+                if shutil.which("sg") is None:
+                    print("[tools] installing ast-grep (sg)")
+                    with tempfile.TemporaryDirectory(prefix="cakit-ast-grep-") as sg_tmp_dir:
+                        sg_tmp = Path(sg_tmp_dir) / "ast-grep-linux-x86_64.tar.gz"
+                        if not _run_logged_command(
+                            "[tools]",
+                            [
+                                "curl",
+                                "-fsSL",
+                                "https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-linux-x86_64.tar.gz",
+                                "-o",
+                                str(sg_tmp),
+                            ],
+                            quiet_success=True,
+                        ):
+                            return False, "command failed: download ast-grep"
+                        if not _run_logged_command(
+                            "[tools]",
+                            _with_sudo(
+                                ["tar", "-xzf", str(sg_tmp), "-C", "/usr/local/bin", "sg"],
+                                use_sudo=use_sudo,
+                            ),
+                            quiet_success=True,
+                        ):
+                            return False, "command failed: install ast-grep"
+                installed_components.append(component_name)
+                continue
 
-    if arch_supported:
-        if not _ensure_node_tools(quiet_success=True):
-            return False, "command failed: install nodejs/npm for Playwright"
+            if installer_key == "_install_playwright_chromium":
+                if not _ensure_node_tools(quiet_success=True):
+                    return False, "command failed: install nodejs/npm for Playwright"
 
-        playwright_cmd: Optional[list[str]] = None
-        if shutil.which("npx") is not None:
-            playwright_cmd = ["npx", "-y", "playwright@latest"]
-        elif shutil.which("npm") is not None:
-            playwright_cmd = ["npm", "exec", "--yes", "playwright@latest", "--"]
-        if playwright_cmd is None:
-            return False, "command failed: npx/npm not found for Playwright"
+                playwright_cmd: Optional[list[str]] = None
+                if shutil.which("npx") is not None:
+                    playwright_cmd = ["npx", "-y", "playwright@latest"]
+                elif shutil.which("npm") is not None:
+                    playwright_cmd = ["npm", "exec", "--yes", "playwright@latest", "--"]
+                if playwright_cmd is None:
+                    return False, "command failed: npx/npm not found for Playwright"
 
-        if not _run_logged_command(
-            "[tools]",
-            _with_sudo([*playwright_cmd, "install-deps", "chromium"], use_sudo=use_sudo),
-            quiet_success=True,
-        ):
-            return False, "command failed: playwright install-deps chromium"
-        if not _run_logged_command("[tools]", [*playwright_cmd, "install", "chromium"], quiet_success=True):
-            return False, "command failed: playwright install chromium"
-        installed_components.append("playwright-chromium (deps+browser)")
+                if not _run_logged_command(
+                    "[tools]",
+                    _with_sudo([*playwright_cmd, "install-deps", "chromium"], use_sudo=use_sudo),
+                    quiet_success=True,
+                ):
+                    return False, "command failed: playwright install-deps chromium"
+                if not _run_logged_command("[tools]", [*playwright_cmd, "install", "chromium"], quiet_success=True):
+                    return False, "command failed: playwright install chromium"
+                installed_components.append(component_name)
+                continue
 
-    if shutil.which("fd") is None and shutil.which("fdfind") is not None:
+            return False, f"command failed: unknown installer {installer_key}"
+
+    for expected_binary, fallback_binary, source_path, target_path in TOOL_ALIAS_RULES:
+        if shutil.which(expected_binary) is not None or shutil.which(fallback_binary) is None:
+            continue
         _run_logged_command(
             "[tools]",
-            _with_sudo(["ln", "-sf", "/usr/bin/fdfind", "/usr/local/bin/fd"], use_sudo=use_sudo),
+            _with_sudo(["ln", "-sf", source_path, target_path], use_sudo=use_sudo),
             quiet_success=True,
         )
-    if shutil.which("bat") is None and shutil.which("batcat") is not None:
-        _run_logged_command(
-            "[tools]",
-            _with_sudo(["ln", "-sf", "/usr/bin/batcat", "/usr/local/bin/bat"], use_sudo=use_sudo),
-            quiet_success=True,
-        )
+
     if not arch_supported:
         return True, f"installed: {', '.join(installed_components)}; skipped: ast-grep, playwright-chromium"
     return True, f"installed: {', '.join(installed_components)}"

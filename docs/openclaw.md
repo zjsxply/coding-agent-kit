@@ -61,13 +61,16 @@ Reasoning effort mapping:
 
 `cakit run openclaw` extracts stats strictly from:
 
-1. CLI JSON envelope (`payloads` + `meta.agentMeta`):
-   - `response`
-   - `provider/model`
-   - usage (`input`, `output`, `cacheRead`, `cacheWrite`, `total`)
-2. Session transcript:
+1. Session transcript (primary source):
    - `<temporary OPENCLAW_HOME>/agents/main/sessions/<session_id>.jsonl`
+   - `models_usage`: sum over assistant `message.usage` using `totalTokens` + `output`
    - `llm_calls`: assistant messages with valid usage
-   - `tool_calls`: total tool-use occurrences in transcript messages
+   - `tool_calls`: assistant tool-use occurrences (`content[].type == "toolCall"`)
+   - model name from assistant `message.provider` + `message.model`
+2. CLI JSON envelope (`payloads` + `meta.agentMeta`) fallback:
+   - `response` from `payloads[*].text`
+   - fallback usage from `meta.agentMeta.usage` (`total` + `output`)
+   - fallback model name from `meta.agentMeta.provider` + `meta.agentMeta.model`
+   - used only when transcript file is unavailable
 
 If required stats cannot be parsed, cakit returns non-zero.

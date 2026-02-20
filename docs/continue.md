@@ -40,17 +40,19 @@ If required values are missing, `cakit configure continue` returns `config_path:
 
 ## Stats Extraction
 
-`cakit run continue` extracts `response`, `models_usage`, `llm_calls`, and `tool_calls` from run artifacts with strict parsing:
+`cakit run continue` extracts `response`, `models_usage`, `llm_calls`, `tool_calls`, and `total_cost` from run artifacts with strict parsing:
 
 1. Read session id from:
    - `<CONTINUE_GLOBAL_DIR>/sessions/sessions.json` (`sessionId` from the last entry)
 2. Read the exact matching session file:
    - `<CONTINUE_GLOBAL_DIR>/sessions/<session_id>.json`
-3. Parse `history[].message` entries:
+3. Parse assistant messages from `history[]` (JSONPath filter on `message.role == "assistant"`):
    - `models_usage`: aggregate `usage.model` + `usage.prompt_tokens` / `usage.completion_tokens` / `usage.total_tokens`
-   - `llm_calls`: number of assistant messages that contain valid `usage`
-   - `tool_calls`: sum of assistant `message.toolCalls` lengths
-4. `response` uses stdout first, then falls back to the last assistant message content in session history.
+     - if `usage.total_tokens` is missing, use `prompt_tokens + completion_tokens`
+   - `llm_calls`: number of assistant messages with valid usage
+   - `tool_calls`: count of `message.toolCalls[*]` across assistant messages
+   - `total_cost`: `usage.totalCost` from the top-level session payload (when available)
+4. `response` uses the last assistant message content in session history first, then falls back to the last non-empty stdout line.
 
 Model names are taken only from run artifacts (`history[].message.usage.model`). cakit does not backfill model names from config/env.
 

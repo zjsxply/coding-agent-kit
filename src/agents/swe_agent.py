@@ -4,14 +4,14 @@ import io
 import json
 import os
 import tarfile
-import tempfile
 import urllib.request
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
+from .base import CodingAgent, CommandResult, InstallStrategy, VersionCommandTemplate
+from ..models import RunResult
+from ..stats_extract import last_value, req_str, select_values, sum_int
 from ..utils import format_trace_text
 
 
@@ -19,6 +19,13 @@ class SweAgent(CodingAgent):
     name = "swe-agent"
     display_name = "SWE-agent"
     binary = "sweagent"
+    required_runtimes = ("uv",)
+    install_strategy = InstallStrategy(kind="custom")
+    version_template = VersionCommandTemplate(
+        args=("sweagent", "--version"),
+        parse_mode="text",
+        env_mode="runtime_assets",
+    )
 
     def is_installed(self) -> bool:
         if not super().is_installed():
@@ -26,23 +33,35 @@ class SweAgent(CodingAgent):
         result = self._run(["sweagent", "--version"], env=self._runtime_asset_env(create_if_missing=True))
         return result.exit_code == 0 and bool(result.output.strip())
 
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        del scope
-        version = self._resolve_version(version)
-        url = f"https://github.com/SWE-agent/SWE-agent/archive/refs/tags/{version}.tar.gz"
+    def _install_with_custom_strategy(
+        self,
+        *,
+        strategy: InstallStrategy,
+        scope: str,
+        version: Optional[str],
+    ) -> CommandResult:
+        try:
+            resolved_version = self._resolve_version(version)
+        except Exception as exc:
+            return CommandResult(
+                exit_code=1,
+                stdout="",
+                stderr=str(exc),
+                duration_seconds=0.0,
+            )
+        url = f"https://github.com/SWE-agent/SWE-agent/archive/refs/tags/{resolved_version}.tar.gz"
         result = self._uv_pip_install([url], no_cache_dir=True)
-        assets_ok = self._prepare_runtime_assets(version)
-        config_path = self.configure()
-        ok = result.exit_code == 0 and assets_ok
+        assets_ok = self._prepare_runtime_assets(resolved_version)
         details = result.output
+        exit_code = result.exit_code
         if result.exit_code == 0 and not assets_ok:
             details = f"{details}\n[install] failed to prepare SWE-agent runtime assets."
-        return InstallResult(
-            agent=self.name,
-            version=version,
-            ok=ok,
-            details=details,
-            config_path=config_path,
+            exit_code = 1
+        return CommandResult(
+            exit_code=exit_code,
+            stdout=details,
+            stderr="",
+            duration_seconds=result.duration_seconds,
         )
 
     def configure(self) -> Optional[str]:
@@ -50,9 +69,6 @@ class SweAgent(CodingAgent):
         tools_dir = runtime_env.get("SWE_AGENT_TOOLS_DIR")
         if not tools_dir:
             return None
-
-        def yaml_quote(value: str) -> str:
-            return json.dumps(value)
 
         config = (
             "agent:\n"
@@ -63,8 +79,8 @@ class SweAgent(CodingAgent):
             "      {{problem_statement}}\n"
             "  tools:\n"
             "    bundles:\n"
-            f"      - path: {yaml_quote(str(Path(tools_dir) / 'registry'))}\n"
-            f"      - path: {yaml_quote(str(Path(tools_dir) / 'submit'))}\n"
+            f"      - path: {json.dumps(str(Path(tools_dir) / 'registry'))}\n"
+            f"      - path: {json.dumps(str(Path(tools_dir) / 'submit'))}\n"
             "    enable_bash_tool: true\n"
             "    parse_function:\n"
             "      type: thought_action\n"
@@ -97,7 +113,7 @@ class SweAgent(CodingAgent):
         env.update(self._runtime_asset_env(create_if_missing=True))
         model = self._resolve_openai_model("SWE_AGENT_MODEL", model_override=model_override)
         repo_path = self._resolve_repo_path(base_env=base_env)
-        output_dir = Path(tempfile.mkdtemp(prefix="cakit-sweagent-"))
+        output_dir = self._make_temp_dir(prefix="cakit-sweagent-")
         cmd = [
             "sweagent",
             "run",
@@ -132,37 +148,57 @@ class SweAgent(CodingAgent):
             result = self._run_sweagent_command(cmd, env=env, base_env=base_env)
             output = result.output
 
-        trajectory_files = self._find_trajectory_files(output_dir)
-        trajectory_payloads = self._load_trajectory_payloads(trajectory_files)
-        usage = self._extract_usage_from_trajectories(trajectory_payloads)
-        model_name = self._extract_model_name_from_trajectories(trajectory_payloads)
-
-        output_path = self._write_output(self.name, output)
-        trajectory_content = self._format_trajectory_trace(
-            trajectory_files=trajectory_files,
-            raw_output=output,
-            output_path=output_path,
+        trajectory_files: list[Path] = []
+        if output_dir.exists():
+            trajectory_files = sorted(path for path in output_dir.rglob("*.traj") if path.is_file())
+        if not trajectory_files:
+            trajectory_payloads = None
+        else:
+            loaded_payloads: list[Dict[str, Any]] = []
+            for trajectory_file in trajectory_files:
+                if not trajectory_file.exists():
+                    loaded_payloads = []
+                    break
+                data = self._load_json(trajectory_file)
+                if not isinstance(data, dict):
+                    loaded_payloads = []
+                    break
+                loaded_payloads.append(data)
+            trajectory_payloads = loaded_payloads or None
+        usage, model_name, llm_calls, tool_calls, response = self._extract_trajectory_stats(trajectory_payloads)
+        snapshot = self._build_single_model_stats_snapshot(
+            model_name=model_name,
+            usage=usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            total_cost=None,
         )
-        trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=self._ensure_models_usage({}, usage, model_name),
-            tool_calls=self._extract_tool_calls_from_trajectories(trajectory_payloads),
-            llm_calls=self._extract_llm_calls_from_trajectories(trajectory_payloads),
-            response=self._extract_response(output, trajectory_payloads),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
-        )
 
-    def get_version(self) -> Optional[str]:
-        return self._version_text(
-            ["sweagent", "--version"],
-            env=self._runtime_asset_env(create_if_missing=False),
+        if trajectory_files:
+            entries: list[dict[str, str]] = []
+            for trajectory_file in trajectory_files:
+                trajectory_raw = self._read_text(trajectory_file) or ""
+                if not trajectory_raw.strip():
+                    continue
+                entries.append({"path": str(trajectory_file), "content": trajectory_raw})
+            if entries:
+                trajectory_content = format_trace_text(
+                    json.dumps({"trajectory_files": entries}, ensure_ascii=True),
+                    source=str(output_dir),
+                )
+            else:
+                trajectory_content = format_trace_text(output, source=str(output_dir))
+        else:
+            trajectory_content = format_trace_text(output, source=str(output_dir))
+        if response is None:
+            response = self._last_stdout_line(output)
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=snapshot.models_usage if snapshot is not None else {},
+            llm_calls=snapshot.llm_calls if snapshot is not None else None,
+            tool_calls=snapshot.tool_calls if snapshot is not None else None,
+            trajectory_content=trajectory_content,
         )
 
     def _resolve_version(self, requested: Optional[str]) -> str:
@@ -188,7 +224,10 @@ class SweAgent(CodingAgent):
 
     def _runtime_asset_env(self, *, create_if_missing: bool) -> Dict[str, str]:
         versions: list[str] = []
-        installed = self._installed_package_version()
+        try:
+            installed = metadata.version("sweagent")
+        except Exception:
+            installed = None
         if installed and installed not in versions:
             versions.append(installed)
 
@@ -216,12 +255,6 @@ class SweAgent(CodingAgent):
                     "SWE_AGENT_TRAJECTORY_DIR": str(paths["trajectories"]),
                 }
         return {}
-
-    def _installed_package_version(self) -> Optional[str]:
-        try:
-            return metadata.version("sweagent")
-        except Exception:
-            return None
 
     def _normalize_release_tag(self, version: str) -> str:
         normalized = version.strip()
@@ -257,6 +290,43 @@ class SweAgent(CodingAgent):
         trajectories_dir.mkdir(parents=True, exist_ok=True)
         return True
 
+    def _extract_runtime_assets_archive(self, archive_data: bytes, root: Path) -> bool:
+        root.mkdir(parents=True, exist_ok=True)
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:gz") as archive:
+                for member in archive.getmembers():
+                    parts = member.name.split("/", 1)
+                    if len(parts) != 2:
+                        continue
+                    relative = parts[1]
+                    if not any(
+                        relative == prefix or relative.startswith(f"{prefix}/")
+                        for prefix in ("config", "tools", "trajectories")
+                    ):
+                        continue
+                    target = root / relative
+                    try:
+                        target.resolve().relative_to(root.resolve())
+                    except Exception:
+                        continue
+                    if member.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    if not member.isfile():
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    extracted = archive.extractfile(member)
+                    if extracted is None:
+                        return False
+                    target.write_bytes(extracted.read())
+                    try:
+                        target.chmod(member.mode & 0o777)
+                    except Exception:
+                        pass
+        except Exception:
+            return False
+        return True
+
     def _prepare_runtime_assets(self, version: str) -> bool:
         normalized = self._normalize_release_tag(version)
         paths = self._runtime_asset_paths(normalized)
@@ -269,55 +339,19 @@ class SweAgent(CodingAgent):
                 archive_data = response.read()
         except Exception:
             return False
-
-        root = paths["root"]
-        root.mkdir(parents=True, exist_ok=True)
-        try:
-            with tarfile.open(fileobj=io.BytesIO(archive_data), mode="r:gz") as archive:
-                for member in archive.getmembers():
-                    parts = member.name.split("/", 1)
-                    if len(parts) != 2:
-                        continue
-                    relative = parts[1]
-                    if not (
-                        relative == "config"
-                        or relative.startswith("config/")
-                        or relative == "tools"
-                        or relative.startswith("tools/")
-                        or relative == "trajectories"
-                        or relative.startswith("trajectories/")
-                    ):
-                        continue
-                    target = root / relative
-                    try:
-                        target.resolve().relative_to(root.resolve())
-                    except Exception:
-                        continue
-
-                    if member.isdir():
-                        target.mkdir(parents=True, exist_ok=True)
-                        continue
-                    if not member.isfile():
-                        continue
-
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    extracted = archive.extractfile(member)
-                    if extracted is None:
-                        return False
-                    target.write_bytes(extracted.read())
-                    try:
-                        target.chmod(member.mode & 0o777)
-                    except Exception:
-                        pass
-        except Exception:
+        if not self._extract_runtime_assets_archive(archive_data, paths["root"]):
             return False
         return self._runtime_assets_ready(paths)
 
     def _resolve_repo_path(self, *, base_env: Optional[Dict[str, str]]) -> Path:
-        if self._is_git_repository(self.workdir, base_env=base_env):
+        result = self._run(
+            ["git", "-C", str(self.workdir), "rev-parse", "--is-inside-work-tree"],
+            base_env=base_env,
+        )
+        if result.exit_code == 0 and result.stdout.strip().lower() == "true":
             return self.workdir
 
-        repo_path = Path(tempfile.mkdtemp(prefix="cakit-swe-repo-"))
+        repo_path = self._make_temp_dir(prefix="cakit-swe-repo-")
         (repo_path / "README.md").write_text("Temporary repository for cakit swe-agent run.\n", encoding="utf-8")
         init_commands = [
             ["git", "-C", str(repo_path), "init"],
@@ -332,15 +366,6 @@ class SweAgent(CodingAgent):
                 return self.workdir
         return repo_path
 
-    def _is_git_repository(self, path: Path, *, base_env: Optional[Dict[str, str]]) -> bool:
-        result = self._run(
-            ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
-            base_env=base_env,
-        )
-        if result.exit_code != 0:
-            return False
-        return result.stdout.strip().lower() == "true"
-
     def _run_sweagent_command(
         self, args: list[str], *, env: Optional[Dict[str, str]], base_env: Optional[Dict[str, str]]
     ):
@@ -351,316 +376,103 @@ class SweAgent(CodingAgent):
         finally:
             self.workdir = original_workdir
 
-    def _find_trajectory_files(self, output_dir: Path) -> list[Path]:
-        if not output_dir.exists():
-            return []
-        return sorted(path for path in output_dir.rglob("*.traj") if path.is_file())
-
-    def _load_trajectory_payloads(self, trajectory_files: list[Path]) -> Optional[list[Dict[str, Any]]]:
-        if not trajectory_files:
-            return None
-        payloads: list[Dict[str, Any]] = []
-        for trajectory_file in trajectory_files:
-            payload = self._load_trajectory_payload(trajectory_file)
-            if payload is None:
-                return None
-            payloads.append(payload)
-        return payloads
-
-    def _load_trajectory_payload(self, trajectory_file: Path) -> Optional[Dict[str, Any]]:
-        if not trajectory_file.exists():
-            return None
-        try:
-            data = json.loads(trajectory_file.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if isinstance(data, dict):
-            return data
-        return None
-
-    def _extract_usage_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
-        model_stats = self._extract_model_stats(payload)
-        if model_stats is None:
-            return None
-        prompt_tokens = model_stats["tokens_sent"]
-        completion_tokens = model_stats["tokens_received"]
-        return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        }
-
-    def _extract_llm_calls_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        model_stats = self._extract_model_stats(payload)
-        if model_stats is None:
-            return None
-        return model_stats["api_calls"]
-
-    def _extract_tool_calls_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        if not isinstance(payload, dict):
-            return None
-
-        attempts = payload.get("attempts")
-        if isinstance(attempts, list) and attempts:
-            total = 0
-            for attempt in attempts:
-                if not isinstance(attempt, dict):
-                    return None
-                count = self._count_trajectory_actions(attempt.get("trajectory"))
-                if count is None:
-                    return None
-                total += count
-            return total
-
-        return self._count_trajectory_actions(payload.get("trajectory"))
-
-    def _extract_usage_from_trajectories(self, payloads: Optional[list[Dict[str, Any]]]) -> Optional[Dict[str, int]]:
-        if not isinstance(payloads, list):
-            return None
-        prompt_tokens = 0
-        completion_tokens = 0
-        for payload in payloads:
-            usage = self._extract_usage_from_trajectory(payload)
-            if usage is None:
-                return None
-            prompt_tokens += usage["prompt_tokens"]
-            completion_tokens += usage["completion_tokens"]
-        return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        }
-
-    def _extract_llm_calls_from_trajectories(self, payloads: Optional[list[Dict[str, Any]]]) -> Optional[int]:
-        if not isinstance(payloads, list):
-            return None
-        llm_calls = 0
-        for payload in payloads:
-            value = self._extract_llm_calls_from_trajectory(payload)
-            if value is None:
-                return None
-            llm_calls += value
-        return llm_calls
-
-    def _extract_tool_calls_from_trajectories(self, payloads: Optional[list[Dict[str, Any]]]) -> Optional[int]:
-        if not isinstance(payloads, list):
-            return None
-        tool_calls = 0
-        for payload in payloads:
-            value = self._extract_tool_calls_from_trajectory(payload)
-            if value is None:
-                return None
-            tool_calls += value
-        return tool_calls
-
-    def _extract_model_name_from_trajectories(self, payloads: Optional[list[Dict[str, Any]]]) -> Optional[str]:
-        if not isinstance(payloads, list):
-            return None
-        names: list[str] = []
-        for payload in payloads:
-            value = self._extract_model_name_from_trajectory(payload)
-            if value:
-                names.append(value)
-        unique_names = list(dict.fromkeys(names))
-        if len(unique_names) == 1:
-            return unique_names[0]
-        return None
-
-    def _extract_response(self, output: str, payloads: Optional[list[Dict[str, Any]]]) -> Optional[str]:
-        if isinstance(payloads, list):
-            for payload in reversed(payloads):
-                response = self._extract_response_from_trajectory(payload)
-                if response:
-                    return response
-        stdout = self._stdout_only(output)
-        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-        if lines:
-            return lines[-1]
-        return None
-
-    def _extract_response_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(payload, dict):
-            return None
-
-        attempts = payload.get("attempts")
-        if isinstance(attempts, list):
-            for attempt in reversed(attempts):
-                if not isinstance(attempt, dict):
-                    continue
-                response = self._extract_response_from_steps(attempt.get("trajectory"))
-                if response:
-                    return response
-
-        response = self._extract_response_from_steps(payload.get("trajectory"))
-        if response:
-            return response
-
-        info = payload.get("info")
-        if isinstance(info, dict):
-            submission = info.get("submission")
-            if isinstance(submission, str):
-                cleaned = submission.strip()
-                if cleaned:
-                    return cleaned
-        return None
-
-    def _extract_response_from_steps(self, steps: Any) -> Optional[str]:
-        if not isinstance(steps, list):
-            return None
-        for step in reversed(steps):
-            if not isinstance(step, dict):
-                continue
-            for key in ("response", "thought", "observation"):
-                value = step.get(key)
-                if not isinstance(value, str):
-                    continue
-                cleaned = value.strip()
-                if cleaned:
-                    return cleaned
-        return None
-
-    def _extract_model_stats(self, payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
-        if not isinstance(payload, dict):
-            return None
-
-        info = payload.get("info")
-        if isinstance(info, dict):
-            stats = self._parse_model_stats_dict(info.get("model_stats"))
-            if stats is not None:
-                return stats
-
-        attempts = payload.get("attempts")
-        if not isinstance(attempts, list) or not attempts:
-            return None
-
-        total = {
-            "tokens_sent": 0,
-            "tokens_received": 0,
-            "api_calls": 0,
-        }
-        for attempt in attempts:
-            if not isinstance(attempt, dict):
-                return None
-            attempt_info = attempt.get("info")
-            if not isinstance(attempt_info, dict):
-                return None
-            stats = self._parse_model_stats_dict(attempt_info.get("model_stats"))
-            if stats is None:
-                return None
-            total["tokens_sent"] += stats["tokens_sent"]
-            total["tokens_received"] += stats["tokens_received"]
-            total["api_calls"] += stats["api_calls"]
-        return total
-
-    def _parse_model_stats_dict(self, raw: Any) -> Optional[Dict[str, int]]:
-        if not isinstance(raw, dict):
-            return None
-        tokens_sent = self._as_int(raw.get("tokens_sent"))
-        tokens_received = self._as_int(raw.get("tokens_received"))
-        api_calls = self._as_int(raw.get("api_calls"))
+    def _extract_single_trajectory_stats(
+        self, payload: Dict[str, Any]
+    ) -> tuple[Optional[Dict[str, int]], Optional[str], Optional[int], Optional[int], Optional[str]]:
+        tokens_sent = sum_int(payload, "$.info.model_stats.tokens_sent")
+        tokens_received = sum_int(payload, "$.info.model_stats.tokens_received")
+        api_calls = sum_int(payload, "$.info.model_stats.api_calls")
         if tokens_sent is None or tokens_received is None or api_calls is None:
-            return None
-        return {
-            "tokens_sent": tokens_sent,
-            "tokens_received": tokens_received,
-            "api_calls": api_calls,
-        }
+            tokens_sent = sum_int(payload, "$.attempts[*].info.model_stats.tokens_sent")
+            tokens_received = sum_int(payload, "$.attempts[*].info.model_stats.tokens_received")
+            api_calls = sum_int(payload, "$.attempts[*].info.model_stats.api_calls")
 
-    def _count_trajectory_actions(self, trajectory: Any) -> Optional[int]:
-        if not isinstance(trajectory, list):
-            return None
-        count = 0
-        for step in trajectory:
-            if not isinstance(step, dict):
-                return None
-            action = step.get("action")
-            if action is None:
-                continue
-            if not isinstance(action, str):
-                return None
-            if action.strip():
-                count += 1
-        return count
+        actions = select_values(payload, "$.attempts[*].trajectory[*].action")
+        if actions is None:
+            actions = select_values(payload, "$.trajectory[*].action")
+        tool_calls = (
+            sum(1 for action in actions if isinstance(action, str) and action.strip())
+            if actions is not None
+            else None
+        )
 
-    def _extract_model_name_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(payload, dict):
-            return None
+        response = self._first_selected_text(
+            payload,
+            (
+                "$.attempts[*].trajectory[*].response",
+                "$.attempts[*].trajectory[*].thought",
+                "$.attempts[*].trajectory[*].observation",
+                "$.trajectory[*].response",
+                "$.trajectory[*].thought",
+                "$.trajectory[*].observation",
+                "$.info.submission",
+            ),
+        )
 
-        model_name = self._extract_model_name_from_replay_config(payload.get("replay_config"))
-        if model_name:
-            return model_name
+        usage = (
+            {
+                "prompt_tokens": tokens_sent,
+                "completion_tokens": tokens_received,
+                "total_tokens": tokens_sent + tokens_received,
+            }
+            if tokens_sent is not None and tokens_received is not None
+            else None
+        )
+        model_name = self._extract_model_name_from_replay_config(last_value(payload, "$.replay_config"))
+        if not model_name:
+            attempts = select_values(payload, "$.attempts[*].replay_config")
+            if attempts is not None:
+                for attempt in reversed(attempts):
+                    model_name = self._extract_model_name_from_replay_config(attempt)
+                    if model_name:
+                        break
+        return usage, model_name, api_calls, tool_calls, response
 
-        attempts = payload.get("attempts")
-        if not isinstance(attempts, list):
-            return None
-        for attempt in reversed(attempts):
-            if not isinstance(attempt, dict):
-                continue
-            model_name = self._extract_model_name_from_replay_config(attempt.get("replay_config"))
-            if model_name:
-                return model_name
-        return None
+    def _extract_trajectory_stats(
+        self, payloads: Optional[list[Dict[str, Any]]]
+    ) -> tuple[Optional[Dict[str, int]], Optional[str], Optional[int], Optional[int], Optional[str]]:
+        if not isinstance(payloads, list):
+            return None, None, None, None, None
+
+        parsed = [self._extract_single_trajectory_stats(payload) for payload in payloads if isinstance(payload, dict)]
+        if not parsed:
+            return None, None, None, None, None
+
+        usage_items = [item_usage for item_usage, _, _, _, _ in parsed if item_usage is not None]
+        usage = self._sum_usage_entries(usage_items)
+        llm_call_values = [item_llm_calls for _, _, item_llm_calls, _, _ in parsed if item_llm_calls is not None]
+        llm_calls = sum(llm_call_values) if llm_call_values else None
+        tool_call_values = [item_tool_calls for _, _, _, item_tool_calls, _ in parsed if item_tool_calls is not None]
+        tool_calls = sum(tool_call_values) if tool_call_values else None
+
+        model_names = [item_model_name for _, item_model_name, _, _, _ in parsed if item_model_name]
+        unique_names = list(dict.fromkeys(model_names))
+        model_name = unique_names[0] if len(unique_names) == 1 else None
+
+        response_candidates = [item_response for _, _, _, _, item_response in parsed if item_response]
+        response = response_candidates[-1] if response_candidates else None
+        return usage, model_name, llm_calls, tool_calls, response
 
     def _extract_model_name_from_replay_config(self, replay_config: Any) -> Optional[str]:
-        parsed: Optional[Dict[str, Any]] = None
         if isinstance(replay_config, str):
-            try:
-                decoded = json.loads(replay_config)
-            except Exception:
-                return None
-            if isinstance(decoded, dict):
-                parsed = decoded
+            decoded = self._parse_json(replay_config)
+            parsed = decoded if isinstance(decoded, dict) else None
         elif isinstance(replay_config, dict):
             parsed = replay_config
-
+        else:
+            parsed = None
         if parsed is None:
             return None
 
-        agent = parsed.get("agent")
-        if isinstance(agent, dict):
-            model = agent.get("model")
-            if isinstance(model, dict):
-                name = model.get("name")
-                if isinstance(name, str):
-                    cleaned = name.strip()
-                    if cleaned:
-                        return cleaned
+        model_name = req_str(parsed, "$.agent.model.name")
+        if model_name:
+            return model_name
 
-        agent_configs = parsed.get("agent_configs")
-        if not isinstance(agent_configs, list):
+        names = select_values(parsed, "$.agent_configs[*].model.name")
+        if names is None:
             return None
-        names: list[str] = []
-        for agent_config in agent_configs:
-            if not isinstance(agent_config, dict):
-                continue
-            model = agent_config.get("model")
-            if not isinstance(model, dict):
-                continue
-            name = model.get("name")
-            if not isinstance(name, str):
-                continue
-            cleaned = name.strip()
-            if cleaned:
-                names.append(cleaned)
-        unique_names = list(dict.fromkeys(names))
+        cleaned_names = [name.strip() for name in names if isinstance(name, str) and name.strip()]
+        unique_names = list(dict.fromkeys(cleaned_names))
         if len(unique_names) == 1:
             return unique_names[0]
         return None
-
-    def _format_trajectory_trace(self, *, trajectory_files: list[Path], raw_output: str, output_path: Path) -> str:
-        if trajectory_files:
-            entries: list[dict[str, str]] = []
-            for trajectory_file in trajectory_files:
-                try:
-                    trajectory_raw = trajectory_file.read_text(encoding="utf-8")
-                except Exception:
-                    trajectory_raw = ""
-                if not trajectory_raw.strip():
-                    continue
-                entries.append({"path": str(trajectory_file), "content": trajectory_raw})
-            if entries:
-                return format_trace_text(
-                    json.dumps({"trajectory_files": entries}, ensure_ascii=True),
-                    source=str(output_path),
-                )
-        return format_trace_text(raw_output, source=str(output_path))

@@ -76,7 +76,8 @@ Supported values in cakit:
    - field: `model`
 5. Resolve tool calls from exact session transcript file:
    - `~/.factory/sessions/**/<session_id>.jsonl`
-   - count `type == "tool_call"` events (and `hook_event_name == "PreToolUse"` if present in transcript data)
+   - prefer counting `type == "tool_call"` events (deduplicated by `id` when present)
+   - if no `tool_call` event exists, fallback to `hook_event_name == "PreToolUse"` with `tool_name`
 6. Build `models_usage` with model from run artifacts only; no backfill from config/env inputs.
 
 If required stats fields cannot be extracted exactly, cakit returns non-zero for the run.

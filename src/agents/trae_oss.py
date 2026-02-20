@@ -5,8 +5,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate
+from ..models import RunResult
+from ..stats_extract import parse_usage_by_model, req_str, select_values
 from ..utils import format_trace_text
 
 
@@ -14,35 +15,28 @@ class TraeOssAgent(CodingAgent):
     name = "trae-oss"
     display_name = "Trae Agent (OSS)"
     binary = "trae-cli"
+    install_strategy = InstallStrategy(
+        kind="uv_tool",
+        package="git+https://github.com/bytedance/trae-agent.git",
+        version_style="git_ref",
+        python_version="3.12",
+        force=True,
+        with_packages=("docker", "pexpect", "unidiff"),
+        fallback_no_cache_dir=True,
+    )
+    run_template = RunCommandTemplate(
+        base_args=("run",),
+        prompt_mode="arg",
+        prompt_flag=None,
+        model_flag="--model",
+        media_injection="none",
+    )
 
     def is_installed(self) -> bool:
         if not super().is_installed():
             return False
         result = self._run(["trae-cli", "--version"])
         return result.exit_code == 0 and bool(result.output.strip())
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        del scope
-        commit = version.strip() if version and version.strip() else None
-        url = "git+https://github.com/bytedance/trae-agent.git"
-        if commit:
-            url = f"{url}@{commit}"
-        result = self._uv_tool_install(
-            url,
-            python_version="3.12",
-            force=True,
-            with_packages=["docker", "pexpect", "unidiff"],
-            fallback_no_cache_dir=True,
-        )
-        config_path = self.configure()
-        ok = result.exit_code == 0
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version(),
-            ok=ok,
-            details=result.output,
-            config_path=config_path,
-        )
 
     def configure(self) -> Optional[str]:
         api_key = self._resolve_openai_api_key("TRAE_AGENT_API_KEY")
@@ -102,10 +96,8 @@ class TraeOssAgent(CodingAgent):
             trajectory_file = Path(traj_env).expanduser()
         else:
             trajectory_file = self.workdir / "trae_trajectory.json"
-        cmd = [
-            "trae-cli",
-            "run",
-            prompt,
+        template = self.run_template
+        extra_args = [
             "--working-dir",
             str(self.workdir),
             "--trajectory-file",
@@ -113,169 +105,67 @@ class TraeOssAgent(CodingAgent):
         ]
         config_path = Path.home() / ".config" / "trae" / "config.yaml"
         if config_path.exists():
-            cmd.extend(["--config-file", str(config_path)])
+            extra_args.extend(["--config-file", str(config_path)])
         model = self._resolve_openai_model("TRAE_AGENT_MODEL", model_override=model_override)
-        if model:
-            cmd.extend(["--model", model])
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=prompt,
+            model=model,
+            extra_args=extra_args,
+        )
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
 
-        trajectory_payload = self._load_trajectory_payload(trajectory_file)
-        usage = self._extract_usage_from_trajectory(trajectory_payload)
-        model_name = self._extract_model_name_from_trajectory(trajectory_payload)
-
-        output_path = self._write_output(self.name, output)
-        trajectory_content = self._format_trajectory_trace(
-            trajectory_file=trajectory_file,
-            raw_output=output,
-            output_path=output_path,
-        )
-        trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=self._ensure_models_usage({}, usage, model_name),
-            tool_calls=self._extract_tool_calls_from_trajectory(trajectory_payload),
-            llm_calls=self._extract_llm_calls_from_trajectory(trajectory_payload),
-            response=self._extract_response(output, trajectory_payload),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+        trajectory_payload = self._load_json_dict(trajectory_file)
+        model_name, usage, llm_calls, tool_calls, response = self._extract_trajectory_stats(trajectory_payload)
+        snapshot = self._build_single_model_stats_snapshot(
+            model_name=model_name,
+            usage=usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            total_cost=None,
         )
 
-    def get_version(self) -> Optional[str]:
-        return self._version_text(["trae-cli", "--version"])
+        trajectory_raw = self._read_text(trajectory_file) if trajectory_file.exists() else None
+        if trajectory_raw and trajectory_raw.strip():
+            trajectory_content = format_trace_text(trajectory_raw, source=str(trajectory_file))
+        else:
+            trajectory_content = format_trace_text(output, source=str(trajectory_file))
+        return self.finalize_run(
+            command_result=result,
+            response=response or self._last_stdout_line(output),
+            models_usage=snapshot.models_usage if snapshot is not None else {},
+            llm_calls=snapshot.llm_calls if snapshot is not None else None,
+            tool_calls=snapshot.tool_calls if snapshot is not None else None,
+            trajectory_content=trajectory_content,
+        )
 
-    def _load_trajectory_payload(self, path: Path) -> Optional[Dict[str, Any]]:
-        if not path.exists():
-            return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if isinstance(data, dict):
-            return data
-        return None
+    def _extract_trajectory_stats(
+        self, payload: Optional[Dict[str, Any]]
+    ) -> tuple[Optional[str], Optional[Dict[str, int]], Optional[int], Optional[int], Optional[str]]:
+        model_name = req_str(payload, "$.model")
 
-    def _extract_usage_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
-        interactions = self._extract_llm_interactions(payload)
-        if interactions is None:
-            return None
-        prompt_tokens = 0
-        completion_tokens = 0
-        for interaction in interactions:
-            response = interaction.get("response")
-            if not isinstance(response, dict):
-                return None
-            usage = response.get("usage")
-            if not isinstance(usage, dict):
-                return None
-            input_tokens = self._as_int(usage.get("input_tokens"))
-            output_tokens = self._as_int(usage.get("output_tokens"))
-            if input_tokens is None or output_tokens is None:
-                return None
-            prompt_tokens += input_tokens
-            completion_tokens += output_tokens
-        return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        }
+        llm_calls = self._count_selected(payload, "$.llm_interactions[*]")
 
-    def _extract_llm_calls_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        interactions = self._extract_llm_interactions(payload)
-        if interactions is None:
-            return None
-        return len(interactions)
+        usage_values = select_values(payload, "$.llm_interactions[*].response.usage")
+        parsed_usages = [
+            parsed
+            for parsed in (
+                parse_usage_by_model(value, "input_output")
+                for value in (usage_values or [])
+                if isinstance(value, dict)
+            )
+            if parsed is not None
+        ]
+        usage = self._sum_usage_entries(parsed_usages)
 
-    def _extract_tool_calls_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        if not isinstance(payload, dict):
-            return None
-        agent_steps = payload.get("agent_steps")
-        if not isinstance(agent_steps, list):
-            return None
-        total = 0
-        for step in agent_steps:
-            if not isinstance(step, dict):
-                return None
-            tool_calls = step.get("tool_calls")
-            if tool_calls is None:
-                continue
-            if not isinstance(tool_calls, list):
-                return None
-            total += len(tool_calls)
-        return total
+        tool_calls = self._count_selected(payload, "$.agent_steps[*].tool_calls[*]")
 
-    def _extract_llm_interactions(self, payload: Optional[Dict[str, Any]]) -> Optional[list[Dict[str, Any]]]:
-        if not isinstance(payload, dict):
-            return None
-        llm_interactions = payload.get("llm_interactions")
-        if not isinstance(llm_interactions, list) or not llm_interactions:
-            return None
-        interactions: list[Dict[str, Any]] = []
-        for item in llm_interactions:
-            if not isinstance(item, dict):
-                return None
-            interactions.append(item)
-        return interactions
-
-    def _extract_response(self, output: str, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        response = self._extract_response_from_trajectory(payload)
-        if response:
-            return response
-        stdout = self._stdout_only(output)
-        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-        if lines:
-            return lines[-1]
-        return None
-
-    def _extract_response_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(payload, dict):
-            return None
-
-        final_result = payload.get("final_result")
-        if isinstance(final_result, str):
-            cleaned = final_result.strip()
-            if cleaned:
-                return cleaned
-
-        interactions = payload.get("llm_interactions")
-        if not isinstance(interactions, list):
-            return None
-        for interaction in reversed(interactions):
-            if not isinstance(interaction, dict):
-                continue
-            response = interaction.get("response")
-            if not isinstance(response, dict):
-                continue
-            content = response.get("content")
-            if not isinstance(content, str):
-                continue
-            cleaned = content.strip()
-            if cleaned:
-                return cleaned
-        return None
-
-    def _extract_model_name_from_trajectory(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(payload, dict):
-            return None
-        model_name = payload.get("model")
-        if not isinstance(model_name, str):
-            return None
-        cleaned = model_name.strip()
-        if not cleaned:
-            return None
-        return cleaned
-
-    def _format_trajectory_trace(self, *, trajectory_file: Path, raw_output: str, output_path: Path) -> str:
-        if trajectory_file.exists():
-            try:
-                trajectory_raw = trajectory_file.read_text(encoding="utf-8")
-            except Exception:
-                trajectory_raw = ""
-            if trajectory_raw.strip():
-                return format_trace_text(trajectory_raw, source=str(trajectory_file))
-        return format_trace_text(raw_output, source=str(output_path))
+        response = self._first_selected_text(
+            payload,
+            (
+                "$.final_result",
+                "$.llm_interactions[*].response.content",
+            ),
+        )
+        return model_name, usage, llm_calls, tool_calls, response

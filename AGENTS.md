@@ -26,13 +26,17 @@
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
   - `python tests/availability_test.py <agent...>`
-- Agent availability tests can take a long time; use a 10-minute timeout (`--timeout-seconds 600`) to reduce interruption risk.
-- Run multiple coding-agent invocation tasks in parallel to save total test time and reduce expected timeout risk.
-- If parallel execution causes race conditions (for example concurrent installation), fix the code before relying on the test result.
-- cakit must support concurrent multi-agent testing/runs; parallel execution is required instead of serial-only validation.
-- By default, repeated stability runs are not required. If one run succeeds with correct response semantics and required stats fields, treat the capability as available.
-- Do not add code-level unit/integration test points for coding agent availability or stats extraction. Validate with `tests/availability_test.py` and manual, subjective review of real outputs.
-- Do not treat automated pass/fail in scripts as sufficient by itself; always inspect response content and judge correctness manually.
+- Execution strategy:
+  - Agent availability tests can take a long time; use a 15-minute timeout to reduce interruption risk.
+  - Run multiple coding-agent invocation tasks in parallel to save total test time and reduce expected timeout risk.
+  - cakit must support concurrent multi-agent testing/runs; parallel execution is required instead of serial-only validation.
+  - If parallel execution causes race conditions (for example concurrent installation), fix the code before relying on the test result.
+  - By default, repeated stability runs are not required. If one run succeeds with correct response semantics and required stats fields, treat the capability as available.
+  - Do not add code-level unit/integration test points for coding agent availability or stats extraction. Validate with `tests/availability_test.py` and manual, subjective review of real outputs.
+- Evaluation principles:
+  - Do not treat automated pass/fail in scripts as sufficient by itself; always inspect response content and judge correctness manually.
+  - Record whether each check passes based on the actual response content (not just process start).
+  - For image/video capability checks, the configured base model must natively support the corresponding modality. If the current model does not support image/video input (for example text-only variants), switch to a modality-capable model before concluding support status.
 - If manual validation is required, run tests in this order and in the same shell:
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`
@@ -41,44 +45,61 @@
   5. `cakit run <agent> "What happens in this video? List any visible text." --video tests/video.mp4 > /tmp/cakit-<agent>-video.json` (video input check; use a small local mp4)
   6. `cakit run <agent> "Visit https://github.com/algorithmicsuperintelligence/openevolve and summarize what is on that page." > /tmp/cakit-<agent>-web.json` (web access check)
 - Prompt-path multimodal check is required: test whether the coding agent can read local image/video files when only file paths are included in prompt text (without `--image`/`--video`) and report the observed behavior.
-- For image/video capability checks, the configured base model must natively support the corresponding modality. If the current model does not support image/video input (for example text-only variants), switch to a modality-capable model before concluding support status.
-- Record whether each check passes based on the actual response content (not just process start).
-- Verify stats field extraction from JSON outputs:
-  1. `response`: key exists and value is non-empty text.
-  2. `models_usage`: key exists and must be a non-empty object with integer token fields for successful runs.
-  3. `llm_calls`: key exists and must be an integer (`>= 1`) for successful runs.
-  4. `tool_calls`: key exists and must be an integer (`>= 0`).
-- If `models_usage` is `{}` or `llm_calls`/`tool_calls` is missing/`null` on a successful run, treat it as extraction failure.
-- Do not write guessed values for missing stats. If extraction is not possible, keep `None` (`null`) instead of writing placeholder values like `0`.
-- For session/log fallback parsing, use exact session matching (for example by exact `session_id` path match). Do not use fuzzy matching by mtime or nearest file.
-- Model name in `models_usage` must come from run artifacts (stdout payload/session logs). Do not fill it from config/env/`--model` input.
-- Parsing must be strict and format-aware: read only exact, documented fields; if structure is unexpected, return `None` immediately instead of stacking fallback parsers.
-- Field names must be exact and stable. Do not try multiple alternative field names or fallback chains for the same signal; if a required field is missing, return `None`.
-- Usage extraction must be source-verified. When a coding agent CLI has an open-source repository, first check whether the repo already exists under `/tmp`; if it exists, `cd` into it and run `git pull` to update, otherwise clone it under `/tmp` for local inspection. Confirm how usage is produced before implementing or changing token accounting. This verification must cover `llm_calls`, token usage, and `tool_calls` behavior. If the environment blocks cloning, provide the exact `git clone ... /tmp/<repo>` command and ask the user to run it, then continue with local inspection.
-- Token usage is defined as the sum of prompt tokens and completion tokens across all LLM calls made during the agent run (including subagents when applicable).
-- Code and documentation must stay consistent. When behavior changes, update docs in the same PR/patch and ensure they reflect the exact implementation (no mismatched fallbacks or fields).
+- Stats validation rules:
+  - Verify stats field extraction from JSON outputs:
+    1. `response`: key exists and value is non-empty text.
+    2. `models_usage`: key exists and must be a non-empty object with integer token fields for successful runs.
+    3. `llm_calls`: key exists and must be an integer (`>= 1`) for successful runs.
+    4. `tool_calls`: key exists and must be an integer (`>= 0`).
+  - If `models_usage` is `{}` or `llm_calls`/`tool_calls` is missing/`null` on a successful run, treat it as extraction failure.
+  - Do not write guessed values for missing stats. If extraction is not possible, keep `None` (`null`) instead of writing placeholder values like `0`.
+  - Stats fields must be extracted independently: if one field cannot be extracted, set only that field to `None` (or `{}` for `models_usage`) and keep other successfully extracted fields.
+  - Token usage is defined as the sum of prompt tokens and completion tokens across all LLM calls made during the agent run (including subagents when applicable).
+  - Model name in `models_usage` must come from run artifacts (stdout payload/session logs). Do not fill it from config/env/`--model` input.
+  - Parsing must be strict and format-aware: read only exact, documented fields; if structure is unexpected, return `None` immediately instead of stacking fallback parsers.
+  - Field names must be exact and stable. Do not try multiple alternative field names or fallback chains for the same signal; if a required field is missing, return `None`.
+  - For session/log fallback parsing, use exact session matching (for example by exact `session_id` path match). Do not use fuzzy matching by mtime or nearest file.
+- Usage extraction implementation requirements:
+  - Usage extraction must be source-verified. When a coding agent CLI has an open-source repository, first check whether the repo already exists under `/tmp`; if it exists, `cd` into it and run `git pull` to update, otherwise clone it under `/tmp` for local inspection. Confirm how usage is produced before implementing or changing token accounting. This verification must cover `llm_calls`, token usage, and `tool_calls` behavior. If the environment blocks cloning, provide the exact `git clone ... /tmp/<repo>` command and ask the user to run it, then continue with local inspection.
 - On extraction failure, inspect:
   1. `output_path` / `raw_output` from `cakit run`.
   2. Upstream coding agent logs/sessions (for example Kimi: `~/.kimi/logs`, `~/.kimi/sessions/*/*/wire.jsonl`, `~/.kimi/sessions/*/*/context.jsonl`).
   3. Agent extraction code in `src/agents/<agent>.py`, then fix parsing.
-- Update `README.md` and `README.zh.md` Test Coverage Matrix after testing, and record `Test Version` from `agent_version` in `cakit run` output.
+- Documentation and coverage records:
+  - Code and documentation must stay consistent. When behavior changes, update docs in the same PR/patch and ensure they reflect the exact implementation (no mismatched fallbacks or fields).
+  - Update `README.md` and `README.zh.md` Test Coverage Matrix after testing, and record `Test Version` from `agent_version` in `cakit run` output.
 
 ## Code Structure and Style
-- `src/agents/`: one file per agent, one class per agent. All agent-specific logic (install, run, usage extraction, etc.) must live in the corresponding class.
-- `src/utils.py`: only necessary shared utilities; do not wrap one-liners into functions.
-- Keep code concise with intent:
+- Code placement and responsibilities:
+  - `src/agents/`: one file per agent, one class per agent. All agent-specific logic (install, run, usage extraction, etc.) must live in the corresponding class.
+  - `src/utils.py`: only necessary shared utilities; do not wrap one-liners into functions.
+  - Similar cross-coding-agent helper logic must be extracted into `src/utils.py` or `src/agents/base.py` (choose based on whether it is generic utility vs agent-runtime behavior).
+  - Keep shared parsing helpers in `src/stats_extract.py`; keep helper implementations used by only one coding agent in that agent module; do not introduce standalone `*Extractor` class abstractions.
+  - Keep media prompt-injection helpers in `src/agents/base.py`:
+    - natural-language local-path injection: `_build_natural_media_prompt` (for tool-driven file reading flows)
+    - symbolic path injection: `_build_symbolic_media_prompt` (for `@{path}` style flows)
+  - If `cakit run --image` / `--video` works by injecting local paths into prompt text and the coding agent can read the target media directly through its available tool/model behavior, count it as support and document the concrete behavior in README.
+  - For video, frame-extraction-only behavior (extracting frames first, then reading still images) does not count as formal `--video` support.
+- Reuse implementation rules:
+  - Reuse uv/pip install helpers via shared methods (prefer `src/agents/base.py`) instead of duplicating install command assembly in each coding agent.
+  - For run result assembly, prefer the shared `finalize_run(...)` path in `src/agents/base.py`: agent classes should focus on artifact parsing and pass parsed values to the shared finalizer, instead of manually repeating raw-output writing, trajectory writing, and `RunResult(...)` construction.
+  - Prefer data-driven agent declarations directly on `CodingAgent` subclasses via `install_strategy`, `run_template`, and `version_template`; keep custom imperative logic only for upstream-specific differences that cannot be represented by shared templates.
+- Code style:
+  - Do not add redundant defensive checks for class-declared attributes/constants (for example, checking `self.run_template is None` when `run_template` is already declared on that agent class); use declared values directly.
   - When building `RunResult`, remove one-time pass-through locals and construct those values inline in `RunResult(...)`.
   - Keep meaningful readability variables (for example `trajectory_content`) when they make the flow clearer, even if they are used once.
-- Use the standard library to parse JSON; if custom parsing is unavoidable, put it in `src/utils.py`.
-- Reuse uv/pip install helpers via shared methods (prefer `src/agents/base.py`) instead of duplicating install command assembly in each coding agent.
-- Similar cross-coding-agent helper logic must be extracted into `src/utils.py` or `src/agents/base.py` (choose based on whether it is generic utility vs agent-runtime behavior).
-- Use the term “coding agent” consistently.
-- Use the name `trae-oss` to distinguish from other Trae products.
-- Keep media prompt-injection helpers in `src/agents/base.py`:
-  - natural-language local-path injection: `_build_natural_media_prompt` (for tool-driven file reading flows)
-  - symbolic path injection: `_build_symbolic_media_prompt` (for `@{path}` style flows)
-- If `cakit run --image` / `--video` works by injecting local paths into prompt text and the coding agent can read the target media directly through its available tool/model behavior, count it as support and document the concrete behavior in README.
-- For video, frame-extraction-only behavior (extracting frames first, then reading still images) does not count as formal `--video` support.
+  - For intentionally unused parameters/locals, do not use `del ...`; leave them unused directly.
+- Parsing implementation constraints:
+  - Use the standard library to parse JSON; if custom parsing is unavoidable, put it in `src/utils.py`.
+- JSONPath and aggregation rules:
+  - For straightforward transforms/filters/aggregations, prefer completing work in one clear block (for example list comprehensions, generator expressions, or JSONPath selectors).
+  - Stats parsing must use JSONPath (RFC 9535) for all stats value reads, including fixed single-field reads.
+  - Use shared accessors (`select_values(path)`, `sum_int(path)`, `last_value(path)`): keep `select_values(path)` as the core batch-selection API, with `sum_int(path)` and `last_value(path)` as simple wrappers, instead of scattered `.get(...)`.
+  - For conditional filtering and multi-element stats, prefer JSONPath filter selectors (`[? ... ]`) and array selection (`[*]`), applying filtering in-query before aggregation/extraction with shared aggregators (`sum_int`, `last_value`) instead of ad-hoc Python or per-agent loops.
+  - For one-off JSONPath usage, inline path literals directly at the call site; do not force extraction into class/module constants unless reused.
+- Terminology and naming:
+  - Use the term “coding agent” consistently.
+  - Use the name `trae-oss` to distinguish from other Trae products.
 
 ## Behavioral Constraints
 - If an agent is not installed, `cakit run` must auto-run `cakit install <agent>` with a notice.
@@ -107,6 +128,7 @@
   - `tool_calls`, `llm_calls`, `total_cost` (when available)
   - `telemetry_log` (when enabled, return log path or OTEL endpoint)
   - `response`, `exit_code`, `output_path`, `raw_output`, `trajectory_path`
+- Extraction behavior should be lenient: if path is missing/invalid or value type is incompatible, return `None` directly.
 - `trajectory_path` is required and must point to a formatted, human-readable trace file generated from run artifacts without truncation.
 - Trajectory conversion rules:
   - Convert run artifacts to structured YAML-formatted human-readable output.

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import json
-import datetime
 import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text, load_json_payloads
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    last_value,
+    select_values,
+    sum_int,
+)
+from ..models import RunResult
 
 
 class CodexAgent(CodingAgent):
@@ -19,9 +22,12 @@ class CodexAgent(CodingAgent):
     binary = "codex"
     supports_images = True
     supports_videos = False
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="@openai/codex", scope=scope, version=version, require_config=True, configure_failure_message="codex configure failed")
+    install_strategy = InstallStrategy(
+        kind="npm",
+        package="@openai/codex",
+        require_config=True,
+        configure_failure_message="codex configure failed",
+    )
 
     def configure(self) -> Optional[str]:
         use_oauth = self._use_oauth()
@@ -96,7 +102,15 @@ class CodexAgent(CodingAgent):
         if api_key:
             env["CODEX_API_KEY"] = api_key
             env["OPENAI_API_KEY"] = api_key
-        last_message_path = self._create_last_message_path()
+        output_root = os.environ.get("CAKIT_OUTPUT_DIR")
+        if output_root:
+            output_dir = Path(output_root)
+        else:
+            output_dir = Path.home() / ".cache" / "cakit"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        unique = uuid.uuid4().hex
+        last_message_path = output_dir / f"{self.name}-{stamp}-{unique}-last-message.txt"
         cmd = [
             "codex",
             "exec",
@@ -120,28 +134,39 @@ class CodexAgent(CodingAgent):
             unset_env = ["OPENAI_API_KEY", "CODEX_API_KEY"]
         result = self._run(cmd, env, input_text=prompt, unset_env=unset_env, base_env=base_env)
         output = result.output
-        payloads = load_json_payloads(output)
-        models_usage, llm_calls = self._extract_models_usage(payloads)
-        output_path = self._write_output(self.name, output)
-        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
+        payloads = self._load_output_json_payloads(output, stdout_only=False)
+        usage, llm_calls = self._extract_turn_completed_metrics(payloads)
+        model_name = self._extract_model_name(payloads)
+        models_usage: Dict[str, Dict[str, int]] = {}
+        if model_name is not None and usage is not None:
+            models_usage[model_name] = usage
+        tool_item_ids: set[str] = set()
+        for tool_type in {"mcp_tool_call", "collab_tool_call", "command_execution", "web_search"}:
+            ids = select_values(payloads, f'$[?(@.item.type=="{tool_type}")].item.id')
+            if ids is None:
+                continue
+            for item_id in ids:
+                if isinstance(item_id, str):
+                    normalized_id = item_id.strip()
+                    if normalized_id:
+                        tool_item_ids.add(normalized_id)
+        extracted_stats = self._normalize_stats_snapshot(
             models_usage=models_usage,
-            tool_calls=self._count_tool_calls(payloads),
             llm_calls=llm_calls,
-            telemetry_log=os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
-            response=self._read_last_message(last_message_path),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            tool_calls=len(tool_item_ids),
         )
-
-    def get_version(self) -> Optional[str]:
-        return self._version_text(["codex", "--version"])
+        stats = self._merge_stats_snapshots(snapshots=[extracted_stats])
+        message_text = self._read_text(last_message_path)
+        response = message_text.strip() if isinstance(message_text, str) and message_text.strip() else None
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=stats.models_usage,
+            llm_calls=stats.llm_calls,
+            tool_calls=stats.tool_calls,
+            total_cost=stats.total_cost,
+            telemetry_log=os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+        )
 
     def _use_oauth(self) -> bool:
         value = os.environ.get("CAKIT_CODEX_USE_OAUTH")
@@ -155,154 +180,58 @@ class CodexAgent(CodingAgent):
             return Path(codex_home).expanduser() / "auth.json"
         return Path.home() / ".codex" / "auth.json"
 
-    def _extract_models_usage(
+    def _extract_turn_completed_metrics(
         self, payloads: List[Dict[str, Any]]
-    ) -> Tuple[Dict[str, Dict[str, int]], Optional[int]]:
-        thread_id = None
-        for payload in payloads:
-            if payload.get("type") == "thread.started":
-                thread_id = payload.get("thread_id")
-                if isinstance(thread_id, str) and thread_id:
-                    break
+    ) -> tuple[Optional[Dict[str, int]], Optional[int]]:
+        turn_completed = select_values(payloads, '$[?(@.type=="turn.completed")]')
+        if turn_completed is None:
+            return None, None
+        llm_calls = len(turn_completed)
+        input_values = select_values(payloads, '$[?(@.type=="turn.completed")].usage.input_tokens')
+        cached_values = select_values(payloads, '$[?(@.type=="turn.completed")].usage.cached_input_tokens')
+        output_values = select_values(payloads, '$[?(@.type=="turn.completed")].usage.output_tokens')
+        if input_values is None or cached_values is None or output_values is None:
+            return None, llm_calls
+        if len(input_values) != llm_calls or len(cached_values) != llm_calls or len(output_values) != llm_calls:
+            return None, llm_calls
+        input_tokens = sum_int(payloads, '$[?(@.type=="turn.completed")].usage.input_tokens')
+        cached_input_tokens = sum_int(payloads, '$[?(@.type=="turn.completed")].usage.cached_input_tokens')
+        output_tokens = sum_int(payloads, '$[?(@.type=="turn.completed")].usage.output_tokens')
+        if input_tokens is None or cached_input_tokens is None or output_tokens is None:
+            return None, llm_calls
+        prompt_tokens = input_tokens + cached_input_tokens
+        usage = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": prompt_tokens + output_tokens,
+        }
+        return usage, llm_calls
+
+    def _extract_model_name(self, payloads: List[Dict[str, Any]]) -> Optional[str]:
+        thread_id = last_value(payloads, '$[?(@.type=="thread.started")].thread_id')
+        if not isinstance(thread_id, str):
+            return None
+        thread_id = thread_id.strip()
         if not thread_id:
-            return {}, None
-        session_path = self._find_session_file(thread_id)
-        if not session_path:
-            return {}, None
-        model, usage, llm_calls = self._parse_session_file(session_path)
-        if not usage:
-            return {}, None
-        if not model:
-            return {"unknown": usage}, llm_calls
-        return {model: usage}, llm_calls
-
-    def _create_last_message_path(self) -> Path:
-        root = os.environ.get("CAKIT_OUTPUT_DIR")
-        if root:
-            output_dir = Path(root)
-        else:
-            output_dir = Path.home() / ".cache" / "cakit"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        unique = uuid.uuid4().hex
-        return output_dir / f"{self.name}-{stamp}-{unique}-last-message.txt"
-
-    def _read_last_message(self, path: Path) -> Optional[str]:
-        try:
-            if path.exists():
-                text = path.read_text(encoding="utf-8", errors="ignore").strip()
-                if text:
-                    return text
-        except Exception:
             return None
+        codex_home = os.environ.get("CODEX_HOME")
+        sessions_root = (Path(codex_home).expanduser() if codex_home else Path.home() / ".codex") / "sessions"
+        if not sessions_root.exists():
+            return None
+        for _ in range(5):
+            matches = sorted(sessions_root.rglob(f"rollout-*{thread_id}.jsonl"))
+            if len(matches) != 1:
+                time.sleep(0.1)
+                continue
+            records_text = self._read_text(matches[0])
+            if records_text is None:
+                time.sleep(0.1)
+                continue
+            records = self._load_output_json_payloads(records_text, stdout_only=False)
+            model_name = last_value(records, '$[?(@.type=="turn_context")].payload.model')
+            if isinstance(model_name, str):
+                normalized = model_name.strip()
+                if normalized:
+                    return normalized
+            time.sleep(0.1)
         return None
-
-    def _codex_home(self) -> Path:
-        home = os.environ.get("CODEX_HOME")
-        if home:
-            return Path(home).expanduser()
-        return Path.home() / ".codex"
-
-    def _find_session_file(self, thread_id: str) -> Optional[Path]:
-        root = self._codex_home() / "sessions"
-        if not root.exists():
-            return None
-        date_path = self._thread_id_date_path(thread_id)
-        if not date_path:
-            return None
-        search_root = root / date_path
-        if not search_root.exists():
-            return None
-        matches = sorted(search_root.glob(f"rollout-*{thread_id}.jsonl"))
-        if len(matches) == 1:
-            return matches[0]
-        return None
-
-    def _thread_id_date_path(self, thread_id: str) -> Optional[Path]:
-        hex_str = thread_id.replace("-", "").lower()
-        if len(hex_str) != 32:
-            return None
-        if hex_str[12] != "7":
-            return None
-        try:
-            timestamp_ms = int(hex_str[:12], 16)
-        except Exception:
-            return None
-        timestamp = datetime.datetime.fromtimestamp(timestamp_ms / 1000, datetime.timezone.utc)
-        return Path(f"{timestamp:%Y/%m/%d}")
-
-    def _parse_session_file(
-        self, path: Path
-    ) -> Tuple[Optional[str], Optional[Dict[str, int]], Optional[int]]:
-        model: Optional[str] = None
-        usage: Optional[Dict[str, int]] = None
-        llm_calls = 0
-        try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except Exception:
-                    continue
-                if record.get("type") == "turn_context":
-                    payload = record.get("payload")
-                    if isinstance(payload, dict) and payload.get("model"):
-                        model = payload.get("model")
-                if record.get("type") == "event_msg":
-                    payload = record.get("payload")
-                    if not isinstance(payload, dict):
-                        continue
-                    if payload.get("type") != "token_count":
-                        continue
-                    info = payload.get("info")
-                    if not isinstance(info, dict):
-                        continue
-                    total = info.get("total_token_usage")
-                    if not isinstance(total, dict):
-                        continue
-                    input_tokens = self._as_int(total.get("input_tokens"))
-                    cached_input_tokens = self._as_int(total.get("cached_input_tokens"))
-                    output_tokens = self._as_int(total.get("output_tokens"))
-                    reasoning_output_tokens = self._as_int(total.get("reasoning_output_tokens"))
-                    total_tokens = self._as_int(total.get("total_tokens"))
-                    if None in {
-                        input_tokens,
-                        cached_input_tokens,
-                        output_tokens,
-                        reasoning_output_tokens,
-                        total_tokens,
-                    }:
-                        return model, None, None
-                    prompt = input_tokens + cached_input_tokens
-                    completion = output_tokens + reasoning_output_tokens
-                    llm_calls += 1
-                    usage = {
-                        "prompt_tokens": prompt,
-                        "completion_tokens": completion,
-                        "total_tokens": total_tokens,
-                    }
-        except Exception:
-            return model, usage, None
-        return model, usage, (llm_calls or None)
-
-    def _count_tool_calls(self, payloads: List[Dict[str, Any]]) -> Optional[int]:
-        tool_types = {"mcp_tool_call", "collab_tool_call", "command_execution", "web_search"}
-        tool_item_ids: set[str] = set()
-        for payload in payloads:
-            if not isinstance(payload, dict):
-                continue
-            event_type = payload.get("type")
-            if event_type not in {"item.started", "item.completed"}:
-                continue
-            item = payload.get("item")
-            if not isinstance(item, dict):
-                continue
-            item_type = item.get("type")
-            if item_type not in tool_types:
-                continue
-            item_id = item.get("id")
-            if not isinstance(item_id, str) or not item_id:
-                return None
-            tool_item_ids.add(item_id)
-        return len(tool_item_ids)

@@ -4,86 +4,121 @@ import json
 import os
 import platform
 import re
+import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text
+from .base import (
+    CodingAgent,
+    CommandResult,
+    InstallStrategy,
+    RunCommandTemplate,
+    VersionCommandTemplate,
+)
+from ..models import RunResult
+from ..stats_extract import last_value, parse_usage_by_model, req_str, select_values
 
 
 class TraeCnAgent(CodingAgent):
     name = "trae-cn"
     display_name = "TRAE CLI (trae.cn)"
     binary = "traecli"
+    install_strategy = InstallStrategy(kind="custom")
+    run_template = RunCommandTemplate(
+        base_args=("--print", "--json", "--yolo"),
+        prompt_mode="arg",
+        prompt_flag=None,
+        model_flag=None,
+        media_injection="none",
+    )
+    version_template = VersionCommandTemplate(
+        args=("traecli", "--version"),
+        parse_mode="regex_first_line",
+        regex=r"(?i)version\s+([A-Za-z0-9._-]+)$",
+    )
     _LATEST_VERSION_URL = "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/trae-cli_latest_version.txt"
     _DOWNLOAD_URL_TEMPLATE = (
         "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/trae-cli_{version}_{os_name}_{arch}.tar.gz"
     )
 
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+    def _install_with_custom_strategy(
+        self,
+        *,
+        strategy: InstallStrategy,
+        scope: str,
+        version: Optional[str],
+    ) -> CommandResult:
+        started = time.monotonic()
         resolved_version, detail = self._resolve_install_version(version)
         if not resolved_version:
-            return InstallResult(
-                agent=self.name,
-                version=None,
-                ok=False,
-                details=detail,
-                config_path=None,
+            return CommandResult(
+                exit_code=1,
+                stdout=detail or "",
+                stderr="failed to resolve trae-cn install version",
+                duration_seconds=time.monotonic() - started,
             )
-        os_name = self._detect_os_name()
-        arch = self._detect_arch()
+        raw_os = platform.system().strip().lower()
+        if raw_os == "linux":
+            os_name = "linux"
+        elif raw_os == "darwin":
+            os_name = "darwin"
+        else:
+            os_name = None
+        raw_arch = platform.machine().strip().lower()
+        if raw_arch == "x86_64":
+            arch = "amd64"
+        elif raw_arch in {"aarch64", "arm64"}:
+            arch = "arm64"
+        else:
+            arch = None
         if os_name is None or arch is None:
-            return InstallResult(
-                agent=self.name,
-                version=None,
-                ok=False,
-                details="unsupported platform for trae-cn install",
-                config_path=None,
+            return CommandResult(
+                exit_code=1,
+                stdout=detail or "",
+                stderr="unsupported platform for trae-cn install",
+                duration_seconds=time.monotonic() - started,
             )
         archive_version = resolved_version[1:] if resolved_version.startswith("v") else resolved_version
         download_url = self._DOWNLOAD_URL_TEMPLATE.format(version=archive_version, os_name=os_name, arch=arch)
-        tmp_archive = Path("/tmp") / f"trae-cli_{archive_version}_{os_name}_{arch}.tar.gz"
         install_root = Path.home() / ".local" / "share" / "cakit" / "trae-cn" / resolved_version
         bin_dir = Path.home() / ".local" / "bin"
         bin_path = install_root / "trae-cli"
         detail_parts = [detail] if detail else []
 
-        download = self._run(["curl", "-fsSL", "-o", str(tmp_archive), download_url])
-        detail_parts.append(download.output)
-        if download.exit_code != 0:
-            return InstallResult(
-                agent=self.name,
-                version=None,
-                ok=False,
-                details="\n".join(part for part in detail_parts if part),
-                config_path=None,
-            )
+        with tempfile.TemporaryDirectory(prefix="cakit-trae-cn-") as temp_dir:
+            tmp_archive = Path(temp_dir) / f"trae-cli_{archive_version}_{os_name}_{arch}.tar.gz"
+            download = self._run(["curl", "-fsSL", "-o", str(tmp_archive), download_url])
+            detail_parts.append(download.output)
+            if download.exit_code != 0:
+                return CommandResult(
+                    exit_code=1,
+                    stdout="\n".join(part for part in detail_parts if part),
+                    stderr="failed to download trae-cn binary archive",
+                    duration_seconds=time.monotonic() - started,
+                )
 
-        install_root.mkdir(parents=True, exist_ok=True)
-        extract = self._run(["tar", "-xzf", str(tmp_archive), "-C", str(install_root)])
-        detail_parts.append(extract.output)
-        if extract.exit_code != 0 or not bin_path.exists():
-            return InstallResult(
-                agent=self.name,
-                version=None,
-                ok=False,
-                details="\n".join(part for part in detail_parts if part),
-                config_path=None,
-            )
+            install_root.mkdir(parents=True, exist_ok=True)
+            extract = self._run(["tar", "-xzf", str(tmp_archive), "-C", str(install_root)])
+            detail_parts.append(extract.output)
+            if extract.exit_code != 0 or not bin_path.exists():
+                return CommandResult(
+                    exit_code=1,
+                    stdout="\n".join(part for part in detail_parts if part),
+                    stderr="failed to extract trae-cn archive",
+                    duration_seconds=time.monotonic() - started,
+                )
 
         bin_dir.mkdir(parents=True, exist_ok=True)
         symlink_path = bin_dir / "traecli"
         if symlink_path.exists() or symlink_path.is_symlink():
             symlink_path.unlink()
         symlink_path.symlink_to(bin_path)
-        config_path = self.configure()
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version(),
-            ok=True,
-            details="\n".join(part for part in detail_parts if part),
-            config_path=config_path,
+        return CommandResult(
+            exit_code=0,
+            stdout="\n".join(part for part in detail_parts if part),
+            stderr="",
+            duration_seconds=time.monotonic() - started,
         )
 
     def configure(self) -> Optional[str]:
@@ -120,199 +155,72 @@ class TraeCnAgent(CodingAgent):
         env = {
             "XDG_CONFIG_HOME": xdg_config_home,
         }
-        cmd = [
-            "traecli",
-            "--print",
-            "--json",
-            "--yolo",
-            prompt,
-        ]
+        template = self.run_template
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=prompt,
+        )
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        payload = self._extract_payload(output)
-        usage = self._extract_usage(payload)
-        model_name = self._extract_model_name(payload)
-        output_path = self._write_output(self.name, output)
-        trajectory_path = self._write_trajectory(
-            self.name, format_trace_text(output, source=str(output_path))
+        payload = self._parse_output_json_object(output)
+        response, usage, model_name, llm_calls, tool_calls = self._extract_payload_stats(payload)
+        snapshot = self._build_single_model_stats_snapshot(
+            model_name=model_name,
+            usage=usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            total_cost=None,
         )
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=self._ensure_models_usage({}, usage, model_name),
-            tool_calls=self._extract_tool_calls(payload),
-            llm_calls=self._extract_llm_calls(payload),
-            response=self._extract_response(payload, output),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+        return self.finalize_run(
+            command_result=result,
+            response=response or self._last_stdout_line(output),
+            models_usage=snapshot.models_usage if snapshot is not None else {},
+            llm_calls=snapshot.llm_calls if snapshot is not None else None,
+            tool_calls=snapshot.tool_calls if snapshot is not None else None,
         )
 
-    def get_version(self) -> Optional[str]:
-        first = self._version_first_line(["traecli", "--version"])
-        if not first:
-            return None
-        match = re.search(r"version\s+([A-Za-z0-9._-]+)$", first)
-        if match:
-            return match.group(1)
-        return None
+    def _extract_payload_stats(
+        self, payload: Optional[Dict[str, Any]]
+    ) -> tuple[Optional[str], Optional[Dict[str, int]], Optional[str], Optional[int], Optional[int]]:
+        response = self._last_selected_text(
+            payload,
+            '$.agent_states[*].messages[?(@.role == "assistant")].content',
+        )
+        if response is None:
+            response = req_str(payload, "$.error")
 
-    def _extract_payload(self, output: str) -> Optional[Dict[str, Any]]:
-        parsed = self._extract_last_json_value(self._stdout_only(output))
-        if isinstance(parsed, dict):
-            return parsed
-        return None
-
-    def _extract_response(self, payload: Optional[Dict[str, Any]], output: str) -> Optional[str]:
-        if isinstance(payload, dict):
-            states = payload.get("agent_states")
-            if isinstance(states, list):
-                for state in reversed(states):
-                    if not isinstance(state, dict):
-                        continue
-                    messages = state.get("messages")
-                    if not isinstance(messages, list):
-                        continue
-                    for message in reversed(messages):
-                        if not isinstance(message, dict):
-                            continue
-                        if message.get("role") != "assistant":
-                            continue
-                        content = message.get("content")
-                        if isinstance(content, str) and content.strip():
-                            return content.strip()
-            error_text = payload.get("error")
-            if isinstance(error_text, str) and error_text.strip():
-                return error_text.strip()
-        stdout = self._stdout_only(output)
-        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-        if lines:
-            return lines[-1]
-        return None
-
-    def _extract_usage(self, payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
-        if not isinstance(payload, dict):
-            return None
-        usage = payload.get("token_usage")
-        if not isinstance(usage, dict):
-            usage = self._extract_assistant_usage(payload)
-        if not isinstance(usage, dict):
-            return None
-        prompt_tokens = self._as_int(usage.get("prompt_tokens"))
-        completion_tokens = self._as_int(usage.get("completion_tokens"))
-        total_tokens = self._as_int(usage.get("total_tokens"))
-        if prompt_tokens is None or completion_tokens is None or total_tokens is None:
-            return None
-        return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-        }
-
-    def _extract_tool_calls(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        if not isinstance(payload, dict):
-            return None
-        states = payload.get("agent_states")
-        if not isinstance(states, list):
-            return None
-        total = 0
-        for state in states:
-            if not isinstance(state, dict):
-                return None
-            messages = state.get("messages")
-            if not isinstance(messages, list):
-                return None
-            for message in messages:
-                if not isinstance(message, dict):
-                    return None
-                tool_calls = message.get("tool_calls")
-                if tool_calls is None:
+        usage = None
+        top_level_usage = last_value(payload, "$.token_usage")
+        if isinstance(top_level_usage, dict):
+            usage = parse_usage_by_model(top_level_usage, "prompt_completion")
+        if usage is None:
+            assistant_usages = select_values(payload, '$.agent_states[*].messages[?(@.role == "assistant")].usage')
+            for raw_usage in reversed(assistant_usages or []):
+                if not isinstance(raw_usage, dict):
                     continue
-                if not isinstance(tool_calls, list):
-                    return None
-                total += len(tool_calls)
-        return total
+                parsed_usage = parse_usage_by_model(raw_usage, "prompt_completion")
+                if parsed_usage is not None:
+                    usage = parsed_usage
+                    break
 
-    def _extract_llm_calls(self, payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        if not isinstance(payload, dict):
-            return None
-        states = payload.get("agent_states")
-        if not isinstance(states, list):
-            return None
-        total = 0
-        for state in states:
-            if not isinstance(state, dict):
-                return None
-            messages = state.get("messages")
-            if not isinstance(messages, list):
-                return None
-            for message in messages:
-                if not isinstance(message, dict):
-                    return None
-                if message.get("role") == "assistant":
-                    total += 1
-        return total
-
-    def _extract_model_name(self, payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(payload, dict):
-            return None
-        model = payload.get("model")
-        if isinstance(model, str) and model.strip():
-            return model.strip()
-        states = payload.get("agent_states")
-        if not isinstance(states, list):
-            return None
-        for state in states:
-            if not isinstance(state, dict):
-                return None
-            instruction = state.get("instruction")
-            if not isinstance(instruction, list):
-                continue
-            for item in instruction:
-                if not isinstance(item, dict):
-                    return None
-                content = item.get("content")
+        model_name = req_str(payload, "$.model")
+        if model_name is None:
+            instruction_contents = select_values(payload, "$.agent_states[*].instruction[*].content")
+            for content in instruction_contents or []:
                 if not isinstance(content, str):
                     continue
                 match = re.search(r"underlying model is ([^\\.]+)\\.", content)
-                if match:
-                    candidate = match.group(1).strip()
-                    if candidate:
-                        return candidate
-        return None
+                if not match:
+                    continue
+                candidate = match.group(1).strip()
+                if candidate:
+                    model_name = candidate
+                    break
 
-    def _extract_assistant_usage(self, payload: Dict[str, Any]) -> Optional[Dict[str, int]]:
-        states = payload.get("agent_states")
-        if not isinstance(states, list):
-            return None
-        for state in states:
-            if not isinstance(state, dict):
-                return None
-            messages = state.get("messages")
-            if not isinstance(messages, list):
-                continue
-            for message in reversed(messages):
-                if not isinstance(message, dict):
-                    return None
-                if message.get("role") != "assistant":
-                    continue
-                usage = message.get("usage")
-                if not isinstance(usage, dict):
-                    continue
-                prompt_tokens = self._as_int(usage.get("prompt_tokens"))
-                completion_tokens = self._as_int(usage.get("completion_tokens"))
-                total_tokens = self._as_int(usage.get("total_tokens"))
-                if prompt_tokens is None or completion_tokens is None or total_tokens is None:
-                    return None
-                return {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
-                }
-        return None
+        llm_calls = self._count_selected(payload, '$.agent_states[*].messages[?(@.role == "assistant")]')
+        tool_calls = self._count_selected(payload, "$.agent_states[*].messages[*].tool_calls[*]")
+
+        return response, usage, model_name, llm_calls, tool_calls
 
     def _resolve_install_version(self, version: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         if version and version.strip():
@@ -329,24 +237,6 @@ class TraeCnAgent(CodingAgent):
         if not latest.startswith("v"):
             latest = f"v{latest}"
         return latest, result.output
-
-    @staticmethod
-    def _detect_os_name() -> Optional[str]:
-        raw = platform.system().strip().lower()
-        if raw == "linux":
-            return "linux"
-        if raw == "darwin":
-            return "darwin"
-        return None
-
-    @staticmethod
-    def _detect_arch() -> Optional[str]:
-        raw = platform.machine().strip().lower()
-        if raw == "x86_64":
-            return "amd64"
-        if raw in {"aarch64", "arm64"}:
-            return "arm64"
-        return None
 
     def _config_root(self) -> Path:
         return Path.home() / ".config" / "cakit" / "trae-cn"

@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    StatsSnapshot,
+    extract_opencode_session_export_stats,
+    last_value,
+    opt_float,
+    parse_usage_by_model,
+    req_str,
+    select_values,
+    sum_int,
+)
+from ..models import RunResult
 from ..utils import format_trace_text
-
-
-_ANSI_OSC_RE = re.compile(r"\x1b\][^\x07]*\x07")
-_ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-_MODEL_TAG_RE = re.compile(r"<model>([^<]+)</model>")
 
 
 class KiloCodeAgent(CodingAgent):
@@ -23,9 +27,10 @@ class KiloCodeAgent(CodingAgent):
     binary = "kilocode"
     supports_images = True
     supports_videos = False
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="@kilocode/cli", scope=scope, version=version)
+    install_strategy = InstallStrategy(kind="npm", package="@kilocode/cli")
+    _ANSI_OSC_RE = re.compile(r"\x1b\][^\x07]*\x07")
+    _ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+    _MODEL_TAG_RE = re.compile(r"<model>([^<]+)</model>")
 
     def configure(self) -> Optional[str]:
         payload, _ = self._build_runtime_config_payload(model_override=None)
@@ -45,7 +50,13 @@ class KiloCodeAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         agent_version = self.get_version()
-        major = self._parse_major_version(agent_version)
+        major: Optional[int] = None
+        if isinstance(agent_version, str):
+            value = agent_version.strip()
+            if value:
+                match = re.match(r"^(\d+)", value)
+                if match:
+                    major = int(match.group(1))
         if major is not None and major >= 1:
             return self._run_impl_v1(
                 prompt,
@@ -76,7 +87,6 @@ class KiloCodeAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
         agent_version: Optional[str] = None,
     ) -> RunResult:
-        del videos, reasoning_effort
         images = images or []
         config_payload, config_error = self._build_runtime_config_payload(model_override=model_override)
         if config_payload is None:
@@ -87,7 +97,7 @@ class KiloCodeAgent(CodingAgent):
                 agent_version=agent_version,
             )
 
-        run_home = Path(tempfile.mkdtemp(prefix="cakit-kilocode-home-"))
+        run_home = self._make_temp_dir(prefix="cakit-kilocode-home-")
         runtime_config_path = run_home / ".kilocode" / "cli" / "config.json"
         self._write_text(runtime_config_path, json.dumps(config_payload, ensure_ascii=True, indent=2))
 
@@ -115,43 +125,58 @@ class KiloCodeAgent(CodingAgent):
         output = result.output
         payloads = self._load_json_payloads_with_ansi_cleanup(output)
 
-        global_state = self._load_global_state(run_home)
-        task_item = self._extract_task_history_item(global_state, prompt)
-        task_id = self._extract_task_id(task_item)
+        global_state_path = run_home / ".kilocode" / "cli" / "global" / "global-state.json"
+        loaded_global_state = self._load_json(global_state_path)
+        global_state = loaded_global_state if isinstance(loaded_global_state, dict) else None
+
+        task_item: Optional[Dict[str, Any]] = None
+        if isinstance(global_state, dict):
+            history = last_value(global_state, "$.taskHistory")
+            if isinstance(history, list) and not any(not isinstance(item, dict) for item in history):
+                workspace = str(self.workdir)
+                workspace_only = [item for item in history if req_str(item, "$.workspace") == workspace]
+                candidates = [item for item in workspace_only if req_str(item, "$.task") == prompt]
+                if len(candidates) == 1:
+                    task_item = candidates[0]
+                elif len(workspace_only) == 1:
+                    task_item = workspace_only[0]
+
+        task_id = req_str(task_item, "$.id")
         task_dir = run_home / ".kilocode" / "cli" / "global" / "tasks" / task_id if task_id else None
         ui_messages = self._load_json_array(task_dir / "ui_messages.json") if task_dir else None
         api_history = self._load_json_array(task_dir / "api_conversation_history.json") if task_dir else None
 
-        usage = self._extract_usage_from_ui_messages(ui_messages)
-        model_name = self._extract_model_name(task_item, global_state, api_history)
-
-        output_path = self._write_output(self.name, output)
-        trajectory_payload = self._build_trajectory_payload(
+        snapshot = self._extract_v0_stats_snapshot(
             task_item=task_item,
+            global_state=global_state,
             ui_messages=ui_messages,
             api_history=api_history,
-            stream_payloads=payloads,
         )
-        if trajectory_payload is not None:
-            trajectory_source = str(task_dir) if task_dir else str(output_path)
+
+        trajectory_payload: Dict[str, Any] = {}
+        if isinstance(task_item, dict):
+            trajectory_payload["task_history"] = task_item
+        if isinstance(ui_messages, list):
+            trajectory_payload["ui_messages"] = ui_messages
+        if isinstance(api_history, list):
+            trajectory_payload["api_conversation_history"] = api_history
+        if payloads:
+            trajectory_payload["stream_json"] = payloads
+
+        if trajectory_payload:
+            trajectory_source = str(task_dir) if task_dir else str(run_home)
             trajectory_content = format_trace_text(json.dumps(trajectory_payload, ensure_ascii=True), source=trajectory_source)
         else:
-            trajectory_content = format_trace_text(output, source=str(output_path))
-        trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        return RunResult(
-            agent=self.name,
+            trajectory_content = format_trace_text(output, source=str(run_home))
+        return self.finalize_run(
+            command_result=result,
+            response=self._extract_v0_response(payloads, ui_messages, api_history, output),
+            models_usage=snapshot.models_usage if snapshot is not None else {},
+            llm_calls=snapshot.llm_calls if snapshot is not None else None,
+            tool_calls=snapshot.tool_calls if snapshot is not None else None,
+            total_cost=snapshot.total_cost if snapshot is not None else None,
             agent_version=agent_version,
-            runtime_seconds=result.duration_seconds,
-            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
-            tool_calls=self._extract_tool_calls_from_api_history(api_history),
-            llm_calls=self._extract_llm_calls_from_ui_messages(ui_messages),
-            total_cost=self._extract_total_cost(task_item),
-            response=self._extract_response(payloads, ui_messages, api_history, output),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            trajectory_content=trajectory_content,
         )
 
     def _run_impl_v1(
@@ -164,7 +189,6 @@ class KiloCodeAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
         agent_version: Optional[str] = None,
     ) -> RunResult:
-        del videos, reasoning_effort
         images = images or []
         api_key = self._resolve_openai_api_key("KILO_OPENAI_API_KEY")
         model = self._normalize_model_id(
@@ -185,7 +209,7 @@ class KiloCodeAgent(CodingAgent):
                 agent_version=agent_version,
             )
 
-        run_home = Path(tempfile.mkdtemp(prefix="cakit-kilocode-home-"))
+        run_home = self._make_temp_dir(prefix="cakit-kilocode-home-")
         env = {
             "HOME": str(run_home),
             "OPENAI_API_KEY": api_key,
@@ -196,7 +220,16 @@ class KiloCodeAgent(CodingAgent):
             env["OPENAI_BASE_URL"] = base_url
 
         cmd = ["kilocode", "run", "--auto", "--format", "json"]
-        model_arg = self._normalize_run_model_v1(model)
+        normalized_run_model = self._normalize_text(model)
+        model_arg = (
+            self._normalize_provider_model(
+                normalized_run_model,
+                default_provider="openai",
+                colon_as_provider=False,
+            )
+            if normalized_run_model is not None
+            else None
+        )
         if model_arg:
             cmd.extend(["--model", model_arg])
         for image_path in images:
@@ -208,13 +241,21 @@ class KiloCodeAgent(CodingAgent):
         result = self._run(cmd, env=env, base_env=base_env)
         output = result.output
         payloads = self._load_json_payloads_with_ansi_cleanup(output)
-        session_id = self._extract_session_id_from_stream(payloads)
-        export_payload = self._export_v1_session_payload(session_id, env=env, base_env=base_env)
+        session_id = self._normalize_text(last_value(payloads, "$[*].sessionID"))
+        export_payload: Optional[Dict[str, Any]] = None
+        if isinstance(session_id, str) and session_id.strip():
+            export_result = self._run(["kilocode", "export", session_id.strip()], env=env, base_env=base_env)
+            if export_result.exit_code == 0:
+                export_payload = self._parse_output_json_object(export_result.output)
 
-        usage = self._extract_v1_usage(export_payload)
-        model_name = self._extract_v1_model_name(export_payload)
+        artifacts = self._build_stats_artifacts(
+            raw_output=output,
+            session_payload=export_payload,
+        )
+        snapshot = self._merge_stats_snapshots(
+            snapshots=[extract_opencode_session_export_stats(artifacts)]
+        )
 
-        output_path = self._write_output(self.name, output)
         trajectory_payload: Dict[str, Any] = {
             "stream_json": payloads,
         }
@@ -222,27 +263,27 @@ class KiloCodeAgent(CodingAgent):
             trajectory_payload["session_export"] = export_payload
         trajectory_content = format_trace_text(
             json.dumps(trajectory_payload, ensure_ascii=True),
-            source=str(output_path),
+            source=str(run_home),
         )
-        trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        return RunResult(
-            agent=self.name,
+        response = (
+            self._last_selected_text(payloads, '$[?(@.type == "text")].part.text')
+            or self._last_selected_text(
+                export_payload,
+                '$.messages[?(@.info.role == "assistant")].parts[?(@.type == "text")].text',
+            )
+            or self._last_selected_text(payloads, '$[?(@.type == "error")].error.data.message')
+            or self._last_stdout_line(output)
+        )
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=snapshot.models_usage,
+            llm_calls=snapshot.llm_calls,
+            tool_calls=snapshot.tool_calls,
+            total_cost=snapshot.total_cost,
             agent_version=agent_version,
-            runtime_seconds=result.duration_seconds,
-            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
-            tool_calls=self._extract_v1_tool_calls(export_payload),
-            llm_calls=self._extract_v1_llm_calls(export_payload),
-            total_cost=self._extract_v1_total_cost(export_payload),
-            response=self._extract_v1_response(payloads, export_payload, output),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            trajectory_content=trajectory_content,
         )
-
-    def get_version(self) -> Optional[str]:
-        return self._version_first_line(["kilocode", "--version"])
 
     def _build_runtime_config_payload(self, model_override: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         api_key = self._resolve_openai_api_key("KILO_OPENAI_API_KEY")
@@ -298,32 +339,13 @@ class KiloCodeAgent(CodingAgent):
         }
         return payload, None
 
-    @staticmethod
-    def _parse_major_version(version: Optional[str]) -> Optional[int]:
-        if not isinstance(version, str):
-            return None
-        value = version.strip()
-        if not value:
-            return None
-        match = re.match(r"^(\d+)", value)
-        if not match:
-            return None
-        return int(match.group(1))
-
     def _normalize_model_id(self, value: Optional[str]) -> Optional[str]:
-        cleaned = self._normalize_text(value)
-        if cleaned is None:
-            return None
-        if "/" in cleaned:
-            parts = cleaned.split("/", 1)
-            if len(parts) == 2 and parts[1].strip():
-                return parts[1].strip()
-        return cleaned
+        return self._extract_model_id(value, colon_as_provider=False)
 
     def _load_json_payloads_with_ansi_cleanup(self, output: str) -> List[Dict[str, Any]]:
         stdout = self._stdout_only(output)
-        cleaned = _ANSI_OSC_RE.sub("", stdout)
-        cleaned = _ANSI_CSI_RE.sub("", cleaned)
+        cleaned = self._ANSI_OSC_RE.sub("", stdout)
+        cleaned = self._ANSI_CSI_RE.sub("", cleaned)
         cleaned = cleaned.replace("\r", "")
         payloads: List[Dict[str, Any]] = []
         for raw_line in cleaned.splitlines():
@@ -334,496 +356,98 @@ class KiloCodeAgent(CodingAgent):
                 line = line[line.find("{") :]
             if not line.startswith("{"):
                 continue
-            try:
-                parsed = json.loads(line)
-            except Exception:
-                continue
+            parsed = self._parse_json(line)
             if isinstance(parsed, dict):
                 payloads.append(parsed)
         return payloads
 
-    def _load_global_state(self, run_home: Path) -> Optional[Dict[str, Any]]:
-        path = run_home / ".kilocode" / "cli" / "global" / "global-state.json"
-        if not path.exists():
-            return None
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if isinstance(parsed, dict):
-            return parsed
-        return None
-
-    def _extract_task_history_item(self, global_state: Optional[Dict[str, Any]], prompt: str) -> Optional[Dict[str, Any]]:
-        if not isinstance(global_state, dict):
-            return None
-        history = global_state.get("taskHistory")
-        if not isinstance(history, list):
-            return None
-        candidates: List[Dict[str, Any]] = []
-        for item in history:
-            if not isinstance(item, dict):
-                return None
-            if item.get("workspace") != str(self.workdir):
-                continue
-            if item.get("task") == prompt:
-                candidates.append(item)
-        if len(candidates) == 1:
-            return candidates[0]
-        workspace_only = [item for item in history if isinstance(item, dict) and item.get("workspace") == str(self.workdir)]
-        if len(workspace_only) == 1:
-            return workspace_only[0]
-        return None
-
-    @staticmethod
-    def _extract_task_id(task_item: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(task_item, dict):
-            return None
-        task_id = task_item.get("id")
-        if not isinstance(task_id, str) or not task_id.strip():
-            return None
-        return task_id.strip()
-
     def _load_json_array(self, path: Path) -> Optional[List[Dict[str, Any]]]:
-        if not path.exists():
-            return None
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
+        parsed = self._load_json(path)
         if not isinstance(parsed, list):
             return None
-        items: List[Dict[str, Any]] = []
-        for item in parsed:
-            if not isinstance(item, dict):
-                return None
-            items.append(item)
-        return items
+        if any(not isinstance(item, dict) for item in parsed):
+            return None
+        return [item for item in parsed if isinstance(item, dict)]
 
-    def _extract_usage_from_ui_messages(self, ui_messages: Optional[List[Dict[str, Any]]]) -> Optional[Dict[str, int]]:
-        if not isinstance(ui_messages, list):
-            return None
-        prompt_tokens = 0
-        completion_tokens = 0
-        found = False
-        for message in ui_messages:
-            if message.get("type") != "say" or message.get("say") != "api_req_started":
-                continue
-            text = message.get("text")
-            if not isinstance(text, str) or not text.strip():
-                return None
-            try:
-                usage_payload = json.loads(text)
-            except Exception:
-                return None
-            if not isinstance(usage_payload, dict):
-                return None
-            tokens_in = self._as_int(usage_payload.get("tokensIn"))
-            tokens_out = self._as_int(usage_payload.get("tokensOut"))
-            if tokens_in is None or tokens_out is None:
-                return None
-            prompt_tokens += tokens_in
-            completion_tokens += tokens_out
-            found = True
-        if not found:
-            return None
-        return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        }
-
-    def _extract_llm_calls_from_ui_messages(self, ui_messages: Optional[List[Dict[str, Any]]]) -> Optional[int]:
-        if not isinstance(ui_messages, list):
-            return None
-        llm_calls = 0
-        for message in ui_messages:
-            if message.get("type") != "say" or message.get("say") != "api_req_started":
-                continue
-            text = message.get("text")
-            if not isinstance(text, str) or not text.strip():
-                return None
-            try:
-                usage_payload = json.loads(text)
-            except Exception:
-                return None
-            if not isinstance(usage_payload, dict):
-                return None
-            if self._as_int(usage_payload.get("tokensIn")) is None:
-                return None
-            if self._as_int(usage_payload.get("tokensOut")) is None:
-                return None
-            llm_calls += 1
-        if llm_calls < 1:
-            return None
-        return llm_calls
-
-    def _extract_tool_calls_from_api_history(self, api_history: Optional[List[Dict[str, Any]]]) -> Optional[int]:
-        if not isinstance(api_history, list):
-            return None
-        total = 0
-        for message in api_history:
-            if message.get("role") != "assistant":
-                continue
-            content = message.get("content")
-            if not isinstance(content, list):
-                return None
-            for part in content:
-                if not isinstance(part, dict):
-                    return None
-                if part.get("type") == "tool_use":
-                    total += 1
-        return total
-
-    def _extract_model_name(
+    def _extract_v0_stats_snapshot(
         self,
+        *,
         task_item: Optional[Dict[str, Any]],
         global_state: Optional[Dict[str, Any]],
+        ui_messages: Optional[List[Dict[str, Any]]],
         api_history: Optional[List[Dict[str, Any]]],
-    ) -> Optional[str]:
-        if isinstance(task_item, dict) and isinstance(global_state, dict):
-            config_name = task_item.get("apiConfigName")
-            if isinstance(config_name, str) and config_name:
-                configs = global_state.get("listApiConfigMeta")
-                if isinstance(configs, list):
-                    for entry in configs:
-                        if not isinstance(entry, dict):
-                            return None
-                        if entry.get("name") != config_name:
-                            continue
-                        model_id = entry.get("modelId")
-                        if isinstance(model_id, str) and model_id.strip():
-                            return model_id.strip()
-
-        if not isinstance(api_history, list):
-            return None
-        for message in api_history:
-            if message.get("role") != "user":
-                continue
-            content = message.get("content")
-            if not isinstance(content, list):
-                return None
-            for part in content:
-                if not isinstance(part, dict):
-                    return None
-                text = part.get("text")
+    ) -> Optional[StatsSnapshot]:
+        model_name: Optional[str] = None
+        config_name = req_str(task_item, "$.apiConfigName")
+        if config_name is not None and isinstance(global_state, dict):
+            filter_path = f"$.listApiConfigMeta[?(@.name == {json.dumps(config_name, ensure_ascii=True)})].modelId"
+            model_name = self._normalize_text(last_value(global_state, filter_path))
+        if model_name is None:
+            for text in reversed(select_values(api_history, '$[?(@.role == "user")].content[*].text') or []):
                 if not isinstance(text, str):
                     continue
-                match = _MODEL_TAG_RE.search(text)
-                if match:
-                    candidate = match.group(1).strip()
-                    if candidate:
-                        return candidate
-        return None
+                match = self._MODEL_TAG_RE.search(text)
+                if match and match.group(1).strip():
+                    model_name = match.group(1).strip()
+                    break
 
-    def _extract_response(
+        api_req_started_messages = [
+            message
+            for message in (select_values(ui_messages, '$[?(@.type == "say")][?(@.say == "api_req_started")]') or [])
+            if isinstance(message, dict)
+        ]
+        usage_entries: List[Dict[str, int]] = []
+        for message in api_req_started_messages:
+            text = self._normalize_text(last_value(message, "$.text"))
+            if text is None:
+                continue
+            usage_payload = self._parse_json(text)
+            if not isinstance(usage_payload, dict):
+                continue
+            usage = parse_usage_by_model(usage_payload, "tokens_in_out")
+            if usage is not None:
+                usage_entries.append(usage)
+
+        prompt_tokens = sum_int(usage_entries, "$[*].prompt_tokens")
+        completion_tokens = sum_int(usage_entries, "$[*].completion_tokens")
+        usage = (
+            None
+            if prompt_tokens is None or completion_tokens is None
+            else {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            }
+        )
+        llm_calls = len(api_req_started_messages) if api_req_started_messages else None
+        tool_calls = self._count_selected(api_history, '$[?(@.role == "assistant")].content[?(@.type == "tool_use")]')
+        return self._build_single_model_stats_snapshot(
+            model_name=model_name,
+            usage=usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            total_cost=opt_float(task_item, "$.totalCost") if isinstance(task_item, dict) else None,
+        )
+
+    def _extract_v0_response(
         self,
         payloads: List[Dict[str, Any]],
         ui_messages: Optional[List[Dict[str, Any]]],
         api_history: Optional[List[Dict[str, Any]]],
         output: str,
     ) -> Optional[str]:
-        if isinstance(ui_messages, list):
-            for message in reversed(ui_messages):
-                if message.get("type") != "say":
-                    continue
-                if message.get("say") not in {"completion_result", "text"}:
-                    continue
-                if message.get("partial") is True:
-                    continue
-                text = message.get("text")
-                if isinstance(text, str) and text.strip():
-                    return text.strip()
-
-        if isinstance(api_history, list):
-            for message in reversed(api_history):
-                if message.get("role") != "assistant":
-                    continue
-                content = message.get("content")
-                if not isinstance(content, list):
-                    continue
-                for part in reversed(content):
-                    if not isinstance(part, dict):
-                        continue
-                    if part.get("type") != "text":
-                        continue
-                    text = part.get("text")
-                    if isinstance(text, str) and text.strip():
-                        return text.strip()
-
-        for payload in reversed(payloads):
-            content = payload.get("content")
-            if isinstance(content, str) and content.strip():
-                return content.strip()
-
-        stdout = self._stdout_only(output)
-        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-        if lines:
-            return lines[-1]
-        return None
-
-    def _extract_total_cost(self, task_item: Optional[Dict[str, Any]]) -> Optional[float]:
-        if not isinstance(task_item, dict):
-            return None
-        value = task_item.get("totalCost")
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        return None
-
-    def _build_trajectory_payload(
-        self,
-        *,
-        task_item: Optional[Dict[str, Any]],
-        ui_messages: Optional[List[Dict[str, Any]]],
-        api_history: Optional[List[Dict[str, Any]]],
-        stream_payloads: List[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
-        payload: Dict[str, Any] = {}
-        if isinstance(task_item, dict):
-            payload["task_history"] = task_item
-        if isinstance(ui_messages, list):
-            payload["ui_messages"] = ui_messages
-        if isinstance(api_history, list):
-            payload["api_conversation_history"] = api_history
-        if stream_payloads:
-            payload["stream_json"] = stream_payloads
-        if not payload:
-            return None
-        return payload
-
-    def _normalize_run_model_v1(self, model: Optional[str]) -> Optional[str]:
-        normalized = self._normalize_text(model)
-        if normalized is None:
-            return None
-        if "/" in normalized:
-            return normalized
-        return f"openai/{normalized}"
-
-    def _extract_session_id_from_stream(self, payloads: List[Dict[str, Any]]) -> Optional[str]:
-        for payload in payloads:
-            session_id = payload.get("sessionID")
-            if isinstance(session_id, str) and session_id.strip():
-                return session_id.strip()
-        return None
-
-    def _export_v1_session_payload(
-        self,
-        session_id: Optional[str],
-        *,
-        env: Dict[str, str],
-        base_env: Optional[Dict[str, str]],
-    ) -> Optional[Dict[str, Any]]:
-        if not isinstance(session_id, str) or not session_id.strip():
-            return None
-        result = self._run(["kilocode", "export", session_id.strip()], env=env, base_env=base_env)
-        if result.exit_code != 0:
-            return None
-        stdout = self._stdout_only(result.output)
-        parsed = self._extract_last_json_value(stdout)
-        if not isinstance(parsed, dict):
-            return None
-        return parsed
-
-    def _extract_v1_messages(self, export_payload: Optional[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-        if not isinstance(export_payload, dict):
-            return None
-        messages = export_payload.get("messages")
-        if not isinstance(messages, list):
-            return None
-        items: List[Dict[str, Any]] = []
-        for item in messages:
-            if not isinstance(item, dict):
-                return None
-            items.append(item)
-        return items
-
-    def _extract_v1_usage(self, export_payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
-        messages = self._extract_v1_messages(export_payload)
-        if not isinstance(messages, list):
-            return None
-        prompt_tokens = 0
-        completion_tokens = 0
-        found = False
-        for message in messages:
-            info = message.get("info")
-            if not isinstance(info, dict):
-                return None
-            if info.get("role") != "assistant":
+        for message in reversed(select_values(ui_messages, '$[?(@.type == "say")]') or []):
+            if not isinstance(message, dict):
                 continue
-            if info.get("summary") is True:
+            if last_value(message, "$.partial") is True:
                 continue
-            tokens = info.get("tokens")
-            if not isinstance(tokens, dict):
-                return None
-            input_tokens = self._as_int(tokens.get("input"))
-            output_tokens = self._as_int(tokens.get("output"))
-            if input_tokens is None or output_tokens is None:
-                return None
-            prompt_tokens += input_tokens
-            completion_tokens += output_tokens
-            found = True
-        if not found:
-            return None
-        return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        }
-
-    def _extract_v1_llm_calls(self, export_payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        messages = self._extract_v1_messages(export_payload)
-        if not isinstance(messages, list):
-            return None
-        count = 0
-        for message in messages:
-            info = message.get("info")
-            if not isinstance(info, dict):
-                return None
-            if info.get("role") != "assistant":
+            if req_str(message, "$.say") not in {"completion_result", "text"}:
                 continue
-            if info.get("summary") is True:
-                continue
-            tokens = info.get("tokens")
-            if not isinstance(tokens, dict):
-                return None
-            if self._as_int(tokens.get("input")) is None:
-                return None
-            if self._as_int(tokens.get("output")) is None:
-                return None
-            count += 1
-        if count < 1:
-            return None
-        return count
-
-    def _extract_v1_tool_calls(self, export_payload: Optional[Dict[str, Any]]) -> Optional[int]:
-        messages = self._extract_v1_messages(export_payload)
-        if not isinstance(messages, list):
-            return None
-        total = 0
-        for message in messages:
-            info = message.get("info")
-            if not isinstance(info, dict):
-                return None
-            if info.get("role") != "assistant":
-                continue
-            parts = message.get("parts")
-            if not isinstance(parts, list):
-                return None
-            for part in parts:
-                if not isinstance(part, dict):
-                    return None
-                if part.get("type") != "tool":
-                    continue
-                state = part.get("state")
-                if not isinstance(state, dict):
-                    return None
-                status = state.get("status")
-                if status not in {"completed", "error"}:
-                    continue
-                total += 1
-        return total
-
-    def _extract_v1_model_name(self, export_payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        messages = self._extract_v1_messages(export_payload)
-        if not isinstance(messages, list):
-            return None
-        for message in reversed(messages):
-            info = message.get("info")
-            if not isinstance(info, dict):
-                return None
-            if info.get("role") != "assistant":
-                continue
-            if info.get("summary") is True:
-                continue
-            provider_id = info.get("providerID")
-            model_id = info.get("modelID")
-            if isinstance(provider_id, str) and provider_id.strip() and isinstance(model_id, str) and model_id.strip():
-                return f"{provider_id.strip()}/{model_id.strip()}"
-            if isinstance(model_id, str) and model_id.strip():
-                return model_id.strip()
-            return None
-        return None
-
-    def _extract_v1_response(
-        self,
-        payloads: List[Dict[str, Any]],
-        export_payload: Optional[Dict[str, Any]],
-        output: str,
-    ) -> Optional[str]:
-        for payload in reversed(payloads):
-            if payload.get("type") != "text":
-                continue
-            part = payload.get("part")
-            if not isinstance(part, dict):
-                return None
-            if part.get("type") != "text":
-                continue
-            text = part.get("text")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
-
-        messages = self._extract_v1_messages(export_payload)
-        if isinstance(messages, list):
-            for message in reversed(messages):
-                info = message.get("info")
-                if not isinstance(info, dict):
-                    return None
-                if info.get("role") != "assistant":
-                    continue
-                parts = message.get("parts")
-                if not isinstance(parts, list):
-                    return None
-                for part in reversed(parts):
-                    if not isinstance(part, dict):
-                        return None
-                    if part.get("type") != "text":
-                        continue
-                    text = part.get("text")
-                    if isinstance(text, str) and text.strip():
-                        return text.strip()
-
-        for payload in reversed(payloads):
-            if payload.get("type") != "error":
-                continue
-            error = payload.get("error")
-            if not isinstance(error, dict):
-                return None
-            data = error.get("data")
-            if not isinstance(data, dict):
-                return None
-            message = data.get("message")
-            if isinstance(message, str) and message.strip():
-                return message.strip()
-
-        stdout = self._stdout_only(output)
-        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-        if lines:
-            return lines[-1]
-        return None
-
-    def _extract_v1_total_cost(self, export_payload: Optional[Dict[str, Any]]) -> Optional[float]:
-        messages = self._extract_v1_messages(export_payload)
-        if not isinstance(messages, list):
-            return None
-        total = 0.0
-        found = False
-        for message in messages:
-            info = message.get("info")
-            if not isinstance(info, dict):
-                return None
-            if info.get("role") != "assistant":
-                continue
-            value = info.get("cost")
-            if value is None:
-                continue
-            if isinstance(value, bool):
-                return None
-            if not isinstance(value, (int, float)):
-                return None
-            total += float(value)
-            found = True
-        if not found:
-            return None
-        return total
+            text = self._normalize_text(last_value(message, "$.text"))
+            if text is not None:
+                return text
+        return (
+            self._last_selected_text(api_history, '$[?(@.role == "assistant")].content[?(@.type == "text")].text')
+            or self._last_selected_text(payloads, "$[*].content")
+            or self._last_stdout_line(output)
+        )

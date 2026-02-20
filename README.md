@@ -256,7 +256,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 | factory |  |  |  | ✗ |  |  |  |  | 0.57.17 |
 | auggie |  |  |  | ✗ |  |  | ✓ |  | 0.16.1 |
 | continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.43 |
-| goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.24.0 |
+| goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.25.0 |
 | kilocode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.0.22 |
 | openclaw |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 2026.2.15 |
 | deepagents | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.0.21 |

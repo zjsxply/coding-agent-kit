@@ -3,14 +3,16 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate
+from ..models import RunResult
+from .base import (
+    last_value,
+    select_values,
+)
 
 
 class OpenClawAgent(CodingAgent):
@@ -19,14 +21,18 @@ class OpenClawAgent(CodingAgent):
     binary = "openclaw"
     supports_images = False
     supports_videos = False
+    install_strategy = InstallStrategy(kind="npm", package="openclaw")
+    run_template = RunCommandTemplate(
+        base_args=("agent", "--local", "--agent", "main", "--json"),
+        prompt_mode="flag",
+        prompt_flag="--message",
+        model_flag=None,
+        media_injection="none",
+    )
 
     _SAFE_PROVIDER_ID_RE = re.compile(r"[^a-z0-9._-]+")
-    _TOOL_CALL_TYPES = {"tool_use", "toolcall", "tool_call"}
     _DEFAULT_CONTEXT_WINDOW = 32_000
     _DEFAULT_MAX_TOKENS = 32_000
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="openclaw", scope=scope, version=version)
 
     def configure(self) -> Optional[str]:
         settings, err = self._resolve_runtime_settings(model_override=None)
@@ -37,7 +43,12 @@ class OpenClawAgent(CodingAgent):
         result = self._run(cmd)
         if result.exit_code != 0:
             return None
-        config_path = self._openclaw_config_path()
+        config_override = os.environ.get("OPENCLAW_CONFIG_PATH")
+        config_path = (
+            Path(config_override).expanduser()
+            if config_override
+            else self._openclaw_home() / "openclaw.json"
+        )
         if not config_path.exists():
             return None
         self._patch_custom_provider_limits(config_path)
@@ -52,12 +63,11 @@ class OpenClawAgent(CodingAgent):
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        del images, videos
         settings, env_error = self._resolve_runtime_settings(model_override=model_override)
         if env_error is not None:
             return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
-        run_home = Path(tempfile.mkdtemp(prefix="cakit-openclaw-home-"))
+        run_home = self._make_temp_dir(prefix="cakit-openclaw-home-")
         session_id = f"cakit-{uuid.uuid4().hex}"
         env = {
             "OPENAI_API_KEY": settings["api_key"],
@@ -72,49 +82,55 @@ class OpenClawAgent(CodingAgent):
                 command_exit_code=onboard.exit_code,
                 raw_output=onboard.output,
             )
-        self._patch_custom_provider_limits(self._resolve_runtime_config_path(run_home))
-        cmd = [
-            "openclaw",
-            "agent",
-            "--local",
-            "--agent",
-            "main",
-            "--session-id",
-            session_id,
-            "--message",
-            prompt,
-            "--json",
-        ]
+        nested_config = run_home / ".openclaw" / "openclaw.json"
+        direct_config = run_home / "openclaw.json"
+        runtime_config_path = (
+            nested_config
+            if nested_config.exists()
+            else direct_config
+            if direct_config.exists()
+            else nested_config
+        )
+        self._patch_custom_provider_limits(runtime_config_path)
+        extra_args = ["--session-id", session_id]
         if reasoning_effort:
-            cmd.extend(["--thinking", reasoning_effort])
+            extra_args.extend(["--thinking", reasoning_effort])
+        template = self.run_template
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=prompt,
+            extra_args=extra_args,
+        )
 
         result = self._run(cmd, env=env, base_env=base_env)
         output = result.output
-        payload = self._parse_run_payload(output)
-        response, usage, model_name = self._extract_stats_from_payload(payload)
-        session_path = self._resolve_session_path(session_id, agent_id="main", env_source=env)
-        llm_calls, tool_calls = self._extract_counts_from_transcript(session_path)
+        payload = self._parse_output_json_object(output)
+        payload_session_id = self._normalize_text(last_value(payload, "$.meta.agentMeta.sessionId"))
 
-        output_path = self._write_output(self.name, output)
-        trajectory_content = format_trace_text(output, source=str(output_path))
-        trajectory_path = self._write_trajectory(self.name, trajectory_content)
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=self._ensure_models_usage({}, usage, model_name) if usage is not None and model_name else {},
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            response=response,
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+        resolved_session_id = payload_session_id or session_id
+        session_path = self._resolve_session_path(resolved_session_id, agent_id="main", env_source=env)
+        records: Optional[list[Dict[str, Any]]] = None
+        if session_path.exists():
+            raw_records = self._read_text_lossy(session_path) or ""
+            if raw_records:
+                loaded_records = self._load_output_json_payloads(raw_records, stdout_only=False)
+                if loaded_records:
+                    records = loaded_records
+        models_usage, llm_calls, tool_calls = self._extract_run_stats(
+            payload=payload,
+            records=records,
         )
+        response = self._last_selected_text(payload, "$.payloads[*].text") if isinstance(payload, dict) else None
+        if response is None:
+            response = self._last_stdout_line(output)
 
-    def get_version(self) -> Optional[str]:
-        return self._version_first_line(["openclaw", "--version"])
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=models_usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+        )
 
     def _resolve_runtime_settings(
         self, *, model_override: Optional[str]
@@ -124,7 +140,17 @@ class OpenClawAgent(CodingAgent):
         model_ref = self._resolve_openai_model("CAKIT_OPENCLAW_MODEL", model_override=model_override)
 
         provider_id = self._normalize_provider_id(os.environ.get("CAKIT_OPENCLAW_PROVIDER_ID"))
-        model_id, provider_from_model = self._split_model_ref(model_ref)
+        normalized_model_ref = self._normalize_text(model_ref)
+        if normalized_model_ref is None:
+            model_id, provider_from_model = None, None
+        else:
+            model_id = self._extract_model_id(normalized_model_ref, colon_as_provider=False)
+            if not model_id:
+                model_id, provider_from_model = None, None
+            elif "/" not in normalized_model_ref:
+                provider_from_model = None
+            else:
+                provider_from_model = self._normalize_provider_id(normalized_model_ref.split("/", 1)[0])
         if provider_id is None:
             provider_id = provider_from_model
 
@@ -185,38 +211,11 @@ class OpenClawAgent(CodingAgent):
             return None
         return cleaned
 
-    def _split_model_ref(self, model_ref: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-        normalized = self._normalize_text(model_ref)
-        if normalized is None:
-            return None, None
-        if "/" not in normalized:
-            return normalized, None
-        provider, model_id = normalized.split("/", 1)
-        model_id = model_id.strip()
-        if not model_id:
-            return None, None
-        return model_id, self._normalize_provider_id(provider)
-
     def _openclaw_home(self) -> Path:
         root = os.environ.get("OPENCLAW_HOME")
         if root:
             return Path(root).expanduser()
         return Path.home() / ".openclaw"
-
-    def _openclaw_config_path(self) -> Path:
-        override = os.environ.get("OPENCLAW_CONFIG_PATH")
-        if override:
-            return Path(override).expanduser()
-        return self._openclaw_home() / "openclaw.json"
-
-    def _resolve_runtime_config_path(self, run_home: Path) -> Path:
-        nested = run_home / ".openclaw" / "openclaw.json"
-        if nested.exists():
-            return nested
-        direct = run_home / "openclaw.json"
-        if direct.exists():
-            return direct
-        return nested
 
     def _patch_custom_provider_limits(self, config_path: Path) -> None:
         min_context_window = self._resolve_limit_env(
@@ -230,11 +229,8 @@ class OpenClawAgent(CodingAgent):
         text = self._read_text(config_path)
         if not text:
             return
-        try:
-            payload = json.loads(text)
-        except Exception:
-            return
-        if not isinstance(payload, dict):
+        payload = self._parse_json_dict(text)
+        if payload is None:
             return
         models = payload.get("models")
         if not isinstance(models, dict):
@@ -242,15 +238,14 @@ class OpenClawAgent(CodingAgent):
         providers = models.get("providers")
         if not isinstance(providers, dict):
             return
-
         changed = False
         for provider in providers.values():
             if not isinstance(provider, dict):
                 continue
-            provider_models = provider.get("models")
-            if not isinstance(provider_models, list):
+            models_value = provider.get("models")
+            if not isinstance(models_value, list):
                 continue
-            for model in provider_models:
+            for model in models_value:
                 if not isinstance(model, dict):
                     continue
                 context_window = self._as_int(model.get("contextWindow"))
@@ -303,131 +298,73 @@ class OpenClawAgent(CodingAgent):
                 return candidate
         return roots[0] / "agents" / agent_id / "sessions" / f"{session_id}.jsonl"
 
-    def _parse_run_payload(self, output: str) -> Optional[Dict[str, Any]]:
-        stdout = self._stdout_only(output).strip()
-        if not stdout:
+    def _usage_from_total_and_output(self, usage_raw: Any, *, total_path: str) -> Optional[Dict[str, int]]:
+        completion_tokens = self._as_int(last_value(usage_raw, "$.output"))
+        total_tokens = self._as_int(last_value(usage_raw, total_path))
+        if completion_tokens is None or completion_tokens < 0:
             return None
-        last_json = self._extract_last_json_value(stdout)
-        if not isinstance(last_json, dict):
+        if total_tokens is None or total_tokens < completion_tokens:
             return None
-        return last_json
-
-    def _extract_stats_from_payload(
-        self, payload: Optional[Dict[str, Any]]
-    ) -> Tuple[Optional[str], Optional[Dict[str, int]], Optional[str]]:
-        if not isinstance(payload, dict):
-            return None, None, None
-        response = self._extract_response(payload)
-        meta = payload.get("meta")
-        if not isinstance(meta, dict):
-            return response, None, None
-        agent_meta = meta.get("agentMeta")
-        if not isinstance(agent_meta, dict):
-            return response, None, None
-        usage_raw = agent_meta.get("usage")
-        usage = self._normalize_usage(usage_raw)
-        provider = agent_meta.get("provider")
-        model = agent_meta.get("model")
-        model_name = None
-        if isinstance(provider, str) and provider.strip() and isinstance(model, str) and model.strip():
-            model_name = f"{provider.strip()}/{model.strip()}"
-        return response, usage, model_name
-
-    def _extract_response(self, payload: Dict[str, Any]) -> Optional[str]:
-        payloads = payload.get("payloads")
-        if not isinstance(payloads, list):
-            return None
-        messages: list[str] = []
-        for item in payloads:
-            if not isinstance(item, dict):
-                continue
-            text = item.get("text")
-            if isinstance(text, str) and text.strip():
-                messages.append(text.strip())
-        if not messages:
-            return None
-        return messages[-1]
-
-    def _normalize_usage(self, usage_raw: Any) -> Optional[Dict[str, int]]:
-        if not isinstance(usage_raw, dict):
-            return None
-        input_tokens = self._as_int(usage_raw.get("input"))
-        output_tokens = self._as_int(usage_raw.get("output"))
-        cache_read = self._as_int(usage_raw.get("cacheRead"))
-        cache_write = self._as_int(usage_raw.get("cacheWrite"))
-        total_tokens = self._as_int(usage_raw.get("total"))
-        has_any_usage = any(
-            value is not None for value in (input_tokens, output_tokens, cache_read, cache_write, total_tokens)
-        )
-        if not has_any_usage:
-            return None
-        prompt_tokens = (input_tokens or 0) + (cache_read or 0) + (cache_write or 0)
-        completion_tokens = output_tokens or 0
-        if total_tokens is None:
-            total_tokens = prompt_tokens + completion_tokens
         return {
-            "prompt_tokens": prompt_tokens,
+            "prompt_tokens": total_tokens - completion_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
         }
 
-    def _extract_counts_from_transcript(self, session_path: Path) -> Tuple[Optional[int], Optional[int]]:
-        if not session_path.exists():
-            return None, None
+    def _extract_run_stats(
+        self,
+        *,
+        payload: Optional[Dict[str, Any]],
+        records: Optional[list[Dict[str, Any]]],
+    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
+        payload_usage = self._usage_from_total_and_output(
+            last_value(payload, "$.meta.agentMeta.usage"),
+            total_path="$.total",
+        )
+        payload_provider = self._normalize_text(last_value(payload, "$.meta.agentMeta.provider"))
+        payload_model = self._normalize_text(last_value(payload, "$.meta.agentMeta.model"))
+        payload_model_name = f"{payload_provider}/{payload_model}" if payload_provider and payload_model else None
 
-        llm_calls = 0
-        tool_calls = 0
-        try:
-            for raw_line in session_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                line = raw_line.strip()
-                if not line:
-                    continue
-                record = json.loads(line)
-                if not isinstance(record, dict):
-                    return None, None
-                message = record.get("message")
-                if not isinstance(message, dict):
-                    continue
-                role = message.get("role")
-                if role not in {"user", "assistant"}:
-                    continue
-                if role == "assistant":
-                    usage = message.get("usage")
-                    if isinstance(usage, dict):
-                        normalized = self._normalize_usage(
-                            {
-                                "input": usage.get("input"),
-                                "output": usage.get("output"),
-                                "cacheRead": usage.get("cacheRead"),
-                                "cacheWrite": usage.get("cacheWrite"),
-                                "total": usage.get("total"),
-                            }
+        models_usage: Dict[str, Dict[str, int]] = {}
+        llm_calls: Optional[int] = None
+        tool_calls: Optional[int] = None
+        if records:
+            assistant_messages = [
+                item
+                for item in (select_values(records, '$[?(@.message.role == "assistant")].message') or [])
+                if isinstance(item, dict)
+            ]
+            llm_calls = len(assistant_messages) if assistant_messages else None
+            tool_calls = 0
+            for message in assistant_messages:
+                block_call_values = select_values(message, '$.content[?(@.type == "toolCall")]')
+                block_calls = len(block_call_values) if block_call_values is not None else 0
+                if block_calls > 0:
+                    tool_calls += block_calls
+                elif self._normalize_text(last_value(message, "$.toolName")) is not None:
+                    tool_calls += 1
+
+            assistant_usages = [
+                parsed
+                for parsed in (
+                    self._usage_from_total_and_output(entry, total_path="$.totalTokens")
+                    for entry in (
+                        select_values(
+                            records,
+                            '$[?(@.message.role == "assistant")].message.usage',
                         )
-                        if normalized is None:
-                            return None, None
-                        llm_calls += 1
-                tool_calls += self._count_tool_calls(message)
-        except Exception:
-            return None, None
+                        or []
+                    )
+                )
+                if parsed is not None
+            ]
+            if assistant_usages:
+                transcript_usage = self._sum_usage_entries(assistant_usages)
+                provider = self._normalize_text(last_value(records, '$[?(@.message.role == "assistant")].message.provider'))
+                model = self._normalize_text(last_value(records, '$[?(@.message.role == "assistant")].message.model'))
+                if transcript_usage is not None and provider and model:
+                    models_usage[f"{provider}/{model}"] = transcript_usage
 
-        return (llm_calls or None), tool_calls
-
-    def _count_tool_calls(self, message: Dict[str, Any]) -> int:
-        tool_name_raw = message.get("toolName") or message.get("tool_name")
-        has_message_tool = isinstance(tool_name_raw, str) and bool(tool_name_raw.strip())
-        content = message.get("content")
-        if not isinstance(content, list):
-            return 1 if has_message_tool else 0
-        content_tool_calls = 0
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            block_type = item.get("type")
-            if not isinstance(block_type, str):
-                continue
-            if block_type.strip().lower() not in self._TOOL_CALL_TYPES:
-                continue
-            content_tool_calls += 1
-        if content_tool_calls > 0:
-            return content_tool_calls
-        return 1 if has_message_tool else 0
+        if not models_usage and payload_usage is not None and payload_model_name is not None:
+            models_usage[payload_model_name] = payload_usage
+        return models_usage, llm_calls, tool_calls

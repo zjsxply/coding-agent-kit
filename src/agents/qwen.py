@@ -3,11 +3,18 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    RunCommandTemplate,
+    extract_gemini_style_stats,
+    extract_json_result_stats,
+    extract_jsonl_stats,
+    req_str,
+)
+from ..models import RunResult
 
 
 class QwenAgent(CodingAgent):
@@ -16,9 +23,27 @@ class QwenAgent(CodingAgent):
     binary = "qwen"
     supports_images = True
     supports_videos = True
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="@qwen-code/qwen-code", scope=scope, version=version)
+    install_strategy = InstallStrategy(kind="npm", package="@qwen-code/qwen-code")
+    run_template = RunCommandTemplate(
+        base_args=(
+            "--output-format",
+            "json",
+            "--approval-mode",
+            "yolo",
+            "--telemetry",
+            "--telemetry-target",
+            "local",
+            "--telemetry-otlp-endpoint",
+            "",
+            "--telemetry-outfile",
+            str(Path.home() / ".qwen" / "telemetry.log"),
+            "--telemetry-log-prompts",
+        ),
+        prompt_mode="flag",
+        prompt_flag="-p",
+        model_flag="--model",
+        media_injection="symbolic",
+    )
 
     def configure(self) -> Optional[str]:
         tavily_key = os.environ.get("TAVILY_API_KEY")
@@ -66,11 +91,6 @@ class QwenAgent(CodingAgent):
     ) -> RunResult:
         images = images or []
         videos = videos or []
-        if images or videos:
-            prompt, _ = self._build_symbolic_media_prompt(
-                prompt,
-                [*images, *videos],
-            )
 
         telemetry_path = str(Path.home() / ".qwen" / "telemetry.log")
         qwen_key = self._resolve_openai_api_key("QWEN_OPENAI_API_KEY")
@@ -85,117 +105,53 @@ class QwenAgent(CodingAgent):
             "GOOGLE_API_KEY": qwen_google_api_key,
             "GOOGLE_SEARCH_ENGINE_ID": os.environ.get("GOOGLE_SEARCH_ENGINE_ID"),
         }
-        cmd = [
-            "qwen",
-            "-p",
-            prompt,
-            "--output-format",
-            "json",
-            "--approval-mode",
-            "yolo",
-            "--telemetry",
-            "--telemetry-target",
-            "local",
-            "--telemetry-otlp-endpoint",
-            "",
-            "--telemetry-outfile",
-            telemetry_path,
-            "--telemetry-log-prompts",
-        ]
+        extra_args: list[str] = []
         if qwen_key:
-            cmd.extend(["--auth-type", "openai"])
-        if qwen_model:
-            cmd.extend(["--model", qwen_model])
+            extra_args.extend(["--auth-type", "openai"])
+        cmd, _ = self._build_templated_command(
+            template=self.run_template,
+            prompt=prompt,
+            model=qwen_model,
+            images=images,
+            videos=videos,
+            extra_args=extra_args,
+        )
 
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
         payload = self._parse_output_json(output)
-        result_payload = self._extract_result_payload(payload)
-        models_usage, llm_calls, tool_calls = self._extract_stats(result_payload)
-
-        output_path = self._write_output(self.name, output)
-        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            telemetry_log=telemetry_path,
-            response=self._extract_response(payload, result_payload),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
+        jsonl_payloads = self._selected_dicts(payload, "$[*]")
+        artifacts = self._build_stats_artifacts(
             raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+            json_payload=payload,
+            jsonl_payloads=jsonl_payloads,
         )
-
-    def get_version(self) -> Optional[str]:
-        return self._version_text(["qwen", "--version"])
-
-    def _parse_output_json(self, output: str) -> Optional[Any]:
-        stdout = self._stdout_only(output).strip()
-        if not stdout:
-            return None
-        return self._extract_last_json_value(stdout)
-
-    def _extract_result_payload(self, payload: Optional[Any]) -> Optional[Dict[str, Any]]:
-        if isinstance(payload, dict):
-            if payload.get("type") == "result":
-                return payload
-            return None
-        if not isinstance(payload, list):
-            return None
-        result_payload: Optional[Dict[str, Any]] = None
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") == "result":
-                result_payload = item
-        return result_payload
-
-    def _extract_stats(
-        self, result_payload: Optional[Dict[str, Any]]
-    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
-        return self._extract_gemini_style_stats(result_payload)
-
-    def _extract_response(self, payload: Optional[Any], result_payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if isinstance(result_payload, dict):
-            result_text = result_payload.get("result")
-            if isinstance(result_text, str):
-                cleaned = result_text.strip()
-                if cleaned:
-                    return cleaned
-
-        if not isinstance(payload, list):
-            return None
-        for item in reversed(payload):
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") != "assistant":
-                continue
-            message = item.get("message")
-            if not isinstance(message, dict):
-                continue
-            content = message.get("content")
-            text = self._extract_assistant_text(content)
-            if text:
-                return text
-        return None
-
-    def _extract_assistant_text(self, content: Any) -> Optional[str]:
-        if not isinstance(content, list):
-            return None
-        lines: List[str] = []
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") != "text":
-                continue
-            text = block.get("text")
-            if isinstance(text, str) and text.strip():
-                lines.append(text.strip())
-        if not lines:
-            return None
-        return "\n".join(lines)
+        stats = self._merge_stats_snapshots(
+            snapshots=[
+                extract_json_result_stats(
+                    artifacts,
+                    inner=extract_gemini_style_stats,
+                ),
+                extract_jsonl_stats(artifacts),
+            ],
+            strategy="fallback",
+        )
+        response = (
+            req_str(payload, "$.result")
+            or self._first_selected_text(
+                payload,
+                (
+                    '$[?(@.type == "result")].result',
+                    '$[?(@.type == "assistant")].message.content[?(@.type == "text")].text',
+                ),
+            )
+        )
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=stats.models_usage,
+            llm_calls=stats.llm_calls,
+            tool_calls=stats.tool_calls,
+            total_cost=stats.total_cost,
+            telemetry_log=telemetry_path,
+        )

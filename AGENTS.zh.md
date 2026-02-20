@@ -26,13 +26,17 @@
   - `source .venv/bin/activate`
   - `set -a; source .env; set +a`
   - `python tests/availability_test.py <agent...>`
-- Agent 可用性测试耗时可能较长；请使用 10 分钟超时（`--timeout-seconds 600`）以降低中途被打断的风险。
-- 请并行执行多个 coding agent 调用任务，以节约总测试时间并降低预期超时风险。
-- 若并行执行引入竞态问题（例如并发安装），应先修复代码，再采信测试结果。
-- cakit 必须支持并发的多 agent 测试/运行；验证时应采用并行执行，而不是仅串行流程。
-- 默认不要求做稳定性重复跑；若单次运行成功，且响应语义与必需统计字段都正确，即可判定该能力可用。
-- 不要为 coding agent 可用性或统计提取新增代码级单元/集成测试点。统一使用 `tests/availability_test.py`，并结合真实输出做主观人工判读。
-- 不要把脚本自动 pass/fail 当作唯一依据；必须人工阅读响应内容并判断是否正确。
+- 执行策略：
+  - Agent 可用性测试耗时可能较长；请使用 15 分钟超时以降低中途被打断的风险。
+  - 请并行执行多个 coding agent 调用任务，以节约总测试时间并降低预期超时风险。
+  - cakit 必须支持并发的多 agent 测试/运行；验证时应采用并行执行，而不是仅串行流程。
+  - 若并行执行引入竞态问题（例如并发安装），应先修复代码，再采信测试结果。
+  - 默认不要求做稳定性重复跑；若单次运行成功，且响应语义与必需统计字段都正确，即可判定该能力可用。
+  - 不要为 coding agent 可用性或统计提取新增代码级单元/集成测试点。统一使用 `tests/availability_test.py`，并结合真实输出做主观人工判读。
+- 判定原则：
+  - 不要把脚本自动 pass/fail 当作唯一依据；必须人工阅读响应内容并判断是否正确。
+  - 各项通过与否以返回内容是否正确为准，不能只看命令是否启动。
+  - 做图像/视频能力检查时，所用基础模型必须原生支持对应模态。若当前模型不支持图像/视频输入（例如纯文本模型），应先切换到支持该模态的模型，再判断该能力是否支持。
 - 若需要手工逐项验证，再在同一个 shell 中按以下顺序执行：
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`
@@ -41,44 +45,61 @@
   5. `cakit run <agent> "这个视频里发生了什么？有什么可见文字？" --video tests/video.mp4 > /tmp/cakit-<agent>-video.json`（视频输入检查，使用本地小体积 mp4）
   6. `cakit run <agent> "访问 https://github.com/algorithmicsuperintelligence/openevolve，并简要说明页面内容。" > /tmp/cakit-<agent>-web.json`（联网访问检查）
 - 必须补充“prompt 路径多模态检查”：在不传 `--image`/`--video` 的情况下，仅把本地图片/视频路径写进 prompt，验证该 coding agent 是否能通过可用工具自主读取，并记录实际表现。
-- 做图像/视频能力检查时，所用基础模型必须原生支持对应模态。若当前模型不支持图像/视频输入（例如纯文本模型），应先切换到支持该模态的模型，再判断该能力是否支持。
-- 各项通过与否以返回内容是否正确为准，不能只看命令是否启动。
-- 必须校验 JSON 中统计字段提取结果：
-  1. `response`：字段存在，且为非空文本。
-  2. `models_usage`：字段存在，且在成功运行时必须是非空 object，并包含整数 token 字段。
-  3. `llm_calls`：字段存在，且在成功运行时必须是整数（`>= 1`）。
-  4. `tool_calls`：字段存在，且在成功运行时必须是整数（`>= 0`）。
-- 成功运行时若 `models_usage` 为 `{}`，或 `llm_calls`/`tool_calls` 缺失或为 `null`，按提取失败处理。
-- 统计字段提取不到时不要写猜测值；必须保留 `None`（JSON 中为 `null`），不要用 `0` 占位。
-- 使用 session/log 回退提取时，必须做精确匹配（例如按 `session_id` 精确匹配对应路径），禁止按 mtime 或“最近文件”做模糊匹配。
-- `models_usage` 中的模型名必须来自本次运行产物（stdout payload/session 日志），不能从配置、环境变量或 `--model` 输入回填。
-- 提取逻辑必须严格按格式读取：仅解析明确、文档化字段；结构异常时应立即返回 `None`，不要叠加多层 fallback 解析器。
-- 字段名必须精确且稳定。不要对同一信号尝试多个字段名或回退链；必需字段缺失时直接返回 `None`。
-- 用量统计必须基于源码确认。若 coding agent CLI 有开源仓库，应先检查 `/tmp` 下是否已有该仓库：若已存在则先进入仓库执行 `git pull` 更新；若不存在再 clone 到 `/tmp` 后进行本地阅读。确认 usage 产生方式后再实现或调整 token 统计逻辑。校验范围必须包含 `llm_calls`、token usage 与 `tool_calls` 的行为。若环境阻止 clone，则给出精确的 `git clone ... /tmp/<repo>` 命令并要求用户在本机执行，然后继续本地检查。
-- Token usage 定义为 agent 运行过程中所有 LLM call 的 prompt tokens 与 completion tokens 的总和（包含 subagents 时一并计入）。
-- 代码与文档必须保持一致。行为有变更时需在同一提交/修改中同步更新文档，且文档应与实现完全一致（不要出现不匹配的 fallback 或字段描述）。
+- 统计字段校验：
+  - 必须校验 JSON 中统计字段提取结果：
+    1. `response`：字段存在，且为非空文本。
+    2. `models_usage`：字段存在，且在成功运行时必须是非空 object，并包含整数 token 字段。
+    3. `llm_calls`：字段存在，且在成功运行时必须是整数（`>= 1`）。
+    4. `tool_calls`：字段存在，且在成功运行时必须是整数（`>= 0`）。
+  - 成功运行时若 `models_usage` 为 `{}`，或 `llm_calls`/`tool_calls` 缺失或为 `null`，按提取失败处理。
+  - 统计字段提取不到时不要写猜测值；必须保留 `None`（JSON 中为 `null`），不要用 `0` 占位。
+  - 统计字段提取必须彼此独立：某个字段提取不到时，只将该字段置为 `None`（`models_usage` 置为 `{}`）；其余已成功提取字段必须保留。
+  - Token usage 定义为 agent 运行过程中所有 LLM call 的 prompt tokens 与 completion tokens 的总和（包含 subagents 时一并计入）。
+  - `models_usage` 中的模型名必须来自本次运行产物（stdout payload/session 日志），不能从配置、环境变量或 `--model` 输入回填。
+  - 提取逻辑必须严格按格式读取：仅解析明确、文档化字段；结构异常时应立即返回 `None`，不要叠加多层 fallback 解析器。
+  - 字段名必须精确且稳定。不要对同一信号尝试多个字段名或回退链；必需字段缺失时直接返回 `None`。
+  - 使用 session/log 回退提取时，必须做精确匹配（例如按 `session_id` 精确匹配对应路径），禁止按 mtime 或“最近文件”做模糊匹配。
+- 用量提取实现要求：
+  - 用量统计必须基于源码确认。若 coding agent CLI 有开源仓库，应先检查 `/tmp` 下是否已有该仓库：若已存在则先进入仓库执行 `git pull` 更新；若不存在再 clone 到 `/tmp` 后进行本地阅读。确认 usage 产生方式后再实现或调整 token 统计逻辑。校验范围必须包含 `llm_calls`、token usage 与 `tool_calls` 的行为。若环境阻止 clone，则给出精确的 `git clone ... /tmp/<repo>` 命令并要求用户在本机执行，然后继续本地检查。
 - 发生提取失败时必须排查：
   1. `cakit run` 输出中的 `output_path` / `raw_output`。
   2. 上游 coding agent 的日志与会话文件（例如 Kimi：`~/.kimi/logs`、`~/.kimi/sessions/*/*/wire.jsonl`、`~/.kimi/sessions/*/*/context.jsonl`）。
   3. `src/agents/<agent>.py` 中的提取逻辑，并修复解析代码。
-- 测试后必须更新 `README.md` 与 `README.zh.md` 的测试覆盖矩阵，并从 `cakit run` 输出中的 `agent_version` 记录 `测试版本`。
+- 文档与覆盖记录：
+  - 代码与文档必须保持一致。行为有变更时需在同一提交/修改中同步更新文档，且文档应与实现完全一致（不要出现不匹配的 fallback 或字段描述）。
+  - 测试后必须更新 `README.md` 与 `README.zh.md` 的测试覆盖矩阵，并从 `cakit run` 输出中的 `agent_version` 记录 `测试版本`。
 
 ## 代码结构与风格
-- `src/agents/`：每个 agent 一个文件、一个 class。所有 agent-specific 逻辑（安装、运行、usage 提取等）必须放在对应 class 内。
-- `src/utils.py`：仅放必要的通用工具函数；一行能解决的操作不要封装成函数。
-- 代码简洁要有边界：
+- 代码存放与职责划分：
+  - `src/agents/`：每个 agent 一个文件、一个 class。所有 agent-specific 逻辑（安装、运行、usage 提取等）必须放在对应 class 内。
+  - `src/utils.py`：仅放必要的通用工具函数；一行能解决的操作不要封装成函数。
+  - 跨 coding agent 的相似辅助逻辑必须按职责下沉到 `src/utils.py` 或 `src/agents/base.py`（按“通用工具”与“agent 运行时行为”职责划分）。
+  - 共享解析 helper 放在 `src/stats_extract.py`；仅被单个 coding agent 使用的 helper 实现留在该 agent 模块内；不要引入独立的 `*Extractor` class 抽象。
+  - 媒体 prompt 注入通用能力统一放在 `src/agents/base.py`：
+    - 自然语言本地路径注入：`_build_natural_media_prompt`（用于依赖工具读文件的流程）
+    - 符号路径注入：`_build_symbolic_media_prompt`（用于 `@{path}` 风格）
+  - 若 `cakit run --image` / `--video` 通过向 prompt 注入本地路径并由 coding agent 依赖可用工具/模型能力直接读取目标媒体，则计入支持，并在 README 说明具体行为。
+  - 对视频而言，若仅能先抽帧再按图片读取，不计入正式 `--video` 支持。
+- 复用实现规则：
+  - uv/pip 安装逻辑应优先复用共享方法（优先放在 `src/agents/base.py`），不要在各 coding agent 中重复拼装安装命令。
+  - 运行结果组装应优先走 `src/agents/base.py` 的共享 `finalize_run(...)` 路径：agent 类应聚焦运行产物解析，并把解析结果交给共享收口器，避免在各 agent 内重复写 raw output、写 trajectory、手工构造 `RunResult(...)`。
+  - 安装/运行固定模式优先数据化声明：在 `CodingAgent` 子类上直接声明 `install_strategy`、`run_template`、`version_template`；仅在共享模板无法表达的上游差异场景保留定制化命令式代码。
+- 代码风格：
+  - 对类内已声明的属性/常量不要再加冗余防御判断（例如已在 agent 类声明 `run_template` 时再判断 `self.run_template is None`）；直接使用已声明值。
   - 构造 `RunResult` 时，去掉只做一次传递的一次性局部变量，直接在 `RunResult(...)` 参数中构造。
   - 对于能提升流程可读性的中转变量（例如 `trajectory_content`），即使只使用一次也应保留。
-- 使用标准库解析 JSON；若必须自定义解析，放到 `src/utils.py`。
-- uv/pip 安装逻辑应优先复用共享方法（优先放在 `src/agents/base.py`），不要在各 coding agent 中重复拼装安装命令。
-- 跨 coding agent 的相似辅助逻辑必须下沉到 `src/utils.py` 或 `src/agents/base.py`（按“通用工具”与“agent 运行时行为”职责划分）。
-- 术语统一使用 “coding agent”。
-- 命名使用 `trae-oss` 以区分其他 Trae 产品。
-- 媒体 prompt 注入通用能力统一放在 `src/agents/base.py`：
-  - 自然语言本地路径注入：`_build_natural_media_prompt`（用于依赖工具读文件的流程）
-  - 符号路径注入：`_build_symbolic_media_prompt`（用于 `@{path}` 风格）
-- 若 `cakit run --image` / `--video` 通过向 prompt 注入本地路径并由 coding agent 依赖可用工具/模型能力直接读取目标媒体，则计入支持，并在 README 说明具体行为。
-- 对视频而言，若仅能先抽帧再按图片读取，不计入正式 `--video` 支持。
+  - 对于有意不使用的参数或局部变量，不要写 `del ...`；直接保持未使用即可。
+- 解析实现约束：
+  - 使用标准库解析 JSON；若必须自定义解析，放到 `src/utils.py`。
+- JSONPath 与聚合规则：
+  - 对于简单的转换/过滤/聚合，能一次完成就优先在一个清晰代码块内完成（例如列表推导式、生成器表达式或 JSONPath 选择器）。
+  - 统计解析对所有统计取值（包括固定单字段）都必须统一使用 JSONPath（RFC 9535）。
+  - 统一使用共享访问器（`select_values(path)`、`sum_int(path)`、`last_value(path)`）：以 `select_values(path)` 作为核心批量取值接口，`sum_int(path)` 与 `last_value(path)` 仅作为其简单包装，避免散落 `.get(...)`。
+  - 条件筛选与多元素统计优先使用 JSONPath filter selector（`[? ... ]`）和数组选择（`[*]`），尽量在查询中完成过滤后再配合共享聚合器（`sum_int`、`last_value`）聚合/提取，避免手写 Python 条件循环或各 agent 重复循环。
+  - 仅使用一次的 JSONPath 可直接内联写在调用处；除非会复用，否则不必强制提炼为类/模块常量。
+- 术语与命名：
+  - 术语统一使用 “coding agent”。
+  - 命名使用 `trae-oss` 以区分其他 Trae 产品。
 
 ## 行为约束
 - `cakit run` 若发现未安装对应 agent，需要自动执行 `cakit install <agent>` 并提示。
@@ -107,6 +128,7 @@
   - `tool_calls`、`llm_calls`、`total_cost`（若可获取）
   - `telemetry_log`（若启用，返回日志路径或 OTEL endpoint）
   - `response`, `exit_code`, `output_path`, `raw_output`, `trajectory_path`
+- 统计提取采用宽松策略：路径缺失/路径非法/类型不匹配时，直接返回 `None`。
 - `trajectory_path` 必填，且必须指向基于运行产物生成的“格式化、人类可读、无截断”轨迹文件。
 - 轨迹转换规则：
   - 运行产物必须转换为结构化的 YAML 格式人类可读输出。

@@ -8,7 +8,7 @@ This document explains how cakit collects Codex CLI metadata.
 **Sources**
 - CLI stdout from `codex exec --json` (JSONL events).
 - Response file from `codex exec --output-last-message <path>` (written under `CAKIT_OUTPUT_DIR`, defaulting to `~/.cache/cakit`).
-- Session JSONL file at `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*<thread_id>.jsonl`, where `YYYY/MM/DD` is derived from the `thread_id` UUIDv7 timestamp. If `thread_id` is not UUIDv7, `models_usage` is not returned.
+- Session JSONL file is resolved by exact thread-id match under `$CODEX_HOME/sessions/**/rollout-*<thread_id>.jsonl` and used only for model name lookup (`turn_context.payload.model`).
 - Environment variables such as `CODEX_MODEL`, `CODEX_API_BASE`, `CAKIT_CODEX_USE_OAUTH`, `CODEX_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
 - Shared OpenAI fallback is supported when agent-specific vars are unset:
   - `OPENAI_API_KEY` -> `CODEX_API_KEY`
@@ -26,12 +26,12 @@ This document explains how cakit collects Codex CLI metadata.
 - `runtime_seconds`: wall time of the `codex exec` process.
 - `response`: content of the file written by `--output-last-message`.
 - `models_usage`:
-  - Read the last `event_msg` with `payload.type == "token_count"` from the session JSONL and use `payload.info.total_token_usage`.
-  - Required fields: `input_tokens`, `cached_input_tokens`, `output_tokens`, `reasoning_output_tokens`, `total_tokens`.
-  - `prompt_tokens = input_tokens + cached_input_tokens`, `completion_tokens = output_tokens + reasoning_output_tokens`.
-  - Model name comes from the `turn_context` payload field `model`. If missing, the model name is `unknown`.
-- `tool_calls`: count of unique tool items from CLI JSON events. We count distinct `item.id` where `type` is one of `mcp_tool_call`, `collab_tool_call`, `command_execution`, or `web_search`, using `item.started` and `item.completed` events. If no such items appear, `tool_calls` is `0`.
-- `llm_calls`: count of distinct `token_count` totals in the session JSONL (deduped by `prompt_tokens`, `completion_tokens`, `total_tokens`).
+  - Sum `turn.completed.usage` from CLI stdout.
+  - Required fields per turn: `input_tokens`, `cached_input_tokens`, `output_tokens`.
+  - `prompt_tokens = input_tokens + cached_input_tokens`, `completion_tokens = output_tokens`.
+  - Model name comes from session JSONL `turn_context.payload.model`. If unavailable, the model name is `unknown`.
+- `tool_calls`: count of unique tool items from CLI JSON events. We count distinct `item.id` where `item.type` is one of `mcp_tool_call`, `collab_tool_call`, `command_execution`, or `web_search`.
+- `llm_calls`: count of `turn.completed` entries with valid `usage` in CLI stdout.
 - `telemetry_log`: `CODEX_OTEL_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` when set.
 - `output_path`/`raw_output`: captured stdout/stderr from the Codex CLI run.
 - `trajectory_path`: formatted, human-readable trace built from the Codex stdout/stderr JSON stream and rendered as YAML (no truncation).

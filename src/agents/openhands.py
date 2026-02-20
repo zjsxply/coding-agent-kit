@@ -6,8 +6,9 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate
+from ..models import RunResult
+from ..stats_extract import last_value, opt_float, parse_usage_by_model, req_str, select_values
 from ..utils import format_trace_text
 
 
@@ -15,30 +16,20 @@ class OpenHandsAgent(CodingAgent):
     name = "openhands"
     display_name = "OpenHands"
     binary = "openhands"
+    install_strategy = InstallStrategy(
+        kind="uv_tool",
+        package="openhands",
+        version_style="pep440",
+        python_version="3.12",
+    )
+    run_template = RunCommandTemplate(
+        base_args=("--headless", "--json", "--override-with-envs"),
+        prompt_mode="flag",
+        prompt_flag="-t",
+        model_flag=None,
+        media_injection="none",
+    )
     _CONVERSATION_ID_RE = re.compile(r"Conversation ID:\s*([0-9a-fA-F-]{32,36})")
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        del scope
-        package_spec = "openhands"
-        if version:
-            normalized = version.strip()
-            if normalized:
-                package_spec = f"openhands=={normalized}"
-        result = self._uv_tool_install(
-            package_spec,
-            python_version="3.12",
-        )
-        ok = result.exit_code == 0
-        return InstallResult(
-            agent=self.name,
-            version=self.get_version(),
-            ok=ok,
-            details=result.output,
-            config_path=None,
-        )
-
-    def configure(self) -> Optional[str]:
-        return None
 
     def _run_impl(
         self,
@@ -53,68 +44,82 @@ class OpenHandsAgent(CodingAgent):
         if env_error is not None:
             return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
-        cmd = [
-            "openhands",
-            "--headless",
-            "--json",
-            "--override-with-envs",
-            "-t",
-            prompt,
-        ]
+        template = self.run_template
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=prompt,
+        )
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        output_path = self._write_output(self.name, output)
-        conversation_id = self._extract_conversation_id(output)
+        match = self._CONVERSATION_ID_RE.search(output)
+        if match:
+            normalized_conversation = match.group(1).strip().lower().replace("-", "")
+            conversation_id = normalized_conversation if len(normalized_conversation) == 32 else None
+        else:
+            conversation_id = None
         conversation_dir, base_state, events = self._load_conversation_artifacts(conversation_id)
 
-        model_name, usage, llm_calls, total_cost = self._extract_metrics_from_base_state(base_state)
-        models_usage = self._ensure_models_usage({}, usage, model_name)
-        tool_calls = self._count_tool_calls(events)
-        response = self._extract_response_from_events(events)
-
-        has_error_event = self._has_error_event(events)
-        trajectory_content = self._build_trajectory_content(
-            output=output,
-            output_path=output_path,
-            conversation_id=conversation_id,
-            conversation_dir=conversation_dir,
+        model_name, usage, llm_calls, tool_calls, total_cost, response = self._extract_stats(
             base_state=base_state,
             events=events,
         )
-        trajectory_path = self._write_trajectory(self.name, trajectory_content)
-
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
+        snapshot = self._build_single_model_stats_snapshot(
+            model_name=model_name,
+            usage=usage,
             llm_calls=llm_calls,
+            tool_calls=tool_calls,
             total_cost=total_cost,
-            response=response,
-            cakit_exit_code=(
-                1
-                if result.exit_code == 0 and has_error_event
-                else self._resolve_strict_run_exit_code(
-                    command_exit_code=result.exit_code,
-                    models_usage=models_usage,
-                    llm_calls=llm_calls,
-                    tool_calls=tool_calls,
-                    response=response,
-                )
-            ),
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
         )
 
-    def get_version(self) -> Optional[str]:
-        return self._version_text(["openhands", "--version"])
+        has_error_event = bool(
+            isinstance(events, list)
+            and (
+                select_values(events, '$[?(@.kind == "ConversationErrorEvent")]')
+                or select_values(events, '$[?(@.kind == "AgentErrorEvent")]')
+            )
+        )
+        if conversation_id and conversation_dir and base_state and isinstance(events, list):
+            payload = {
+                "conversation_id": conversation_id,
+                "conversation_dir": str(conversation_dir),
+                "base_state": base_state,
+                "events": events,
+            }
+            trajectory_content = format_trace_text(
+                json.dumps(payload, ensure_ascii=True),
+                source=str(conversation_dir),
+            )
+        else:
+            trajectory_content = format_trace_text(output, source=str(self._conversations_root()))
+        run_result = self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=snapshot.models_usage if snapshot is not None else {},
+            llm_calls=snapshot.llm_calls if snapshot is not None else None,
+            tool_calls=snapshot.tool_calls if snapshot is not None else None,
+            total_cost=snapshot.total_cost if snapshot is not None else None,
+            trajectory_content=trajectory_content,
+        )
+        run_result.cakit_exit_code = (
+            1
+            if result.exit_code == 0 and has_error_event
+            else self._resolve_strict_run_exit_code(
+                command_exit_code=result.exit_code,
+                models_usage=run_result.models_usage,
+                llm_calls=run_result.llm_calls,
+                tool_calls=run_result.tool_calls,
+                response=run_result.response,
+            )
+        )
+        return run_result
 
     def _build_run_env(self, *, model_override: Optional[str] = None) -> tuple[Dict[str, str], Optional[str]]:
         api_key = self._resolve_openai_api_key("LLM_API_KEY")
-        model = self._resolve_openai_model("LLM_MODEL", model_override=model_override)
+        model = self._resolve_litellm_model(
+            "LLM_MODEL",
+            model_override=model_override,
+            output_format="slash",
+        )
         base_url = self._resolve_openai_base_url("LLM_BASE_URL")
 
         missing: list[tuple[str, str]] = []
@@ -125,36 +130,13 @@ class OpenHandsAgent(CodingAgent):
         if missing:
             return {}, self._missing_env_with_fallback_message(missing)
 
-        resolved_model = self._normalize_model(model=model)
         env: Dict[str, str] = {
             "LLM_API_KEY": api_key,
-            "LLM_MODEL": resolved_model,
+            "LLM_MODEL": model,
         }
         if base_url:
             env["LLM_BASE_URL"] = base_url
         return env, None
-
-    @staticmethod
-    def _normalize_model(*, model: str) -> str:
-        normalized = model.strip()
-        if "/" in normalized:
-            return normalized
-        if ":" in normalized:
-            provider, model_name = normalized.split(":", 1)
-            provider = provider.strip()
-            model_name = model_name.strip()
-            if provider and model_name:
-                return f"{provider}/{model_name}"
-        return f"openai/{normalized}"
-
-    def _extract_conversation_id(self, output: str) -> Optional[str]:
-        match = self._CONVERSATION_ID_RE.search(output)
-        if not match:
-            return None
-        raw_value = match.group(1).strip().lower().replace("-", "")
-        if len(raw_value) != 32:
-            return None
-        return raw_value
 
     def _load_conversation_artifacts(
         self, conversation_id: Optional[str]
@@ -171,21 +153,14 @@ class OpenHandsAgent(CodingAgent):
         if not base_state_path.is_file() or not events_dir.is_dir():
             return conversation_root, None, None
 
-        try:
-            base_state = json.loads(base_state_path.read_text(encoding="utf-8"))
-        except Exception:
-            return conversation_root, None, None
-        if not isinstance(base_state, dict):
+        base_state = self._load_json_dict(base_state_path)
+        if base_state is None:
             return conversation_root, None, None
 
         events: list[Dict[str, Any]] = []
-        event_paths = sorted(events_dir.glob("event-*.json"))
-        for event_path in event_paths:
-            try:
-                parsed = json.loads(event_path.read_text(encoding="utf-8"))
-            except Exception:
-                return conversation_root, base_state, None
-            if not isinstance(parsed, dict):
+        for event_path in sorted(events_dir.glob("event-*.json")):
+            parsed = self._load_json_dict(event_path)
+            if parsed is None:
                 return conversation_root, base_state, None
             events.append(parsed)
 
@@ -201,157 +176,42 @@ class OpenHandsAgent(CodingAgent):
             return Path(persistence_dir).expanduser() / "conversations"
         return Path.home() / ".openhands" / "conversations"
 
-    def _extract_metrics_from_base_state(
-        self, base_state: Optional[Dict[str, Any]]
-    ) -> tuple[Optional[str], Optional[Dict[str, int]], Optional[int], Optional[float]]:
-        if not isinstance(base_state, dict):
-            return None, None, None, None
-
-        stats = base_state.get("stats")
-        if not isinstance(stats, dict):
-            return None, None, None, None
-
-        usage_to_metrics = stats.get("usage_to_metrics")
-        if not isinstance(usage_to_metrics, dict):
-            return None, None, None, None
-
-        agent_metrics = usage_to_metrics.get("agent")
-        if not isinstance(agent_metrics, dict):
-            return None, None, None, None
-
-        model_name = agent_metrics.get("model_name")
-        if not isinstance(model_name, str) or not model_name.strip():
-            model_name = None
-
-        accumulated = agent_metrics.get("accumulated_token_usage")
+    def _extract_stats(
+        self, *, base_state: Optional[Dict[str, Any]], events: Optional[list[Dict[str, Any]]]
+    ) -> tuple[Optional[str], Optional[Dict[str, int]], Optional[int], Optional[int], Optional[float], Optional[str]]:
+        model_name: Optional[str] = None
         usage: Optional[Dict[str, int]] = None
-        if isinstance(accumulated, dict):
-            prompt_tokens = self._as_int(accumulated.get("prompt_tokens"))
-            completion_tokens = self._as_int(accumulated.get("completion_tokens"))
-            if prompt_tokens is not None and completion_tokens is not None:
-                usage = {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": prompt_tokens + completion_tokens,
-                }
-
-        token_usages = agent_metrics.get("token_usages")
         llm_calls: Optional[int] = None
-        if isinstance(token_usages, list) and all(isinstance(item, dict) for item in token_usages):
-            llm_calls = len(token_usages)
-
-        accumulated_cost = agent_metrics.get("accumulated_cost")
         total_cost: Optional[float] = None
-        if isinstance(accumulated_cost, (int, float)) and not isinstance(accumulated_cost, bool):
-            total_cost = float(accumulated_cost)
+        if isinstance(base_state, dict):
+            model_name = req_str(base_state, "$.stats.usage_to_metrics.agent.model_name")
+            accumulated = last_value(base_state, "$.stats.usage_to_metrics.agent.accumulated_token_usage")
+            usage = parse_usage_by_model(accumulated, "prompt_completion") if isinstance(accumulated, dict) else None
+            token_usages = select_values(base_state, "$.stats.usage_to_metrics.agent.token_usages[*]")
+            llm_calls = len(token_usages) if isinstance(token_usages, list) else None
+            total_cost = opt_float(base_state, "$.stats.usage_to_metrics.agent.accumulated_cost")
 
-        return model_name, usage, llm_calls, total_cost
+        action_tool_names = select_values(events, '$[?(@.kind == "ActionEvent")].tool_name')
+        tool_calls = (
+            sum(1 for value in action_tool_names if isinstance(value, str) and value.strip())
+            if action_tool_names is not None
+            else None
+        )
 
-    def _count_tool_calls(self, events: Optional[list[Dict[str, Any]]]) -> Optional[int]:
-        if not isinstance(events, list):
-            return None
-        count = 0
-        for event in events:
-            if not isinstance(event, dict):
-                return None
-            if event.get("kind") != "ActionEvent":
-                continue
-            tool_name = event.get("tool_name")
-            if not isinstance(tool_name, str) or not tool_name:
-                return None
-            count += 1
-        return count
+        finish_texts = self._extract_content_texts(
+            events,
+            '$[?(@.observation.kind == "FinishObservation")].observation.content',
+            allow_scalars=False,
+        )
+        assistant_texts = self._extract_content_texts(
+            events,
+            '$[?(@.llm_message.role == "assistant")].llm_message.content',
+            allow_scalars=False,
+        )
+        response = None
+        if finish_texts:
+            response = finish_texts[-1]
+        elif assistant_texts:
+            response = assistant_texts[-1]
 
-    def _extract_response_from_events(self, events: Optional[list[Dict[str, Any]]]) -> Optional[str]:
-        if not isinstance(events, list):
-            return None
-
-        finish_candidates: list[str] = []
-        message_candidates: list[str] = []
-        for event in events:
-            if not isinstance(event, dict):
-                return None
-            kind = event.get("kind")
-            if kind == "ObservationEvent":
-                observation = event.get("observation")
-                if not isinstance(observation, dict):
-                    continue
-                if observation.get("kind") != "FinishObservation":
-                    continue
-                content = observation.get("content")
-                if not isinstance(content, list):
-                    return None
-                parts: list[str] = []
-                for item in content:
-                    if not isinstance(item, dict):
-                        return None
-                    if item.get("type") != "text":
-                        continue
-                    text = item.get("text")
-                    if isinstance(text, str) and text.strip():
-                        parts.append(text.strip())
-                if parts:
-                    finish_candidates.append("\n".join(parts))
-                continue
-
-            if kind != "MessageEvent":
-                continue
-            if event.get("source") != "agent":
-                continue
-            llm_message = event.get("llm_message")
-            if not isinstance(llm_message, dict):
-                continue
-            if llm_message.get("role") != "assistant":
-                continue
-            content = llm_message.get("content")
-            if not isinstance(content, list):
-                return None
-            parts: list[str] = []
-            for item in content:
-                if not isinstance(item, dict):
-                    return None
-                if item.get("type") != "text":
-                    continue
-                text = item.get("text")
-                if isinstance(text, str) and text.strip():
-                    parts.append(text.strip())
-            if parts:
-                message_candidates.append("\n".join(parts))
-
-        if finish_candidates:
-            return finish_candidates[-1]
-        if message_candidates:
-            return message_candidates[-1]
-        return None
-
-    def _has_error_event(self, events: Optional[list[Dict[str, Any]]]) -> bool:
-        if not isinstance(events, list):
-            return False
-        for event in events:
-            if not isinstance(event, dict):
-                continue
-            kind = event.get("kind")
-            if kind in {"ConversationErrorEvent", "AgentErrorEvent"}:
-                return True
-        return False
-
-    def _build_trajectory_content(
-        self,
-        *,
-        output: str,
-        output_path: Path,
-        conversation_id: Optional[str],
-        conversation_dir: Optional[Path],
-        base_state: Optional[Dict[str, Any]],
-        events: Optional[list[Dict[str, Any]]],
-    ) -> str:
-        if conversation_id and conversation_dir and base_state and isinstance(events, list):
-            payload = {
-                "conversation_id": conversation_id,
-                "conversation_dir": str(conversation_dir),
-                "base_state": base_state,
-                "events": events,
-            }
-            payload_text = json.dumps(payload, ensure_ascii=True)
-            return format_trace_text(payload_text, source=str(conversation_dir))
-        return format_trace_text(output, source=str(output_path))
+        return model_name, usage, llm_calls, tool_calls, total_cost, response

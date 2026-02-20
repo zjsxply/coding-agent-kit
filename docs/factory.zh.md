@@ -76,7 +76,8 @@ cakit 当前支持取值：
    - 字段：`model`
 5. 基于精确会话 transcript 提取工具调用次数：
    - `~/.factory/sessions/**/<session_id>.jsonl`
-   - 统计 `type == "tool_call"`（若 transcript 内出现 `hook_event_name == "PreToolUse"` 也计入）
+   - 优先统计 `type == "tool_call"`（若存在 `id`，按 `id` 去重）
+   - 若不存在 `tool_call` 事件，再回退到 `hook_event_name == "PreToolUse"` 且包含 `tool_name`
 6. `models_usage` 的模型名必须来自 run 产物；不从配置/环境变量回填。
 
 若关键统计字段无法按上述精确字段提取，cakit 对该次 run 返回非零退出码。

@@ -61,13 +61,16 @@ openclaw agent --local --agent main --session-id <generated_id> --message "<prom
 
 `cakit run openclaw` 会严格从以下来源提取统计：
 
-1. CLI JSON 返回（`payloads` + `meta.agentMeta`）：
-   - `response`
-   - `provider/model`
-   - usage（`input`、`output`、`cacheRead`、`cacheWrite`、`total`）
-2. 会话 transcript：
+1. 会话 transcript（主来源）：
    - `<临时 OPENCLAW_HOME>/agents/main/sessions/<session_id>.jsonl`
+   - `models_usage`：按 assistant `message.usage` 的 `totalTokens` 与 `output` 聚合
    - `llm_calls`：带有效 usage 的 assistant 消息数
-   - `tool_calls`：transcript 消息中 tool-use 的总出现次数
+   - `tool_calls`：assistant 的 tool-use 次数（`content[].type == "toolCall"`）
+   - 模型名来自 assistant 的 `message.provider` + `message.model`
+2. CLI JSON 返回（`payloads` + `meta.agentMeta`）兜底：
+   - `response` 来自 `payloads[*].text`
+   - 兜底 usage 来自 `meta.agentMeta.usage`（`total` + `output`）
+   - 兜底模型名来自 `meta.agentMeta.provider` + `meta.agentMeta.model`
+   - 仅在 transcript 文件不可用时启用
 
 若关键统计无法解析，cakit 会返回非零退出码。

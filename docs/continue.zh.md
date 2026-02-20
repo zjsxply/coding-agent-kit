@@ -40,17 +40,19 @@ Continue 的模型/鉴权解析优先级为：
 
 ## 统计字段提取
 
-`cakit run continue` 对 `response`、`models_usage`、`llm_calls`、`tool_calls` 采用严格解析：
+`cakit run continue` 对 `response`、`models_usage`、`llm_calls`、`tool_calls`、`total_cost` 采用严格解析：
 
 1. 先从以下文件读取会话 ID：
    - `<CONTINUE_GLOBAL_DIR>/sessions/sessions.json`（取最后一项的 `sessionId`）
 2. 再精确读取对应会话文件：
    - `<CONTINUE_GLOBAL_DIR>/sessions/<session_id>.json`
-3. 解析 `history[].message`：
+3. 解析 `history[]` 中 assistant 消息（JSONPath 过滤 `message.role == "assistant"`）：
    - `models_usage`：聚合 `usage.model` + `usage.prompt_tokens` / `usage.completion_tokens` / `usage.total_tokens`
-   - `llm_calls`：含有效 `usage` 的 assistant 消息数量
-   - `tool_calls`：assistant `message.toolCalls` 总数
-4. `response` 优先取 stdout；若为空再回退到 session history 里最后一条 assistant 消息内容。
+     - 若缺少 `usage.total_tokens`，则使用 `prompt_tokens + completion_tokens`
+   - `llm_calls`：带有效 usage 的 assistant 消息数量
+   - `tool_calls`：assistant 消息里 `message.toolCalls[*]` 的总数
+   - `total_cost`：会话顶层 `usage.totalCost`（若可用）
+4. `response` 优先取 session history 中最后一条 assistant 消息内容；若没有，再回退到 stdout 最后一条非空行。
 
 模型名只从运行产物读取（`history[].message.usage.model`），不会用配置或环境变量回填。
 

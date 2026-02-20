@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
-from .base import CodingAgent
-from ..models import InstallResult, RunResult
-from ..utils import format_trace_text
-
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate
+from ..models import RunResult
+from .base import (
+    last_value,
+    opt_float,
+    req_int,
+    req_str,
+    select_values,
+)
 
 class ContinueAgent(CodingAgent):
     name = "continue"
@@ -17,9 +21,14 @@ class ContinueAgent(CodingAgent):
     binary = "cn"
     supports_images = False
     supports_videos = False
-
-    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
-        return self._install_with_npm(package="@continuedev/cli", scope=scope, version=version)
+    install_strategy = InstallStrategy(kind="npm", package="@continuedev/cli")
+    run_template = RunCommandTemplate(
+        base_args=("-p", "--auto"),
+        prompt_mode="arg",
+        prompt_flag=None,
+        model_flag=None,
+        media_injection="none",
+    )
 
     def configure(self) -> Optional[str]:
         resolved, error = self._resolve_openai_auth(model_override=None)
@@ -30,7 +39,8 @@ class ContinueAgent(CodingAgent):
         base_url = resolved.get("base_url")
         if not api_key or not model:
             return None
-        config_path = self._continue_home() / "config.yaml"
+        continue_root = os.environ.get("CONTINUE_GLOBAL_DIR")
+        config_path = (Path(continue_root).expanduser() if continue_root else Path.home() / ".continue") / "config.yaml"
         self._write_text(config_path, self._build_config_yaml(api_key=api_key, model=model, base_url=base_url))
         return str(config_path)
 
@@ -43,13 +53,11 @@ class ContinueAgent(CodingAgent):
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        del reasoning_effort
         resolved, env_error = self._resolve_openai_auth(model_override=model_override)
         if env_error is not None:
             return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
-        run_home = Path("/tmp") / f"cakit-continue-{uuid.uuid4().hex}"
-        run_home.mkdir(parents=True, exist_ok=True)
+        run_home = self._make_temp_dir(prefix="cakit-continue-", keep=True)
         config_path = run_home / "config.yaml"
         self._write_text(
             config_path,
@@ -66,45 +74,57 @@ class ContinueAgent(CodingAgent):
             "OPENAI_MODEL": resolved["model"],
             "OPENAI_BASE_URL": resolved.get("base_url"),
         }
-        cmd = [
-            "cn",
-            "-p",
-            "--auto",
-            "--config",
-            str(config_path),
-            prompt,
-        ]
+        template = self.run_template
+        cmd, _ = self._build_templated_command(
+            template=template,
+            prompt=prompt,
+            extra_args=["--config", str(config_path)],
+        )
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        output_path = self._write_output(self.name, output)
-        trajectory_path = self._write_trajectory(self.name, format_trace_text(output, source=str(output_path)))
-
-        session_payload = self._load_session(run_home / "sessions")
-        models_usage, llm_calls, tool_calls = self._extract_stats(session_payload)
-        return RunResult(
-            agent=self.name,
-            agent_version=self.get_version(),
-            runtime_seconds=result.duration_seconds,
-            models_usage=models_usage,
-            tool_calls=tool_calls,
-            llm_calls=llm_calls,
-            telemetry_log=str(run_home / "logs" / "cn.log"),
-            response=self._extract_response(output, session_payload),
-            cakit_exit_code=None,
-            command_exit_code=result.exit_code,
-            output_path=str(output_path),
-            raw_output=output,
-            trajectory_path=str(trajectory_path) if trajectory_path else None,
+        sessions_dir = run_home / "sessions"
+        session_payload: Optional[Dict[str, Any]] = None
+        if sessions_dir.is_dir():
+            session_id: Optional[str] = None
+            manifest_path = sessions_dir / "sessions.json"
+            if manifest_path.is_file():
+                manifest = self._load_json(manifest_path)
+                if isinstance(manifest, list) and manifest:
+                    last_item = manifest[-1]
+                    if isinstance(last_item, dict):
+                        session_id = self._normalize_text(last_value(last_item, "$.sessionId"))
+            else:
+                candidates = sorted(path for path in sessions_dir.glob("*.json") if path.name != "sessions.json")
+                if len(candidates) == 1:
+                    session_id = candidates[0].stem
+            if session_id:
+                session_payload = self._load_json_dict(sessions_dir / f"{session_id}.json")
+        models_usage, llm_calls, tool_calls, total_cost = self._extract_session_stats(
+            session_payload=session_payload,
         )
-
-    def get_version(self) -> Optional[str]:
-        return self._version_text(["cn", "--version"])
-
-    def _continue_home(self) -> Path:
-        root = os.environ.get("CONTINUE_GLOBAL_DIR")
-        if root:
-            return Path(root).expanduser()
-        return Path.home() / ".continue"
+        response: Optional[str] = None
+        if isinstance(session_payload, dict):
+            last_message = last_value(
+                session_payload,
+                '$.history[?(@.message.role == "assistant")].message',
+            )
+            if isinstance(last_message, dict):
+                direct_content = self._normalize_text(last_value(last_message, "$.content"))
+                if direct_content is not None:
+                    response = direct_content
+                else:
+                    response = self._joined_selected_text(last_message, "$.content[*].text")
+        if response is None:
+            response = self._last_stdout_line(output)
+        return self.finalize_run(
+            command_result=result,
+            response=response,
+            models_usage=models_usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            total_cost=total_cost,
+            telemetry_log=str(run_home / "logs" / "cn.log"),
+        )
 
     def _resolve_openai_auth(self, *, model_override: Optional[str]) -> tuple[Dict[str, str], Optional[str]]:
         api_key = self._resolve_openai_api_key("CAKIT_CONTINUE_OPENAI_API_KEY")
@@ -148,135 +168,47 @@ class ContinueAgent(CodingAgent):
         )
         return "\n".join(lines) + "\n"
 
-    def _load_session(self, sessions_dir: Path) -> Optional[Dict[str, Any]]:
-        if not sessions_dir.is_dir():
-            return None
-        session_id = self._resolve_session_id(sessions_dir)
-        if not session_id:
-            return None
-        path = sessions_dir / f"{session_id}.json"
-        if not path.is_file():
-            return None
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        if isinstance(payload, dict):
-            return payload
-        return None
+    def _extract_session_stats(
+        self,
+        *,
+        session_payload: Optional[Dict[str, Any]],
+    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int], Optional[float]]:
+        payload = session_payload if isinstance(session_payload, dict) else None
+        if payload is None:
+            return {}, None, None, None
 
-    def _resolve_session_id(self, sessions_dir: Path) -> Optional[str]:
-        manifest_path = sessions_dir / "sessions.json"
-        if manifest_path.is_file():
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except Exception:
-                return None
-            if not isinstance(manifest, list) or not manifest:
-                return None
-            last_item = manifest[-1]
-            if not isinstance(last_item, dict):
-                return None
-            value = last_item.get("sessionId")
-            if isinstance(value, str) and value:
-                return value
-            return None
-
-        candidates = sorted(path for path in sessions_dir.glob("*.json") if path.name != "sessions.json")
-        if len(candidates) != 1:
-            return None
-        return candidates[0].stem
-
-    def _extract_stats(
-        self, session_payload: Optional[Dict[str, Any]]
-    ) -> Tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
-        if not isinstance(session_payload, dict):
-            return {}, None, None
-        history = session_payload.get("history")
-        if not isinstance(history, list):
-            return {}, None, None
+        assistant_messages = select_values(
+            payload,
+            '$.history[?(@.message.role == "assistant")].message',
+        )
+        llm_calls = len(assistant_messages) if assistant_messages is not None else None
 
         models_usage: Dict[str, Dict[str, int]] = {}
-        llm_calls = 0
-        tool_calls = 0
-
-        for item in history:
-            if not isinstance(item, dict):
-                return {}, None, None
-            message = item.get("message")
-            if not isinstance(message, dict):
-                return {}, None, None
-            if message.get("role") != "assistant":
-                continue
-
-            raw_tool_calls = message.get("toolCalls")
-            if raw_tool_calls is not None:
-                if not isinstance(raw_tool_calls, list):
-                    return {}, None, None
-                tool_calls += len(raw_tool_calls)
-
-            usage = message.get("usage")
-            if usage is None:
-                continue
+        for usage in select_values(payload, '$.history[?(@.message.role == "assistant")].message.usage') or []:
             if not isinstance(usage, dict):
-                return {}, None, None
-
-            model = usage.get("model")
-            prompt_tokens = self._as_int(usage.get("prompt_tokens"))
-            completion_tokens = self._as_int(usage.get("completion_tokens"))
-            total_tokens = self._as_int(usage.get("total_tokens"))
-            if not isinstance(model, str) or not model.strip():
-                return {}, None, None
-            if prompt_tokens is None or completion_tokens is None:
-                return {}, None, None
+                continue
+            model_name = req_str(usage, "$.model")
+            prompt_tokens = req_int(usage, "$.prompt_tokens")
+            completion_tokens = req_int(usage, "$.completion_tokens")
+            if model_name is None or prompt_tokens is None or completion_tokens is None:
+                continue
+            total_tokens = req_int(usage, "$.total_tokens")
             if total_tokens is None:
                 total_tokens = prompt_tokens + completion_tokens
+            usage_entry = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            }
+            self._merge_model_usage(models_usage, model_name, usage_entry)
 
-            entry = models_usage.setdefault(
-                model,
-                {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-            )
-            entry["prompt_tokens"] += prompt_tokens
-            entry["completion_tokens"] += completion_tokens
-            entry["total_tokens"] += total_tokens
-            llm_calls += 1
-
-        if llm_calls < 1:
-            return {}, None, None
-        return models_usage, llm_calls, tool_calls
-
-    def _extract_response(self, output: str, session_payload: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not isinstance(session_payload, dict):
-            session_payload = None
-        if isinstance(session_payload, dict):
-            history = session_payload.get("history")
-            if isinstance(history, list):
-                for item in reversed(history):
-                    if not isinstance(item, dict):
-                        return None
-                    message = item.get("message")
-                    if not isinstance(message, dict):
-                        return None
-                    if message.get("role") != "assistant":
-                        continue
-                    content = message.get("content")
-                    if isinstance(content, str):
-                        cleaned = content.strip()
-                        if cleaned:
-                            return cleaned
-                    if isinstance(content, list):
-                        parts: list[str] = []
-                        for block in content:
-                            if not isinstance(block, dict):
-                                return None
-                            text = block.get("text")
-                            if isinstance(text, str) and text.strip():
-                                parts.append(text.strip())
-                        if parts:
-                            return "\n".join(parts)
-
-        stdout = self._stdout_only(output)
-        lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-        if lines:
-            return lines[-1]
-        return None
+        tool_call_values = select_values(
+            payload,
+            '$.history[?(@.message.role == "assistant")].message.toolCalls[*]',
+        )
+        return (
+            models_usage,
+            llm_calls,
+            (len(tool_call_values) if tool_call_values is not None else None),
+            opt_float(payload, "$.usage.totalCost"),
+        )
