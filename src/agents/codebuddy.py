@@ -7,16 +7,24 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
 from .base import (
     CodingAgent,
     InstallStrategy,
+    RunParseResult,
+    RunPlan,
+)
+from ..stats_extract import (
+    JsonlStatsSpec,
+    StatsArtifacts,
     extract_jsonl_stats,
     last_value,
+    merge_stats_snapshots,
     opt_float,
     req_str,
     select_values,
 )
-from ..models import RunResult
 
 
 class CodeBuddyAgent(CodingAgent):
@@ -27,7 +35,7 @@ class CodeBuddyAgent(CodingAgent):
     supports_videos = False
     install_strategy = InstallStrategy(kind="npm", package="@tencent-ai/codebuddy-code")
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -35,17 +43,17 @@ class CodeBuddyAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         images = images or []
-        selected_model = self._resolve_openai_model("CODEBUDDY_MODEL", model_override=model_override)
-        api_key = self._resolve_openai_api_key("CODEBUDDY_API_KEY")
-        base_url = self._resolve_openai_base_url("CODEBUDDY_BASE_URL")
+        selected_model = runtime_env.resolve_openai_model("CODEBUDDY_MODEL", model_override=model_override)
+        api_key = runtime_env.resolve_openai_api_key("CODEBUDDY_API_KEY")
+        base_url = runtime_env.resolve_openai_base_url("CODEBUDDY_BASE_URL")
         cmd = ["codebuddy", "-p", "--output-format", "stream-json", "-y"]
         input_text: Optional[str] = None
         if images:
             stream_input, build_error = self._build_stream_json_input(prompt=prompt, images=images)
             if build_error:
-                return self._build_error_run_result(message=build_error, cakit_exit_code=2)
+                self._raise_capability_error(build_error)
             cmd.extend(["--input-format", "stream-json"])
             input_text = stream_input
         if selected_model:
@@ -60,20 +68,49 @@ class CodeBuddyAgent(CodingAgent):
             "CODEBUDDY_MODEL": selected_model,
             "CODEBUDDY_INTERNET_ENVIRONMENT": os.environ.get("CODEBUDDY_INTERNET_ENVIRONMENT"),
         }
-        result = self._run(cmd, env=env, input_text=input_text, base_env=base_env)
-        output = result.output
-        payloads = self._load_output_json_payloads(output)
-        stats = self._extract_stream_json_stats(payloads)
+        result_is_error = {"value": False}
+        return RunPlan(
+            command=cmd,
+            env=env,
+            input_text=input_text,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                command_result,
+                result_is_error=result_is_error,
+            ),
+            post_finalize=lambda run_result, parsed, command_result: self._post_finalize_pipeline(
+                run_result=run_result,
+                command_result=command_result,
+                result_is_error=result_is_error["value"],
+            ),
+        )
 
-        run_result = self.finalize_run(
-            command_result=result,
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        command_result: Any,
+        *,
+        result_is_error: Dict[str, bool],
+    ) -> RunParseResult:
+        payloads = runtime_parsing.load_output_json_payloads(output)
+        stats = self._extract_stream_json_stats(payloads)
+        result_is_error["value"] = bool(stats["result_is_error"])
+        return RunParseResult(
             response=stats["response"],
             models_usage=stats["models_usage"],
             llm_calls=stats["llm_calls"],
             tool_calls=stats["tool_calls"],
             total_cost=stats["total_cost"],
         )
-        if result.exit_code == 0 and stats["result_is_error"]:
+
+    def _post_finalize_pipeline(
+        self,
+        *,
+        run_result,
+        command_result: Any,
+        result_is_error: bool,
+    ):
+        if command_result.exit_code == 0 and result_is_error:
             run_result.cakit_exit_code = 1
         return run_result
 
@@ -89,14 +126,17 @@ class CodeBuddyAgent(CodingAgent):
         if not payloads:
             return defaults
 
-        artifacts = self._build_stats_artifacts(jsonl_payloads=payloads)
-        snapshot = self._merge_stats_snapshots(
+        artifacts = StatsArtifacts(jsonl_payloads=tuple(payloads))
+        stats_spec = JsonlStatsSpec(
+            source_field="jsonl_payloads",
+            model_field="$.message.model",
+            usage_field="$.message.usage",
+        )
+        snapshot = merge_stats_snapshots(
             snapshots=[
                 extract_jsonl_stats(
                     artifacts,
-                    source_field="jsonl_payloads",
-                    model_field="$.message.model",
-                    usage_field="$.message.usage",
+                    spec=stats_spec,
                 ),
             ]
         )
@@ -107,14 +147,34 @@ class CodeBuddyAgent(CodingAgent):
         result_is_error = bool(isinstance(result_payload, dict) and last_value(result_payload, "$.is_error") is True)
 
         last_assistant_payload = last_value(payloads, '$[?(@.type == "assistant")]')
-        assistant_response = self._joined_selected_text(
-            last_assistant_payload,
-            '$.message.content[?(@.type == "text")].text',
-        ) or self._last_selected_text(
-            payloads,
-            '$[?(@.type == "assistant")].message.content[?(@.type == "text")].text',
+        assistant_parts = [
+            text
+            for text in (
+                runtime_parsing.normalize_text(item)
+                for item in (
+                    select_values(last_assistant_payload, '$.message.content[?(@.type == "text")].text') or []
+                )
+            )
+            if text is not None
+        ]
+        assistant_response = (
+            ("\n".join(assistant_parts) if assistant_parts else None)
+            or runtime_parsing.last_nonempty_text(
+                select_values(
+                    payloads,
+                    '$[?(@.type == "assistant")].message.content[?(@.type == "text")].text',
+                )
+            )
         )
-        error_response = self._joined_selected_text(result_payload, "$.errors[*]")
+        error_parts = [
+            text
+            for text in (
+                runtime_parsing.normalize_text(item)
+                for item in (select_values(result_payload, "$.errors[*]") or [])
+            )
+            if text is not None
+        ]
+        error_response = "\n".join(error_parts) if error_parts else None
         llm_call_values = select_values(payloads, '$[?(@.type == "assistant")]')
         llm_calls = len(llm_call_values) if llm_call_values is not None else snapshot.llm_calls
         tool_call_values = select_values(payloads, '$[?(@.type == "assistant")].message.content[?(@.type == "tool_use")]')
@@ -159,7 +219,7 @@ class CodeBuddyAgent(CodingAgent):
         if not resolved.exists() or not resolved.is_file():
             return {}, f"image file not found: {resolved}"
 
-        media_type = self._normalize_text(mimetypes.guess_type(str(resolved))[0])
+        media_type = runtime_parsing.normalize_text(mimetypes.guess_type(str(resolved))[0])
         if media_type is None:
             suffix_to_type = {
                 ".jpg": "image/jpeg",

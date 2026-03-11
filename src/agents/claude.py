@@ -4,10 +4,12 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ..agent_runtime import parsing as runtime_parsing
 from .base import CodingAgent, InstallStrategy, RunCommandTemplate
 from ..models import RunResult
-from .base import (
+from ..stats_extract import (
     last_value,
+    merge_model_usage,
     opt_float,
     parse_usage_by_model,
     req_int,
@@ -59,6 +61,7 @@ class ClaudeAgent(CodingAgent):
         otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
         telemetry_enabled = bool(otel_endpoint)
         telemetry_enabled_env: Optional[str] = None
+        telemetry_explicit = telemetry_enabled_raw is not None
         if telemetry_enabled_raw is None:
             if telemetry_enabled:
                 telemetry_enabled_env = "1"
@@ -77,6 +80,8 @@ class ClaudeAgent(CodingAgent):
             else:
                 auth_token = None
                 unset_env.append("ANTHROPIC_AUTH_TOKEN")
+        if telemetry_explicit and not telemetry_enabled:
+            unset_env.append("OTEL_EXPORTER_OTLP_ENDPOINT")
         env = {
             "ANTHROPIC_API_KEY": api_key,
             "ANTHROPIC_BASE_URL": os.environ.get("ANTHROPIC_BASE_URL"),
@@ -84,7 +89,7 @@ class ClaudeAgent(CodingAgent):
             "CLAUDE_CODE_ENABLE_TELEMETRY": telemetry_enabled_env,
             "CLAUDE_CODE_EFFORT_LEVEL": reasoning_effort,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-            "OTEL_EXPORTER_OTLP_ENDPOINT": otel_endpoint,
+            "OTEL_EXPORTER_OTLP_ENDPOINT": (otel_endpoint if telemetry_enabled else None),
             "IS_SANDBOX": "1",
         }
         extra_args: list[str] = []
@@ -99,7 +104,7 @@ class ClaudeAgent(CodingAgent):
         )
         result = self._run(cmd, env, unset_env=unset_env, base_env=base_env)
         output = result.output
-        payloads = self._load_output_json_payloads(output)
+        payloads = runtime_parsing.load_output_json_payloads(output)
         parsed = self._parse_stream_payloads(payloads)
         runtime_seconds = result.duration_seconds
         if parsed is not None and isinstance(parsed["duration_ms"], int):
@@ -125,7 +130,17 @@ class ClaudeAgent(CodingAgent):
         response = req_str(result_payload, "$.result") if isinstance(result_payload, dict) else None
         model_usage = last_value(result_payload, "$.modelUsage") if isinstance(result_payload, dict) else None
         models_usage = self._parse_model_usage(model_usage)
-        tool_calls = self._count_selected(payloads, '$[?(@.type == "assistant")].message.content[?(@.type == "tool_use")]')
+        assistant_contents = select_values(payloads, '$[?(@.type == "assistant")].message.content')
+        if assistant_contents is None:
+            tool_calls = None
+        else:
+            tool_call_values = select_values(
+                payloads,
+                '$[?(@.type == "assistant")].message.content[?(@.type == "tool_use")]',
+            )
+            tool_calls = len(tool_call_values) if tool_call_values is not None else None
+            if tool_calls is None:
+                tool_calls = 0
         if (
             duration_ms is None
             and llm_calls is None
@@ -164,5 +179,5 @@ class ClaudeAgent(CodingAgent):
             )
             if usage is None:
                 continue
-            self._merge_model_usage(models_usage, model_name.strip(), usage)
+            merge_model_usage(models_usage, model_name.strip(), usage)
         return models_usage

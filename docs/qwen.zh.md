@@ -7,7 +7,7 @@
 
 **数据来源**
 - `qwen -p ... --output-format json --approval-mode yolo` 的 stdout/stderr。
-- 本地遥测日志：`~/.qwen/telemetry.log`。
+- run 唯一本地遥测日志：`~/.qwen/telemetry/cakit-<timestamp>-<ns>-<id>.log`。
 - 运行时环境变量映射：
   - `QWEN_OPENAI_API_KEY` -> `OPENAI_API_KEY`（支持从共享 `OPENAI_API_KEY` 回退）
   - `QWEN_OPENAI_BASE_URL` -> `OPENAI_BASE_URL`（支持从共享 `OPENAI_BASE_URL` 回退）
@@ -18,6 +18,8 @@
 **运行行为**
 - 当存在 `QWEN_OPENAI_API_KEY` 时，cakit 会传递 `--auth-type openai`。
 - 模型优先级为：`--model` > `QWEN_OPENAI_MODEL` > `OPENAI_DEFAULT_MODEL`。
+- cakit 会传入 run 唯一的 `--telemetry-outfile` 路径，避免并发运行互相覆盖。
+- `cakit configure qwen` 会对 `~/.qwen/settings.json` 做读-改-写合并更新，而不是整文件覆盖。
 
 **图像/视频输入**
 - 支持 `cakit run qwen --image/--video`，实现方式为 prompt 注入。

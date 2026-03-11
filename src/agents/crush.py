@@ -7,8 +7,10 @@ from typing import Any, Dict, Optional, Tuple
 
 from .base import CodingAgent, InstallStrategy, VersionCommandTemplate
 from ..models import RunResult
-from .base import last_value, parse_usage_by_model, select_values, sum_int
-from ..utils import format_trace_text
+from ..stats_extract import last_value, parse_usage_by_model, select_values, sum_int
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import trajectory as runtime_trajectory
 
 
 class CrushAgent(CodingAgent):
@@ -53,7 +55,7 @@ class CrushAgent(CodingAgent):
         env: Dict[str, str] = {
             "CRUSH_DISABLE_PROVIDER_AUTO_UPDATE": "1",
         }
-        selected_model = self._resolve_openai_model("CAKIT_CRUSH_MODEL", model_override=model_override)
+        selected_model = runtime_env.resolve_openai_model("CAKIT_CRUSH_MODEL", model_override=model_override)
         if settings is not None:
             config_dir = self._make_temp_dir(prefix="cakit-crush-config-")
             runtime_config_path = config_dir / "crush.json"
@@ -75,7 +77,7 @@ class CrushAgent(CodingAgent):
             "--quiet",
         ]
         if selected_model:
-            provider_model = self._normalize_provider_model(
+            provider_model = runtime_env.normalize_provider_model(
                 selected_model,
                 default_provider="cakit-openai",
                 colon_as_provider=False,
@@ -87,14 +89,17 @@ class CrushAgent(CodingAgent):
         output = result.output
 
         models_usage, llm_calls, tool_calls, trace_payload = self._extract_stats_from_db(db_path)
-        if trace_payload is not None:
-            trajectory_content = format_trace_text(
-                json.dumps({"db_path": str(db_path), "trace": trace_payload}, ensure_ascii=True),
-                source=str(db_path),
-            )
-        else:
-            trajectory_content = format_trace_text(output, source=str(db_path))
-        response = self._last_stdout_line(output) or self._normalize_text(output)
+        trajectory_raw = (
+            json.dumps({"db_path": str(db_path), "trace": trace_payload}, ensure_ascii=True)
+            if trace_payload is not None
+            else None
+        )
+        trajectory_content = runtime_trajectory.build_trajectory_from_raw(
+            raw_text=trajectory_raw,
+            output=output,
+            source=str(db_path),
+        )
+        response = runtime_parsing.last_stdout_line(output) or runtime_parsing.normalize_text(output)
         return self.finalize_run(
             command_result=result,
             response=response,
@@ -106,9 +111,9 @@ class CrushAgent(CodingAgent):
         )
 
     def _resolve_api_settings(self, *, model_override: Optional[str]) -> tuple[Optional[Dict[str, str]], Optional[str]]:
-        api_key = self._resolve_openai_api_key("CRUSH_OPENAI_API_KEY")
-        base_url = self._resolve_openai_base_url("CRUSH_OPENAI_BASE_URL")
-        model = self._resolve_openai_model("CAKIT_CRUSH_MODEL", model_override=model_override)
+        api_key = runtime_env.resolve_openai_api_key("CRUSH_OPENAI_API_KEY")
+        base_url = runtime_env.resolve_openai_base_url("CRUSH_OPENAI_BASE_URL")
+        model = runtime_env.resolve_openai_model("CAKIT_CRUSH_MODEL", model_override=model_override)
 
         any_set = bool(api_key or base_url or model)
         if not any_set:
@@ -122,7 +127,7 @@ class CrushAgent(CodingAgent):
         if not model:
             missing.append(("CAKIT_CRUSH_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return None, self._missing_env_with_fallback_message(missing)
+            return None, runtime_env.missing_env_with_fallback_message(missing)
 
         return {
             "api_key": api_key,
@@ -187,13 +192,13 @@ class CrushAgent(CodingAgent):
             sessions: list[Dict[str, Any]] = []
             for row in rows:
                 payload = dict(row)
-                if self._normalize_text(last_value(payload, "$.id")) is None:
+                if runtime_parsing.normalize_text(last_value(payload, "$.id")) is None:
                     return {}, None, None, None
                 sessions.append(payload)
             if len(sessions) != 1:
                 return {}, None, None, None
             session = sessions[0]
-            session_id = self._normalize_text(last_value(session, "$.id"))
+            session_id = runtime_parsing.normalize_text(last_value(session, "$.id"))
             if session_id is None:
                 return {}, None, None, None
             trace_payload = {
@@ -223,7 +228,7 @@ class CrushAgent(CodingAgent):
                 model_names: set[str] = set()
                 model_name_invalid = False
                 for message in assistant_messages:
-                    current_name = self._normalize_text(last_value(message, "$.model"))
+                    current_name = runtime_parsing.normalize_text(last_value(message, "$.model"))
                     if current_name is None:
                         model_name_invalid = True
                         break
@@ -285,7 +290,7 @@ class CrushAgent(CodingAgent):
             item = dict(row)
             parts = last_value(item, "$.parts")
             if isinstance(parts, str):
-                parsed_parts = self._parse_json(parts)
+                parsed_parts = runtime_parsing.parse_json(parts)
                 if parsed_parts is not None:
                     item["parts"] = parsed_parts
             messages.append(item)

@@ -84,7 +84,11 @@
   - Reuse uv/pip install helpers via shared methods (prefer `src/agents/base.py`) instead of duplicating install command assembly in each coding agent.
   - For run result assembly, prefer the shared `finalize_run(...)` path in `src/agents/base.py`: agent classes should focus on artifact parsing and pass parsed values to the shared finalizer, instead of manually repeating raw-output writing, trajectory writing, and `RunResult(...)` construction.
   - Prefer data-driven agent declarations directly on `CodingAgent` subclasses via `install_strategy`, `run_template`, and `version_template`; keep custom imperative logic only for upstream-specific differences that cannot be represented by shared templates.
+  - For install flow, keep `install()` as the single strategy entry point; avoid adding extra indirection layers such as separate trivial strategy-resolver/dispatcher methods.
+  - When logic already exists in `src/agent_runtime/`, coding-agent subclasses should import those helpers directly; do not route those helpers back through `CodingAgent` methods.
 - Code style:
+  - Do not add pass-through one-line methods that only forward class attributes or helper calls (for example `return self.install_strategy` wrappers). Use declared attributes and helper functions directly.
+  - Do not add meaningless thin wrapper helpers that only reshuffle arguments into another function call without adding real behavior. Extend the existing function signature or inline the call instead.
   - Do not add redundant defensive checks for class-declared attributes/constants (for example, checking `self.run_template is None` when `run_template` is already declared on that agent class); use declared values directly.
   - When building `RunResult`, remove one-time pass-through locals and construct those values inline in `RunResult(...)`.
   - Keep meaningful readability variables (for example `trajectory_content`) when they make the flow clearer, even if they are used once.
@@ -151,3 +155,4 @@
 - New and modified files for the coding agent should follow existing project patterns in structure, naming, and strict parsing behavior.
 - Before implementing a new coding agent, review `src/utils.py` and `src/agents/base.py` first and reuse existing helpers where applicable; only add new shared helpers when reuse is not possible.
 - During concurrent collaboration with other codex instances, accept existing changes in the repository and avoid interfering with unrelated ongoing work.
+- By default, proactively launch up to 6 sub-agents when that capability is available if doing so can materially accelerate the work. If the user specifies coordination constraints or a preferred task split, follow those instructions.

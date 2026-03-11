@@ -9,10 +9,21 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent, CommandResult, InstallStrategy, VersionCommandTemplate
+from .base import CodingAgent, CommandResult, InstallStrategy, ParsedStats, VersionCommandTemplate
 from ..models import RunResult
-from ..stats_extract import last_value, req_str, select_values, sum_int
-from ..utils import format_trace_text
+from ..stats_extract import (
+    build_single_model_stats_snapshot,
+    last_value,
+    req_str,
+    select_values,
+    sum_int,
+    sum_usage_entries,
+)
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import install_version as runtime_install
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import trajectory as runtime_trajectory
+from ..io_helpers import dump_yaml
 
 
 class SweAgent(CodingAgent):
@@ -50,7 +61,24 @@ class SweAgent(CodingAgent):
                 duration_seconds=0.0,
             )
         url = f"https://github.com/SWE-agent/SWE-agent/archive/refs/tags/{resolved_version}.tar.gz"
-        result = self._uv_pip_install([url], no_cache_dir=True)
+        result = runtime_install.uv_pip_install(
+            packages=[url],
+            no_cache_dir=True,
+            run=self._run,
+            ensure_uv_fn=lambda: runtime_install.ensure_uv(self._run),
+            pip_install_fn=lambda packages, no_cache: runtime_install.pip_install(
+                packages=packages,
+                no_cache_dir=no_cache,
+                run=self._run,
+            ),
+        )
+        if not isinstance(result, CommandResult):
+            result = CommandResult(
+                exit_code=getattr(result, "exit_code", 1),
+                stdout=getattr(result, "stdout", ""),
+                stderr=getattr(result, "stderr", ""),
+                duration_seconds=getattr(result, "duration_seconds", 0.0),
+            )
         assets_ok = self._prepare_runtime_assets(resolved_version)
         details = result.output
         exit_code = result.exit_code
@@ -70,26 +98,30 @@ class SweAgent(CodingAgent):
         if not tools_dir:
             return None
 
-        config = (
-            "agent:\n"
-            "  templates:\n"
-            "    system_template: |-\n"
-            "      You are a helpful assistant that can interact with a computer to solve tasks.\n"
-            "    instance_template: |-\n"
-            "      {{problem_statement}}\n"
-            "  tools:\n"
-            "    bundles:\n"
-            f"      - path: {json.dumps(str(Path(tools_dir) / 'registry'))}\n"
-            f"      - path: {json.dumps(str(Path(tools_dir) / 'submit'))}\n"
-            "    enable_bash_tool: true\n"
-            "    parse_function:\n"
-            "      type: thought_action\n"
-            "  history_processors:\n"
-            "    - type: cache_control\n"
-            "      last_n_messages: 2\n"
-        )
+        config = {
+            "agent": {
+                "templates": {
+                    "system_template": "You are a helpful assistant that can interact with a computer to solve tasks.",
+                    "instance_template": "{{problem_statement}}",
+                },
+                "tools": {
+                    "bundles": [
+                        {"path": str(Path(tools_dir) / "registry")},
+                        {"path": str(Path(tools_dir) / "submit")},
+                    ],
+                    "enable_bash_tool": True,
+                    "parse_function": {"type": "thought_action"},
+                },
+                "history_processors": [
+                    {
+                        "type": "cache_control",
+                        "last_n_messages": 2,
+                    }
+                ],
+            }
+        }
         path = Path.home() / ".config" / "sweagent" / "config.yaml"
-        self._write_text(path, config)
+        self._write_text(path, dump_yaml(config))
         return str(path)
 
     def _run_impl(
@@ -101,8 +133,8 @@ class SweAgent(CodingAgent):
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
-        api_key = self._resolve_openai_api_key("SWE_AGENT_API_KEY")
-        api_base = self._resolve_openai_base_url("SWE_AGENT_API_BASE")
+        api_key = runtime_env.resolve_openai_api_key("SWE_AGENT_API_KEY")
+        api_base = runtime_env.resolve_openai_base_url("SWE_AGENT_API_BASE")
         env = {
             "SWE_AGENT_API_KEY": api_key,
             "SWE_AGENT_API_BASE": api_base,
@@ -111,7 +143,7 @@ class SweAgent(CodingAgent):
             "OPENAI_BASE_URL": api_base,
         }
         env.update(self._runtime_asset_env(create_if_missing=True))
-        model = self._resolve_openai_model("SWE_AGENT_MODEL", model_override=model_override)
+        model = runtime_env.resolve_openai_model("SWE_AGENT_MODEL", model_override=model_override)
         repo_path = self._resolve_repo_path(base_env=base_env)
         output_dir = self._make_temp_dir(prefix="cakit-sweagent-")
         cmd = [
@@ -159,21 +191,22 @@ class SweAgent(CodingAgent):
                 if not trajectory_file.exists():
                     loaded_payloads = []
                     break
-                data = self._load_json(trajectory_file)
+                data = runtime_parsing.load_json(trajectory_file)
                 if not isinstance(data, dict):
                     loaded_payloads = []
                     break
                 loaded_payloads.append(data)
             trajectory_payloads = loaded_payloads or None
-        usage, model_name, llm_calls, tool_calls, response = self._extract_trajectory_stats(trajectory_payloads)
-        snapshot = self._build_single_model_stats_snapshot(
-            model_name=model_name,
-            usage=usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
+        parsed_stats = self._extract_trajectory_stats(trajectory_payloads)
+        snapshot = build_single_model_stats_snapshot(
+            model_name=parsed_stats.model_name,
+            usage=parsed_stats.usage,
+            llm_calls=parsed_stats.llm_calls,
+            tool_calls=parsed_stats.tool_calls,
             total_cost=None,
         )
 
+        trajectory_payload: Optional[str] = None
         if trajectory_files:
             entries: list[dict[str, str]] = []
             for trajectory_file in trajectory_files:
@@ -182,16 +215,13 @@ class SweAgent(CodingAgent):
                     continue
                 entries.append({"path": str(trajectory_file), "content": trajectory_raw})
             if entries:
-                trajectory_content = format_trace_text(
-                    json.dumps({"trajectory_files": entries}, ensure_ascii=True),
-                    source=str(output_dir),
-                )
-            else:
-                trajectory_content = format_trace_text(output, source=str(output_dir))
-        else:
-            trajectory_content = format_trace_text(output, source=str(output_dir))
-        if response is None:
-            response = self._last_stdout_line(output)
+                trajectory_payload = json.dumps({"trajectory_files": entries}, ensure_ascii=True)
+        trajectory_content = runtime_trajectory.build_trajectory_from_raw(
+            raw_text=trajectory_payload,
+            output=output,
+            source=str(output_dir),
+        )
+        response = parsed_stats.response or runtime_parsing.last_stdout_line(output)
         return self.finalize_run(
             command_result=result,
             response=response,
@@ -377,8 +407,9 @@ class SweAgent(CodingAgent):
             self.workdir = original_workdir
 
     def _extract_single_trajectory_stats(
-        self, payload: Dict[str, Any]
-    ) -> tuple[Optional[Dict[str, int]], Optional[str], Optional[int], Optional[int], Optional[str]]:
+        self,
+        payload: Dict[str, Any],
+    ) -> ParsedStats:
         tokens_sent = sum_int(payload, "$.info.model_stats.tokens_sent")
         tokens_received = sum_int(payload, "$.info.model_stats.tokens_received")
         api_calls = sum_int(payload, "$.info.model_stats.api_calls")
@@ -396,17 +427,24 @@ class SweAgent(CodingAgent):
             else None
         )
 
-        response = self._first_selected_text(
-            payload,
+        response = next(
             (
-                "$.attempts[*].trajectory[*].response",
-                "$.attempts[*].trajectory[*].thought",
-                "$.attempts[*].trajectory[*].observation",
-                "$.trajectory[*].response",
-                "$.trajectory[*].thought",
-                "$.trajectory[*].observation",
-                "$.info.submission",
+                text
+                for text in (
+                    runtime_parsing.last_nonempty_text(select_values(payload, path))
+                    for path in (
+                        "$.attempts[*].trajectory[*].response",
+                        "$.attempts[*].trajectory[*].thought",
+                        "$.attempts[*].trajectory[*].observation",
+                        "$.trajectory[*].response",
+                        "$.trajectory[*].thought",
+                        "$.trajectory[*].observation",
+                        "$.info.submission",
+                    )
+                )
+                if text is not None
             ),
+            None,
         )
 
         usage = (
@@ -426,36 +464,49 @@ class SweAgent(CodingAgent):
                     model_name = self._extract_model_name_from_replay_config(attempt)
                     if model_name:
                         break
-        return usage, model_name, api_calls, tool_calls, response
+        return ParsedStats(
+            model_name=model_name,
+            usage=usage,
+            llm_calls=api_calls,
+            tool_calls=tool_calls,
+            response=response,
+        )
 
     def _extract_trajectory_stats(
-        self, payloads: Optional[list[Dict[str, Any]]]
-    ) -> tuple[Optional[Dict[str, int]], Optional[str], Optional[int], Optional[int], Optional[str]]:
+        self,
+        payloads: Optional[list[Dict[str, Any]]],
+    ) -> ParsedStats:
         if not isinstance(payloads, list):
-            return None, None, None, None, None
+            return ParsedStats()
 
         parsed = [self._extract_single_trajectory_stats(payload) for payload in payloads if isinstance(payload, dict)]
         if not parsed:
-            return None, None, None, None, None
+            return ParsedStats()
 
-        usage_items = [item_usage for item_usage, _, _, _, _ in parsed if item_usage is not None]
-        usage = self._sum_usage_entries(usage_items)
-        llm_call_values = [item_llm_calls for _, _, item_llm_calls, _, _ in parsed if item_llm_calls is not None]
+        usage_items = [item.usage for item in parsed if item.usage is not None]
+        usage = sum_usage_entries(usage_items)
+        llm_call_values = [item.llm_calls for item in parsed if item.llm_calls is not None]
         llm_calls = sum(llm_call_values) if llm_call_values else None
-        tool_call_values = [item_tool_calls for _, _, _, item_tool_calls, _ in parsed if item_tool_calls is not None]
+        tool_call_values = [item.tool_calls for item in parsed if item.tool_calls is not None]
         tool_calls = sum(tool_call_values) if tool_call_values else None
 
-        model_names = [item_model_name for _, item_model_name, _, _, _ in parsed if item_model_name]
+        model_names = [item.model_name for item in parsed if item.model_name]
         unique_names = list(dict.fromkeys(model_names))
         model_name = unique_names[0] if len(unique_names) == 1 else None
 
-        response_candidates = [item_response for _, _, _, _, item_response in parsed if item_response]
+        response_candidates = [item.response for item in parsed if item.response]
         response = response_candidates[-1] if response_candidates else None
-        return usage, model_name, llm_calls, tool_calls, response
+        return ParsedStats(
+            model_name=model_name,
+            usage=usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            response=response,
+        )
 
     def _extract_model_name_from_replay_config(self, replay_config: Any) -> Optional[str]:
         if isinstance(replay_config, str):
-            decoded = self._parse_json(replay_config)
+            decoded = runtime_parsing.parse_json(replay_config)
             parsed = decoded if isinstance(decoded, dict) else None
         elif isinstance(replay_config, dict):
             parsed = replay_config

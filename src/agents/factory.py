@@ -12,9 +12,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .base import CodingAgent, CommandResult, InstallStrategy, RunCommandTemplate
-from ..models import RunResult
-from .base import (
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
+from .base import CodingAgent, CommandResult, InstallStrategy, RunCommandTemplate, RunParseResult, RunPlan
+from ..stats_extract import (
     last_value,
     opt_float,
     parse_usage_by_model,
@@ -58,7 +59,7 @@ class FactoryAgent(CodingAgent):
             return self._install_specific_version(version.strip())
         return self._run(["bash", "-lc", "curl -fsSL https://app.factory.ai/cli | sh"])
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -66,7 +67,7 @@ class FactoryAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         images = images or []
         run_prompt = prompt
         if images:
@@ -77,10 +78,10 @@ class FactoryAgent(CodingAgent):
                 tool_name="Read",
             )
 
-        selected_model = self._normalize_text(model_override) or self._normalize_text(os.environ.get("CAKIT_FACTORY_MODEL"))
+        selected_model = runtime_parsing.normalize_text(model_override) or runtime_parsing.normalize_text(os.environ.get("CAKIT_FACTORY_MODEL"))
         selected_model, byok_error = self._resolve_model_for_run(selected_model)
         if byok_error is not None:
-            return self._build_error_run_result(message=byok_error, cakit_exit_code=1)
+            self._raise_config_error(byok_error)
 
         env: Dict[str, str] = {
             "FACTORY_API_KEY": os.environ.get("FACTORY_API_KEY"),
@@ -97,16 +98,22 @@ class FactoryAgent(CodingAgent):
         ]
         if reasoning_effort:
             extra_args.extend(["--reasoning-effort", reasoning_effort])
-        cmd, _ = self._build_templated_command(
-            template=template,
+        explicit_log = env.get("FACTORY_LOG_FILE")
+        telemetry_log = explicit_log.strip() if isinstance(explicit_log, str) and explicit_log.strip() else None
+        return self._build_templated_run_plan(
             prompt=run_prompt,
             model=selected_model,
+            env=env,
             extra_args=extra_args,
+            template=template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                telemetry_log=telemetry_log,
+            ),
         )
 
-        result = self._run(cmd, env=env, base_env=base_env)
-        output = result.output
-        parsed_output = self._parse_output_json_object(output)
+    def _parse_pipeline_output(self, output: str, *, telemetry_log: Optional[str]) -> RunParseResult:
+        parsed_output = runtime_parsing.parse_output_json_object(output)
         result_payload = parsed_output if req_str(parsed_output, "$.type") == "result" else None
         session_id = req_str(result_payload, "$.session_id")
 
@@ -119,7 +126,7 @@ class FactoryAgent(CodingAgent):
 
                 settings_matches = sorted(session_root.glob(f"**/{normalized_session_id}.settings.json"))
                 if len(settings_matches) == 1:
-                    settings_payload = self._load_json_dict(settings_matches[0])
+                    settings_payload = runtime_parsing.load_json_dict(settings_matches[0])
 
                 transcript_matches = sorted(session_root.glob(f"**/{normalized_session_id}.jsonl"))
                 if len(transcript_matches) == 1:
@@ -133,7 +140,7 @@ class FactoryAgent(CodingAgent):
                                 line = raw_line.strip()
                                 if not line:
                                     continue
-                                payload = self._parse_json_dict(line)
+                                payload = runtime_parsing.parse_json_dict(line)
                                 if payload is None:
                                     continue
                                 if isinstance(payload, dict):
@@ -149,19 +156,8 @@ class FactoryAgent(CodingAgent):
             transcript_payloads=transcript_payloads,
         )
 
-        response = req_str(result_payload, "$.result")
-        if response is None:
-            response = self._last_stdout_line(output)
-
-        telemetry_log: Optional[str] = None
-        explicit_log = env.get("FACTORY_LOG_FILE")
-        if isinstance(explicit_log, str):
-            cleaned_log = explicit_log.strip()
-            if cleaned_log:
-                telemetry_log = cleaned_log
-
-        return self.finalize_run(
-            command_result=result,
+        response = req_str(result_payload, "$.result") or runtime_parsing.last_stdout_line(output)
+        return RunParseResult(
             response=response,
             models_usage=models_usage,
             llm_calls=llm_calls,
@@ -237,17 +233,17 @@ class FactoryAgent(CodingAgent):
         return count
 
     def _resolve_model_for_run(self, selected_model: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-        model_name = self._normalize_text(selected_model)
-        byok_api_key = self._resolve_openai_api_key("CAKIT_FACTORY_BYOK_API_KEY")
-        byok_base_url = self._resolve_openai_base_url("CAKIT_FACTORY_BYOK_BASE_URL")
-        byok_provider = self._normalize_text(os.environ.get("CAKIT_FACTORY_BYOK_PROVIDER"))
+        model_name = runtime_parsing.normalize_text(selected_model)
+        byok_api_key = runtime_env.resolve_openai_api_key("CAKIT_FACTORY_BYOK_API_KEY")
+        byok_base_url = runtime_env.resolve_openai_base_url("CAKIT_FACTORY_BYOK_BASE_URL")
+        byok_provider = runtime_parsing.normalize_text(os.environ.get("CAKIT_FACTORY_BYOK_PROVIDER"))
 
         byok_requested = any(value is not None for value in (byok_api_key, byok_base_url, byok_provider))
         if not byok_requested:
             return model_name, None
 
         if model_name is None:
-            model_name = self._normalize_text(os.environ.get("OPENAI_DEFAULT_MODEL"))
+            model_name = runtime_parsing.normalize_text(os.environ.get("OPENAI_DEFAULT_MODEL"))
 
         missing: list[tuple[str, str]] = []
         if byok_api_key is None:
@@ -257,7 +253,7 @@ class FactoryAgent(CodingAgent):
         if model_name is None:
             missing.append(("CAKIT_FACTORY_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return None, self._missing_env_with_fallback_message(missing)
+            return None, runtime_env.missing_env_with_fallback_message(missing)
 
         provider = byok_provider
         if provider is not None:
@@ -300,7 +296,7 @@ class FactoryAgent(CodingAgent):
         if not settings_path.exists():
             settings: Dict[str, Any] = {}
         else:
-            loaded_settings = self._load_json(settings_path)
+            loaded_settings = runtime_parsing.load_json(settings_path)
             if not isinstance(loaded_settings, dict):
                 return None
             settings = dict(loaded_settings)
@@ -318,7 +314,7 @@ class FactoryAgent(CodingAgent):
             if not isinstance(item, dict):
                 retained_custom_models.append(item)
                 continue
-            display_name = self._normalize_text(item.get("displayName"))
+            display_name = runtime_parsing.normalize_text(item.get("displayName"))
             if display_name == self._BYOK_DISPLAY_NAME:
                 continue
             retained_custom_models.append(item)

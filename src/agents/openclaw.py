@@ -7,12 +7,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
 from .base import CodingAgent, InstallStrategy, RunCommandTemplate
 from ..models import RunResult
-from .base import (
-    last_value,
-    select_values,
-)
+from ..stats_extract import last_value, select_values, sum_usage_entries
 
 
 class OpenClawAgent(CodingAgent):
@@ -104,8 +103,8 @@ class OpenClawAgent(CodingAgent):
 
         result = self._run(cmd, env=env, base_env=base_env)
         output = result.output
-        payload = self._parse_output_json_object(output)
-        payload_session_id = self._normalize_text(last_value(payload, "$.meta.agentMeta.sessionId"))
+        payload = runtime_parsing.parse_output_json_object(output)
+        payload_session_id = runtime_parsing.normalize_text(last_value(payload, "$.meta.agentMeta.sessionId"))
 
         resolved_session_id = payload_session_id or session_id
         session_path = self._resolve_session_path(resolved_session_id, agent_id="main", env_source=env)
@@ -113,16 +112,20 @@ class OpenClawAgent(CodingAgent):
         if session_path.exists():
             raw_records = self._read_text_lossy(session_path) or ""
             if raw_records:
-                loaded_records = self._load_output_json_payloads(raw_records, stdout_only=False)
+                loaded_records = runtime_parsing.load_output_json_payloads(raw_records, stdout_only=False)
                 if loaded_records:
                     records = loaded_records
         models_usage, llm_calls, tool_calls = self._extract_run_stats(
             payload=payload,
             records=records,
         )
-        response = self._last_selected_text(payload, "$.payloads[*].text") if isinstance(payload, dict) else None
+        response = (
+            runtime_parsing.last_nonempty_text(select_values(payload, "$.payloads[*].text"))
+            if isinstance(payload, dict)
+            else None
+        )
         if response is None:
-            response = self._last_stdout_line(output)
+            response = runtime_parsing.last_stdout_line(output)
 
         return self.finalize_run(
             command_result=result,
@@ -135,16 +138,16 @@ class OpenClawAgent(CodingAgent):
     def _resolve_runtime_settings(
         self, *, model_override: Optional[str]
     ) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
-        api_key = self._resolve_openai_api_key("CAKIT_OPENCLAW_API_KEY")
-        base_url = self._resolve_openai_base_url("CAKIT_OPENCLAW_BASE_URL")
-        model_ref = self._resolve_openai_model("CAKIT_OPENCLAW_MODEL", model_override=model_override)
+        api_key = runtime_env.resolve_openai_api_key("CAKIT_OPENCLAW_API_KEY")
+        base_url = runtime_env.resolve_openai_base_url("CAKIT_OPENCLAW_BASE_URL")
+        model_ref = runtime_env.resolve_openai_model("CAKIT_OPENCLAW_MODEL", model_override=model_override)
 
         provider_id = self._normalize_provider_id(os.environ.get("CAKIT_OPENCLAW_PROVIDER_ID"))
-        normalized_model_ref = self._normalize_text(model_ref)
+        normalized_model_ref = runtime_parsing.normalize_text(model_ref)
         if normalized_model_ref is None:
             model_id, provider_from_model = None, None
         else:
-            model_id = self._extract_model_id(normalized_model_ref, colon_as_provider=False)
+            model_id = runtime_env.extract_model_id(normalized_model_ref, colon_as_provider=False)
             if not model_id:
                 model_id, provider_from_model = None, None
             elif "/" not in normalized_model_ref:
@@ -162,7 +165,7 @@ class OpenClawAgent(CodingAgent):
         if model_id is None:
             missing.append(("CAKIT_OPENCLAW_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return None, self._missing_env_with_fallback_message(missing)
+            return None, runtime_env.missing_env_with_fallback_message(missing)
 
         resolved: Dict[str, str] = {
             "api_key": api_key,
@@ -202,7 +205,7 @@ class OpenClawAgent(CodingAgent):
         return cmd
 
     def _normalize_provider_id(self, value: Optional[str]) -> Optional[str]:
-        normalized = self._normalize_text(value)
+        normalized = runtime_parsing.normalize_text(value)
         if normalized is None:
             return None
         lowered = normalized.lower()
@@ -229,7 +232,7 @@ class OpenClawAgent(CodingAgent):
         text = self._read_text(config_path)
         if not text:
             return
-        payload = self._parse_json_dict(text)
+        payload = runtime_parsing.parse_json_dict(text)
         if payload is None:
             return
         models = payload.get("models")
@@ -248,8 +251,8 @@ class OpenClawAgent(CodingAgent):
             for model in models_value:
                 if not isinstance(model, dict):
                     continue
-                context_window = self._as_int(model.get("contextWindow"))
-                max_tokens = self._as_int(model.get("maxTokens"))
+                context_window = runtime_parsing.as_int(model.get("contextWindow"))
+                max_tokens = runtime_parsing.as_int(model.get("maxTokens"))
                 if context_window is None or context_window < min_context_window:
                     model["contextWindow"] = min_context_window
                     changed = True
@@ -260,7 +263,7 @@ class OpenClawAgent(CodingAgent):
             self._write_text(config_path, json.dumps(payload, ensure_ascii=True, indent=2))
 
     def _resolve_limit_env(self, env_key: str, default: int) -> int:
-        raw = self._normalize_text(os.environ.get(env_key))
+        raw = runtime_parsing.normalize_text(os.environ.get(env_key))
         if raw is None:
             return default
         try:
@@ -299,8 +302,8 @@ class OpenClawAgent(CodingAgent):
         return roots[0] / "agents" / agent_id / "sessions" / f"{session_id}.jsonl"
 
     def _usage_from_total_and_output(self, usage_raw: Any, *, total_path: str) -> Optional[Dict[str, int]]:
-        completion_tokens = self._as_int(last_value(usage_raw, "$.output"))
-        total_tokens = self._as_int(last_value(usage_raw, total_path))
+        completion_tokens = runtime_parsing.as_int(last_value(usage_raw, "$.output"))
+        total_tokens = runtime_parsing.as_int(last_value(usage_raw, total_path))
         if completion_tokens is None or completion_tokens < 0:
             return None
         if total_tokens is None or total_tokens < completion_tokens:
@@ -321,8 +324,8 @@ class OpenClawAgent(CodingAgent):
             last_value(payload, "$.meta.agentMeta.usage"),
             total_path="$.total",
         )
-        payload_provider = self._normalize_text(last_value(payload, "$.meta.agentMeta.provider"))
-        payload_model = self._normalize_text(last_value(payload, "$.meta.agentMeta.model"))
+        payload_provider = runtime_parsing.normalize_text(last_value(payload, "$.meta.agentMeta.provider"))
+        payload_model = runtime_parsing.normalize_text(last_value(payload, "$.meta.agentMeta.model"))
         payload_model_name = f"{payload_provider}/{payload_model}" if payload_provider and payload_model else None
 
         models_usage: Dict[str, Dict[str, int]] = {}
@@ -341,7 +344,7 @@ class OpenClawAgent(CodingAgent):
                 block_calls = len(block_call_values) if block_call_values is not None else 0
                 if block_calls > 0:
                     tool_calls += block_calls
-                elif self._normalize_text(last_value(message, "$.toolName")) is not None:
+                elif runtime_parsing.normalize_text(last_value(message, "$.toolName")) is not None:
                     tool_calls += 1
 
             assistant_usages = [
@@ -359,9 +362,9 @@ class OpenClawAgent(CodingAgent):
                 if parsed is not None
             ]
             if assistant_usages:
-                transcript_usage = self._sum_usage_entries(assistant_usages)
-                provider = self._normalize_text(last_value(records, '$[?(@.message.role == "assistant")].message.provider'))
-                model = self._normalize_text(last_value(records, '$[?(@.message.role == "assistant")].message.model'))
+                transcript_usage = sum_usage_entries(assistant_usages)
+                provider = runtime_parsing.normalize_text(last_value(records, '$[?(@.message.role == "assistant")].message.provider'))
+                model = runtime_parsing.normalize_text(last_value(records, '$[?(@.message.role == "assistant")].message.model'))
                 if transcript_usage is not None and provider and model:
                     models_usage[f"{provider}/{model}"] = transcript_usage
 

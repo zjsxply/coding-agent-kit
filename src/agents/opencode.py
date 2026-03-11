@@ -10,10 +10,11 @@ from .base import (
     InstallStrategy,
     RunCommandTemplate,
     VersionCommandTemplate,
-    extract_opencode_session_export_stats,
-    select_values,
 )
 from ..models import RunResult
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
+from ..stats_extract import StatsArtifacts, extract_opencode_session_export_stats, merge_stats_snapshots, select_values
 
 
 class OpenCodeAgent(CodingAgent):
@@ -77,10 +78,9 @@ class OpenCodeAgent(CodingAgent):
 
         result = self._run(cmd, env=run_env, base_env=base_env)
         output = result.output
-        payloads = self._load_output_json_payloads(output)
-        response = self._last_selected_text(
-            payloads,
-            '$[?(@.type == "text")].part[?(@.type == "text")].text',
+        payloads = runtime_parsing.load_output_json_payloads(output)
+        response = runtime_parsing.last_nonempty_text(
+            select_values(payloads, '$[?(@.type == "text")].part[?(@.type == "text")].text')
         )
 
         session_ids = select_values(payloads, "$[*].sessionID")
@@ -94,19 +94,20 @@ class OpenCodeAgent(CodingAgent):
             }
             session_id = next(iter(unique_ids)) if len(unique_ids) == 1 else None
         session_payload = (
-            self._run_json_dict_command(
-                ["opencode", "export", session_id],
+            runtime_parsing.run_json_dict_command(
+                args=["opencode", "export", session_id],
+                run=self._run,
                 env=run_env,
                 base_env=base_env,
             )
             if session_id is not None
             else None
         )
-        artifacts = self._build_stats_artifacts(
+        artifacts = StatsArtifacts(
             raw_output=output,
             session_payload=session_payload,
         )
-        stats = self._merge_stats_snapshots(
+        stats = merge_stats_snapshots(
             snapshots=[extract_opencode_session_export_stats(artifacts)]
         )
 
@@ -129,14 +130,14 @@ class OpenCodeAgent(CodingAgent):
         Optional[list[str]],
         Optional[str],
     ]:
-        cakit_model = self._normalize_text(os.environ.get("CAKIT_OPENCODE_MODEL"))
-        openai_default_model = self._normalize_text(os.environ.get("OPENAI_DEFAULT_MODEL"))
-        raw_model = self._normalize_text(model_override) or cakit_model or openai_default_model
-        provider = self._normalize_text(os.environ.get("CAKIT_OPENCODE_PROVIDER"))
+        cakit_model = runtime_parsing.normalize_text(os.environ.get("CAKIT_OPENCODE_MODEL"))
+        openai_default_model = runtime_parsing.normalize_text(os.environ.get("OPENAI_DEFAULT_MODEL"))
+        raw_model = runtime_parsing.normalize_text(model_override) or cakit_model or openai_default_model
+        provider = runtime_parsing.normalize_text(os.environ.get("CAKIT_OPENCODE_PROVIDER"))
         if provider is None and cakit_model is None and model_override is None and openai_default_model is not None:
             provider = "openai"
-        api_key = self._resolve_openai_api_key("CAKIT_OPENCODE_OPENAI_API_KEY")
-        base_url = self._resolve_openai_base_url("CAKIT_OPENCODE_OPENAI_BASE_URL")
+        api_key = runtime_env.resolve_openai_api_key("CAKIT_OPENCODE_OPENAI_API_KEY")
+        base_url = runtime_env.resolve_openai_base_url("CAKIT_OPENCODE_OPENAI_BASE_URL")
         model_capabilities, capabilities_error = self._parse_model_capabilities()
         if capabilities_error is not None:
             return None, None, None, None, None, capabilities_error
@@ -147,13 +148,13 @@ class OpenCodeAgent(CodingAgent):
         if (api_key is not None or base_url is not None) and raw_model is None:
             missing.append(("CAKIT_OPENCODE_MODEL", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return None, None, None, None, None, self._missing_env_with_fallback_message(missing)
+            return None, None, None, None, None, runtime_env.missing_env_with_fallback_message(missing)
 
-        model = self._normalize_model(raw_model, provider=provider)
+        model = runtime_env.normalize_model(raw_model, provider=provider)
         if raw_model is None or model is not None:
             model_error = None
         elif "/" not in raw_model and ":" not in raw_model and provider is None:
-            model_error = self._missing_env_message(["CAKIT_OPENCODE_PROVIDER"])
+            model_error = runtime_env.missing_env_message(["CAKIT_OPENCODE_PROVIDER"])
         else:
             model_error = "invalid CAKIT_OPENCODE_MODEL: expected provider/model or provider:model"
         if model_error is not None:
@@ -188,7 +189,7 @@ class OpenCodeAgent(CodingAgent):
                 None,
                 "invalid CAKIT_OPENCODE_MODEL: expected provider/model or provider:model",
             )
-        model_id = self._extract_model_id(model)
+        model_id = runtime_env.extract_model_id(model)
         if model_id is None:
             return (
                 None,
@@ -196,7 +197,7 @@ class OpenCodeAgent(CodingAgent):
                 None,
                 None,
                 None,
-                self._missing_env_with_fallback_message([("CAKIT_OPENCODE_MODEL", "OPENAI_DEFAULT_MODEL")]),
+                runtime_env.missing_env_with_fallback_message([("CAKIT_OPENCODE_MODEL", "OPENAI_DEFAULT_MODEL")]),
             )
         return f"cakit-openai/{model_id}", model_id, api_key, base_url, model_capabilities, None
 
@@ -269,7 +270,7 @@ class OpenCodeAgent(CodingAgent):
         return env
 
     def _parse_model_capabilities(self) -> Tuple[Optional[list[str]], Optional[str]]:
-        raw_capabilities = self._normalize_text(os.environ.get("CAKIT_OPENCODE_MODEL_CAPABILITIES"))
+        raw_capabilities = runtime_parsing.normalize_text(os.environ.get("CAKIT_OPENCODE_MODEL_CAPABILITIES"))
         if raw_capabilities is None:
             return None, None
 

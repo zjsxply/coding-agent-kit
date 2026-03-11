@@ -7,11 +7,18 @@ from typing import Dict, Optional
 from .base import (
     CodingAgent,
     InstallStrategy,
+    RunParseResult,
+    RunPlan,
     RunCommandTemplate,
+)
+from ..agent_runtime import parsing as runtime_parsing
+from ..stats_extract import (
+    StatsArtifacts,
     extract_gemini_style_stats,
     extract_json_result_stats,
+    merge_stats_snapshots,
+    select_values,
 )
-from ..models import RunResult
 
 
 class AuggieAgent(CodingAgent):
@@ -29,7 +36,7 @@ class AuggieAgent(CodingAgent):
         media_injection="none",
     )
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -37,12 +44,12 @@ class AuggieAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         images = images or []
         log_dir = self._make_temp_dir(prefix="cakit-auggie-", keep=True)
         log_path = log_dir / "auggie.log"
 
-        requested_model = self._normalize_text(model_override or os.environ.get("CAKIT_AUGGIE_MODEL"))
+        requested_model = runtime_parsing.normalize_text(model_override or os.environ.get("CAKIT_AUGGIE_MODEL"))
         env = {
             "AUGMENT_API_TOKEN": os.environ.get("AUGMENT_API_TOKEN"),
             "AUGMENT_API_URL": os.environ.get("AUGMENT_API_URL"),
@@ -59,23 +66,27 @@ class AuggieAgent(CodingAgent):
             "--log-level",
             "debug",
         ]
-        cmd, _ = self._build_templated_command(
-            template=template,
+        for image in images:
+            extra_args.extend(["--image", str(image)])
+        return self._build_templated_run_plan(
             prompt=prompt,
             model=requested_model,
+            env=env,
             extra_args=extra_args,
+            template=template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                log_path=log_path,
+            ),
         )
-        for image in images:
-            cmd.extend(["--image", str(image)])
 
-        result = self._run(cmd, env=env, base_env=base_env)
-        output = result.output
-        payloads = self._load_output_json_payloads(output)
-        artifacts = self._build_stats_artifacts(
+    def _parse_pipeline_output(self, output: str, *, log_path: Path) -> RunParseResult:
+        payloads = runtime_parsing.load_output_json_payloads(output)
+        artifacts = StatsArtifacts(
             raw_output=output,
-            jsonl_payloads=payloads,
+            jsonl_payloads=tuple(payloads),
         )
-        stats = self._merge_stats_snapshots(
+        stats = merge_stats_snapshots(
             snapshots=[
                 extract_json_result_stats(
                     artifacts,
@@ -83,9 +94,8 @@ class AuggieAgent(CodingAgent):
                 ),
             ]
         )
-        response = self._last_selected_text(payloads, '$[?(@.type == "result")].result')
-        return self.finalize_run(
-            command_result=result,
+        response = runtime_parsing.last_nonempty_text(select_values(payloads, '$[?(@.type == "result")].result'))
+        return RunParseResult(
             response=response,
             models_usage=stats.models_usage,
             llm_calls=stats.llm_calls,

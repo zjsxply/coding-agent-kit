@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import platform
 import re
@@ -13,11 +12,21 @@ from .base import (
     CodingAgent,
     CommandResult,
     InstallStrategy,
+    RunParseResult,
+    RunPlan,
     RunCommandTemplate,
     VersionCommandTemplate,
 )
-from ..models import RunResult
-from ..stats_extract import last_value, parse_usage_by_model, req_str, select_values
+from ..stats_extract import (
+    build_single_model_stats_snapshot,
+    last_value,
+    parse_usage_by_model,
+    req_str,
+    select_values,
+)
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import env as runtime_env
+from ..io_helpers import dump_yaml
 
 
 class TraeCnAgent(CodingAgent):
@@ -85,6 +94,18 @@ class TraeCnAgent(CodingAgent):
         bin_dir = Path.home() / ".local" / "bin"
         bin_path = install_root / "trae-cli"
         detail_parts = [detail] if detail else []
+        if bin_path.exists():
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            symlink_path = bin_dir / "traecli"
+            if symlink_path.exists() or symlink_path.is_symlink():
+                symlink_path.unlink()
+            symlink_path.symlink_to(bin_path)
+            return CommandResult(
+                exit_code=0,
+                stdout="\n".join(part for part in detail_parts if part),
+                stderr="",
+                duration_seconds=time.monotonic() - started,
+            )
 
         with tempfile.TemporaryDirectory(prefix="cakit-trae-cn-") as temp_dir:
             tmp_archive = Path(temp_dir) / f"trae-cli_{archive_version}_{os_name}_{arch}.tar.gz"
@@ -122,26 +143,14 @@ class TraeCnAgent(CodingAgent):
         )
 
     def configure(self) -> Optional[str]:
-        api_key = self._resolve_openai_api_key("CAKIT_TRAE_CN_API_KEY")
-        base_url = self._resolve_openai_base_url("CAKIT_TRAE_CN_BASE_URL")
-        model = self._resolve_openai_model("CAKIT_TRAE_CN_MODEL")
-        model_name = os.environ.get("CAKIT_TRAE_CN_MODEL_NAME")
-        by_azure_raw = os.environ.get("CAKIT_TRAE_CN_BY_AZURE")
-        by_azure = bool(by_azure_raw and by_azure_raw.strip().lower() in {"1", "true", "yes", "on"})
-        config = self._build_config_text(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            model_name=model_name,
-            by_azure=by_azure,
-        )
+        config = self._resolve_runtime_config_text(model_override=None)
         if config is None:
             return None
-        path = self._config_path()
+        path = self._config_root() / "trae_cli" / "trae_cli.yaml"
         self._write_text(path, config)
         return str(path)
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -149,31 +158,29 @@ class TraeCnAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
-        self._write_runtime_config(model_override)
-        xdg_config_home = str(self._config_root())
-        env = {
-            "XDG_CONFIG_HOME": xdg_config_home,
-        }
-        template = self.run_template
-        cmd, _ = self._build_templated_command(
-            template=template,
+    ) -> Optional[RunPlan]:
+        config = self._resolve_runtime_config_text(model_override=model_override)
+        if config is not None:
+            self._write_text(self._config_root() / "trae_cli" / "trae_cli.yaml", config)
+        return self._build_templated_run_plan(
             prompt=prompt,
+            env={"XDG_CONFIG_HOME": str(self._config_root())},
+            template=self.run_template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(output),
         )
-        result = self._run(cmd, env, base_env=base_env)
-        output = result.output
-        payload = self._parse_output_json_object(output)
+
+    def _parse_pipeline_output(self, output: str) -> RunParseResult:
+        payload = runtime_parsing.parse_output_json_object(output)
         response, usage, model_name, llm_calls, tool_calls = self._extract_payload_stats(payload)
-        snapshot = self._build_single_model_stats_snapshot(
+        snapshot = build_single_model_stats_snapshot(
             model_name=model_name,
             usage=usage,
             llm_calls=llm_calls,
             tool_calls=tool_calls,
             total_cost=None,
         )
-        return self.finalize_run(
-            command_result=result,
-            response=response or self._last_stdout_line(output),
+        return RunParseResult(
+            response=response or runtime_parsing.last_stdout_line(output),
             models_usage=snapshot.models_usage if snapshot is not None else {},
             llm_calls=snapshot.llm_calls if snapshot is not None else None,
             tool_calls=snapshot.tool_calls if snapshot is not None else None,
@@ -182,9 +189,11 @@ class TraeCnAgent(CodingAgent):
     def _extract_payload_stats(
         self, payload: Optional[Dict[str, Any]]
     ) -> tuple[Optional[str], Optional[Dict[str, int]], Optional[str], Optional[int], Optional[int]]:
-        response = self._last_selected_text(
-            payload,
-            '$.agent_states[*].messages[?(@.role == "assistant")].content',
+        response = runtime_parsing.last_nonempty_text(
+            select_values(
+                payload,
+                '$.agent_states[*].messages[?(@.role == "assistant")].content',
+            )
         )
         if response is None:
             response = req_str(payload, "$.error")
@@ -217,8 +226,10 @@ class TraeCnAgent(CodingAgent):
                     model_name = candidate
                     break
 
-        llm_calls = self._count_selected(payload, '$.agent_states[*].messages[?(@.role == "assistant")]')
-        tool_calls = self._count_selected(payload, "$.agent_states[*].messages[*].tool_calls[*]")
+        llm_call_values = select_values(payload, '$.agent_states[*].messages[?(@.role == "assistant")]')
+        llm_calls = len(llm_call_values) if llm_call_values is not None else None
+        tool_call_values = select_values(payload, "$.agent_states[*].messages[*].tool_calls[*]")
+        tool_calls = len(tool_call_values) if tool_call_values is not None else None
 
         return response, usage, model_name, llm_calls, tool_calls
 
@@ -241,26 +252,20 @@ class TraeCnAgent(CodingAgent):
     def _config_root(self) -> Path:
         return Path.home() / ".config" / "cakit" / "trae-cn"
 
-    def _config_path(self) -> Path:
-        return self._config_root() / "trae_cli" / "trae_cli.yaml"
-
-    def _write_runtime_config(self, model_override: Optional[str]) -> None:
-        api_key = self._resolve_openai_api_key("CAKIT_TRAE_CN_API_KEY")
-        base_url = self._resolve_openai_base_url("CAKIT_TRAE_CN_BASE_URL")
-        model = self._resolve_openai_model("CAKIT_TRAE_CN_MODEL", model_override=model_override)
+    def _resolve_runtime_config_text(self, model_override: Optional[str]) -> Optional[str]:
+        api_key = runtime_env.resolve_openai_api_key("CAKIT_TRAE_CN_API_KEY")
+        base_url = runtime_env.resolve_openai_base_url("CAKIT_TRAE_CN_BASE_URL")
+        model = runtime_env.resolve_openai_model("CAKIT_TRAE_CN_MODEL", model_override=model_override)
         model_name = os.environ.get("CAKIT_TRAE_CN_MODEL_NAME")
         by_azure_raw = os.environ.get("CAKIT_TRAE_CN_BY_AZURE")
         by_azure = bool(by_azure_raw and by_azure_raw.strip().lower() in {"1", "true", "yes", "on"})
-        config = self._build_config_text(
+        return self._build_config_text(
             api_key=api_key,
             base_url=base_url,
             model=model,
             model_name=model_name,
             by_azure=by_azure,
         )
-        if config is None:
-            return
-        self._write_text(self._config_path(), config)
 
     def _build_config_text(
         self,
@@ -275,14 +280,19 @@ class TraeCnAgent(CodingAgent):
         if any(not value for value in required):
             return None
         selected_name = model_name if isinstance(model_name, str) and model_name.strip() else "cakit-openai"
-        return (
-            "model:\n"
-            f"  name: {json.dumps(selected_name)}\n"
-            "models:\n"
-            f"  - name: {json.dumps(selected_name)}\n"
-            "    open_ai:\n"
-            f"      base_url: {json.dumps(base_url)}\n"
-            f"      api_key: {json.dumps(api_key)}\n"
-            f"      model: {json.dumps(model)}\n"
-            f"      by_azure: {'true' if by_azure else 'false'}\n"
+        return dump_yaml(
+            {
+                "model": {"name": selected_name},
+                "models": [
+                    {
+                        "name": selected_name,
+                        "open_ai": {
+                            "base_url": base_url,
+                            "api_key": api_key,
+                            "model": model,
+                            "by_azure": by_azure,
+                        },
+                    }
+                ],
+            }
         )

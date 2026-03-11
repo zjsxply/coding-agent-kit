@@ -84,7 +84,11 @@
   - uv/pip 安装逻辑应优先复用共享方法（优先放在 `src/agents/base.py`），不要在各 coding agent 中重复拼装安装命令。
   - 运行结果组装应优先走 `src/agents/base.py` 的共享 `finalize_run(...)` 路径：agent 类应聚焦运行产物解析，并把解析结果交给共享收口器，避免在各 agent 内重复写 raw output、写 trajectory、手工构造 `RunResult(...)`。
   - 安装/运行固定模式优先数据化声明：在 `CodingAgent` 子类上直接声明 `install_strategy`、`run_template`、`version_template`；仅在共享模板无法表达的上游差异场景保留定制化命令式代码。
+  - 若逻辑已在 `src/agent_runtime/` 实现，coding agent 子类应直接导入这些 helper，不要再经由 `CodingAgent` 方法二次转发。
 - 代码风格：
+  - 不要新增只做透传的一行方法（例如仅 `return self.install_strategy` 的包装）。直接使用已声明属性和 helper 函数。
+  - 不要新增没有实际行为、只是在另一个函数调用前重排参数的薄封装 helper。此类场景应优先扩展现有函数签名，或直接在调用点内联。
+  - 安装流程以 `install()` 作为唯一策略入口，不要再叠加无意义的策略解析/分发中间层。
   - 对类内已声明的属性/常量不要再加冗余防御判断（例如已在 agent 类声明 `run_template` 时再判断 `self.run_template is None`）；直接使用已声明值。
   - 构造 `RunResult` 时，去掉只做一次传递的一次性局部变量，直接在 `RunResult(...)` 参数中构造。
   - 对于能提升流程可读性的中转变量（例如 `trajectory_content`），即使只使用一次也应保留。
@@ -151,3 +155,4 @@
 - 新增与修改文件应仿照项目现有实现模式，保持结构、命名和严格解析行为一致。
 - 新增 coding agent 前，必须先检查 `src/utils.py` 与 `src/agents/base.py`，可复用则必须复用；确实无法复用时再补充新的共享函数。
 - 当仓库内有其他 codex 并行修改时，应接纳现有变更并避免干扰与当前任务无关的工作。
+- 默认情况下，如具备该能力且这样做能显著加快工作推进，应主动启动最多 6 个子 Agent。若用户对子 Agent 的协作约束或任务拆分有明确要求，则按用户要求执行。

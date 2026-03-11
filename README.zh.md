@@ -163,7 +163,7 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 - Gemini CLI：本地日志 `~/.gemini/telemetry.log`
 - Crush：本地日志 `<run_data_dir>/logs/crush.log`（来自 run 级 `--data-dir`）
 - Auggie CLI：run 临时目录日志 `<tmp_run_dir>/auggie.log`（cakit 传 `--log-file`）
-- Qwen Code：本地日志 `~/.qwen/telemetry.log`
+- Qwen Code：run 唯一本地日志 `~/.qwen/telemetry/cakit-<timestamp>-<ns>-<id>.log`
 - Qoder CLI：本地日志 `~/.qoder/logs/qodercli.log`
 
 图像/视频输入支持：

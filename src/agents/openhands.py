@@ -6,10 +6,25 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate
-from ..models import RunResult
-from ..stats_extract import last_value, opt_float, parse_usage_by_model, req_str, select_values
-from ..utils import format_trace_text
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    ParsedStats,
+    RunCommandTemplate,
+    RunParseResult,
+    RunPlan,
+)
+from ..stats_extract import (
+    build_single_model_stats_snapshot,
+    last_value,
+    opt_float,
+    parse_usage_by_model,
+    req_str,
+    select_values,
+)
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import trajectory as runtime_trajectory
 
 
 class OpenHandsAgent(CodingAgent):
@@ -31,7 +46,7 @@ class OpenHandsAgent(CodingAgent):
     )
     _CONVERSATION_ID_RE = re.compile(r"Conversation ID:\s*([0-9a-fA-F-]{32,36})")
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -39,18 +54,33 @@ class OpenHandsAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
-        env, env_error = self._build_run_env(model_override=model_override)
-        if env_error is not None:
-            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
+    ) -> Optional[RunPlan]:
+        env = self._build_run_env(model_override=model_override)
 
-        template = self.run_template
-        cmd, _ = self._build_templated_command(
-            template=template,
+        has_error_event = {"value": False}
+        return self._build_templated_run_plan(
             prompt=prompt,
+            env=env,
+            template=self.run_template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                command_result,
+                has_error_event=has_error_event,
+            ),
+            post_finalize=lambda run_result, parsed, command_result: self._post_finalize_pipeline(
+                run_result=run_result,
+                command_result=command_result,
+                has_error_event=has_error_event["value"],
+            ),
         )
-        result = self._run(cmd, env, base_env=base_env)
-        output = result.output
+
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        command_result: Any,
+        *,
+        has_error_event: Dict[str, bool],
+    ) -> RunParseResult:
         match = self._CONVERSATION_ID_RE.search(output)
         if match:
             normalized_conversation = match.group(1).strip().lower().replace("-", "")
@@ -59,19 +89,16 @@ class OpenHandsAgent(CodingAgent):
             conversation_id = None
         conversation_dir, base_state, events = self._load_conversation_artifacts(conversation_id)
 
-        model_name, usage, llm_calls, tool_calls, total_cost, response = self._extract_stats(
-            base_state=base_state,
-            events=events,
-        )
-        snapshot = self._build_single_model_stats_snapshot(
-            model_name=model_name,
-            usage=usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
-            total_cost=total_cost,
+        parsed_stats = self._extract_stats(base_state=base_state, events=events)
+        snapshot = build_single_model_stats_snapshot(
+            model_name=parsed_stats.model_name,
+            usage=parsed_stats.usage,
+            llm_calls=parsed_stats.llm_calls,
+            tool_calls=parsed_stats.tool_calls,
+            total_cost=parsed_stats.total_cost,
         )
 
-        has_error_event = bool(
+        has_error_event["value"] = bool(
             isinstance(events, list)
             and (
                 select_values(events, '$[?(@.kind == "ConversationErrorEvent")]')
@@ -85,58 +112,74 @@ class OpenHandsAgent(CodingAgent):
                 "base_state": base_state,
                 "events": events,
             }
-            trajectory_content = format_trace_text(
-                json.dumps(payload, ensure_ascii=True),
+            trajectory_content = runtime_trajectory.build_trajectory_from_raw(
+                raw_text=json.dumps(payload, ensure_ascii=True),
+                output=output,
                 source=str(conversation_dir),
             )
         else:
-            trajectory_content = format_trace_text(output, source=str(self._conversations_root()))
-        run_result = self.finalize_run(
-            command_result=result,
-            response=response,
+            trajectory_content = runtime_trajectory.build_trajectory_content(
+                output=output,
+                source=str(self._conversations_root()),
+            )
+        return RunParseResult(
+            response=parsed_stats.response,
             models_usage=snapshot.models_usage if snapshot is not None else {},
             llm_calls=snapshot.llm_calls if snapshot is not None else None,
             tool_calls=snapshot.tool_calls if snapshot is not None else None,
             total_cost=snapshot.total_cost if snapshot is not None else None,
             trajectory_content=trajectory_content,
         )
-        run_result.cakit_exit_code = (
-            1
-            if result.exit_code == 0 and has_error_event
-            else self._resolve_strict_run_exit_code(
-                command_exit_code=result.exit_code,
-                models_usage=run_result.models_usage,
-                llm_calls=run_result.llm_calls,
-                tool_calls=run_result.tool_calls,
-                response=run_result.response,
-            )
+
+    def _post_finalize_pipeline(
+        self,
+        *,
+        run_result,
+        command_result: Any,
+        has_error_event: bool,
+    ):
+        if command_result.exit_code == 0 and has_error_event:
+            run_result.cakit_exit_code = 1
+            return run_result
+        run_result.cakit_exit_code = self._resolve_strict_run_exit_code(
+            command_exit_code=command_result.exit_code,
+            models_usage=run_result.models_usage,
+            llm_calls=run_result.llm_calls,
+            tool_calls=run_result.tool_calls,
+            response=run_result.response,
         )
         return run_result
 
-    def _build_run_env(self, *, model_override: Optional[str] = None) -> tuple[Dict[str, str], Optional[str]]:
-        api_key = self._resolve_openai_api_key("LLM_API_KEY")
-        model = self._resolve_litellm_model(
-            "LLM_MODEL",
+    def _build_run_env(self, *, model_override: Optional[str] = None) -> Dict[str, str]:
+        resolved, error = runtime_env.resolve_openai_env(
+            api_key_env="LLM_API_KEY",
+            model_env="LLM_MODEL",
+            base_url_env="LLM_BASE_URL",
             model_override=model_override,
-            output_format="slash",
+            require_api_key=True,
+            require_model=True,
+            normalize_text=runtime_parsing.normalize_text,
         )
-        base_url = self._resolve_openai_base_url("LLM_BASE_URL")
+        if error is not None:
+            self._raise_config_error(error)
 
-        missing: list[tuple[str, str]] = []
-        if not api_key:
-            missing.append(("LLM_API_KEY", "OPENAI_API_KEY"))
+        model_raw = resolved.get("model")
+        model = (
+            runtime_env.normalize_litellm_model(model_raw, output_format="slash")
+            if isinstance(model_raw, str)
+            else None
+        )
         if not model:
-            missing.append(("LLM_MODEL", "OPENAI_DEFAULT_MODEL"))
-        if missing:
-            return {}, self._missing_env_with_fallback_message(missing)
-
+            message = runtime_env.missing_env_with_fallback_message([("LLM_MODEL", "OPENAI_DEFAULT_MODEL")])
+            self._raise_config_error(message or "missing required environment variable(s): LLM_MODEL")
         env: Dict[str, str] = {
-            "LLM_API_KEY": api_key,
+            "LLM_API_KEY": str(resolved.get("api_key")),
             "LLM_MODEL": model,
         }
-        if base_url:
+        base_url = resolved.get("base_url")
+        if isinstance(base_url, str) and base_url.strip():
             env["LLM_BASE_URL"] = base_url
-        return env, None
+        return env
 
     def _load_conversation_artifacts(
         self, conversation_id: Optional[str]
@@ -153,13 +196,13 @@ class OpenHandsAgent(CodingAgent):
         if not base_state_path.is_file() or not events_dir.is_dir():
             return conversation_root, None, None
 
-        base_state = self._load_json_dict(base_state_path)
+        base_state = runtime_parsing.load_json_dict(base_state_path)
         if base_state is None:
             return conversation_root, None, None
 
         events: list[Dict[str, Any]] = []
         for event_path in sorted(events_dir.glob("event-*.json")):
-            parsed = self._load_json_dict(event_path)
+            parsed = runtime_parsing.load_json_dict(event_path)
             if parsed is None:
                 return conversation_root, base_state, None
             events.append(parsed)
@@ -177,8 +220,11 @@ class OpenHandsAgent(CodingAgent):
         return Path.home() / ".openhands" / "conversations"
 
     def _extract_stats(
-        self, *, base_state: Optional[Dict[str, Any]], events: Optional[list[Dict[str, Any]]]
-    ) -> tuple[Optional[str], Optional[Dict[str, int]], Optional[int], Optional[int], Optional[float], Optional[str]]:
+        self,
+        *,
+        base_state: Optional[Dict[str, Any]],
+        events: Optional[list[Dict[str, Any]]],
+    ) -> ParsedStats:
         model_name: Optional[str] = None
         usage: Optional[Dict[str, int]] = None
         llm_calls: Optional[int] = None
@@ -198,12 +244,12 @@ class OpenHandsAgent(CodingAgent):
             else None
         )
 
-        finish_texts = self._extract_content_texts(
+        finish_texts = runtime_parsing.extract_content_texts(
             events,
             '$[?(@.observation.kind == "FinishObservation")].observation.content',
             allow_scalars=False,
         )
-        assistant_texts = self._extract_content_texts(
+        assistant_texts = runtime_parsing.extract_content_texts(
             events,
             '$[?(@.llm_message.role == "assistant")].llm_message.content',
             allow_scalars=False,
@@ -214,4 +260,11 @@ class OpenHandsAgent(CodingAgent):
         elif assistant_texts:
             response = assistant_texts[-1]
 
-        return model_name, usage, llm_calls, tool_calls, total_cost, response
+        return ParsedStats(
+            model_name=model_name,
+            usage=usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            total_cost=total_cost,
+            response=response,
+        )

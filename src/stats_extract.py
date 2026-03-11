@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
+from enum import Enum
 from functools import lru_cache
 from typing import Any, Callable, Dict, Iterable, Literal, Optional, Union
+
+import jsonpath
 
 
 @dataclass(frozen=True)
@@ -40,34 +43,31 @@ class UsageFieldSpec:
 
 
 @dataclass(frozen=True)
-class LlmCall:
-    model: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    call_count: int = 1
-    cost: Optional[float] = None
+class JsonlStatsSpec:
+    source_field: str = "jsonl_payloads"
+    model_field: str = "$.model"
+    usage_field: str = "$.usage"
+    payload_filter_paths: tuple[str, ...] = ()
+    tool_calls_path: Optional[str] = None
+    usage_patterns: tuple["UsagePattern", ...] = ()
 
 
-@dataclass(frozen=True)
-class ToolCall:
-    call_count: int = 1
+class StatsMergeStrategy(str, Enum):
+    AGGREGATE = "aggregate"
+    FALLBACK = "fallback"
+
+
+class NumericMergeStrategy(str, Enum):
+    FIRST = "first"
+    MAX = "max"
+    SUM = "sum"
 
 
 _MISSING = object()
 _INVALID = object()
-_WILDCARD = object()
 
 JsonPathSegment = Union[str, int]
-JsonPath = tuple[JsonPathSegment, ...]
-JsonPathSpec = Union[JsonPathSegment, JsonPath]
-
-
-@dataclass(frozen=True)
-class _JsonFilterExpr:
-    path: JsonPath
-    operator: str
-    literal: Any
+JsonPathSpec = Union[JsonPathSegment, tuple[JsonPathSegment, ...]]
 
 
 _DEFAULT_USAGE_PATTERNS: tuple[UsagePattern, ...] = (
@@ -114,7 +114,7 @@ def _path_segment_to_json_path(segment: JsonPathSegment) -> Optional[str]:
 def _json_path(path: JsonPathSpec) -> Optional[str]:
     if isinstance(path, str) and path.startswith("$"):
         return path
-    segments: JsonPath
+    segments: tuple[JsonPathSegment, ...]
     if isinstance(path, tuple):
         segments = path
     else:
@@ -128,250 +128,29 @@ def _json_path(path: JsonPathSpec) -> Optional[str]:
     return candidate
 
 
-def _find_closing_bracket(path: str, *, start: int) -> int:
-    quote: Optional[str] = None
-    escape = False
-    paren_depth = 0
-    for cursor in range(start + 1, len(path)):
-        char = path[cursor]
-        if quote is not None:
-            if escape:
-                escape = False
-                continue
-            if char == "\\":
-                escape = True
-                continue
-            if char == quote:
-                quote = None
-            continue
-        if char in {'"', "'"}:
-            quote = char
-            continue
-        if char == "(":
-            paren_depth += 1
-            continue
-        if char == ")" and paren_depth > 0:
-            paren_depth -= 1
-            continue
-        if char == "]" and paren_depth == 0:
-            return cursor
-    return -1
-
-
-def _parse_filter_literal(raw: str) -> Any:
-    token = raw.strip()
-    if not token:
-        return _INVALID
-    if token.startswith('"') and token.endswith('"') and len(token) >= 2:
-        try:
-            return json.loads(token)
-        except Exception:
-            return _INVALID
-    if token.startswith("'") and token.endswith("'") and len(token) >= 2:
-        return token[1:-1]
-    if token == "true":
-        return True
-    if token == "false":
-        return False
-    if token == "null":
-        return None
-    try:
-        return int(token)
-    except Exception:
-        pass
-    try:
-        return float(token)
-    except Exception:
-        return _INVALID
-
-
-def _find_filter_operator(expr: str) -> Optional[tuple[int, str]]:
-    quote: Optional[str] = None
-    escape = False
-    for cursor, char in enumerate(expr):
-        if quote is not None:
-            if escape:
-                escape = False
-                continue
-            if char == "\\":
-                escape = True
-                continue
-            if char == quote:
-                quote = None
-            continue
-        if char in {'"', "'"}:
-            quote = char
-            continue
-        if expr.startswith("==", cursor):
-            return cursor, "=="
-        if expr.startswith("!=", cursor):
-            return cursor, "!="
-    return None
-
-
-def _parse_filter(token: str) -> Optional[_JsonFilterExpr]:
-    if not token.startswith("?(") or not token.endswith(")"):
-        return None
-    expression = token[2:-1].strip()
-    if not expression:
-        return None
-    operator_info = _find_filter_operator(expression)
-    if operator_info is None:
-        return None
-    cursor, operator = operator_info
-    lhs = expression[:cursor].strip()
-    rhs = expression[cursor + len(operator) :].strip()
-    if not lhs or not rhs:
-        return None
-    lhs_token = lhs.strip()
-    if lhs_token == "@":
-        filter_path: Optional[JsonPath] = ()
-    elif not lhs_token.startswith("@"):
-        filter_path = None
-    else:
-        parsed_path = _parse_json_path(f"${lhs_token[1:]}")
-        if parsed_path is None or any(
-            segment is _WILDCARD or isinstance(segment, _JsonFilterExpr) for segment in parsed_path
-        ):
-            filter_path = None
-        else:
-            filter_path = parsed_path  # type: ignore[assignment]
-    if filter_path is None:
-        return None
-    literal = _parse_filter_literal(rhs)
-    if literal is _INVALID:
-        return None
-    return _JsonFilterExpr(path=filter_path, operator=operator, literal=literal)
-
-
 @lru_cache(maxsize=4096)
-def _parse_json_path(path: str) -> Optional[tuple[Any, ...]]:
-    if path == "$":
-        return ()
-    if not path.startswith("$"):
-        return None
-    cursor = 1
-    segments: list[Any] = []
-    while cursor < len(path):
-        char = path[cursor]
-        if char == ".":
-            cursor += 1
-            start = cursor
-            while cursor < len(path) and path[cursor] not in ".[":
-                cursor += 1
-            token = path[start:cursor]
-            if not token:
-                return None
-            segments.append(token)
-            continue
-        if char == "[":
-            end = _find_closing_bracket(path, start=cursor)
-            if end < 0:
-                return None
-            token = path[cursor + 1 : end].strip()
-            if not token:
-                return None
-            if token == "*":
-                segments.append(_WILDCARD)
-            elif token.startswith("?(") and token.endswith(")"):
-                parsed_filter = _parse_filter(token)
-                if parsed_filter is None:
-                    return None
-                segments.append(parsed_filter)
-            elif token.startswith("'") and token.endswith("'") and len(token) >= 2:
-                segments.append(token[1:-1])
-            elif token.startswith('"') and token.endswith('"') and len(token) >= 2:
-                segments.append(token[1:-1])
-            elif token.isdigit():
-                segments.append(int(token))
-            else:
-                return None
-            cursor = end + 1
-            continue
-        return None
-    return tuple(segments)
-
-
-def _dig(value: Any, path: JsonPath) -> Any:
-    current = value
-    for segment in path:
-        if isinstance(segment, str):
-            if not isinstance(current, dict) or segment not in current:
-                return _MISSING
-            current = current[segment]
-            continue
-        if not isinstance(current, list):
-            return _MISSING
-        if segment < 0 or segment >= len(current):
-            return _MISSING
-        current = current[segment]
-    return current
-
-
-def _select(value: Any, path: tuple[Any, ...]) -> list[Any]:
-    values: list[Any] = [value]
-    for segment in path:
-        next_values: list[Any] = []
-        for current in values:
-            if segment is _WILDCARD:
-                if isinstance(current, list):
-                    next_values.extend(current)
-                    continue
-                if isinstance(current, dict):
-                    next_values.extend(current.values())
-                continue
-            if isinstance(segment, _JsonFilterExpr):
-                iterable: list[Any] = []
-                if isinstance(current, list):
-                    iterable = list(current)
-                elif isinstance(current, dict):
-                    iterable = list(current.values())
-                if not iterable:
-                    continue
-                for item in iterable:
-                    target = _dig(item, segment.path)
-                    if target is _MISSING:
-                        continue
-                    if segment.operator == "==" and target == segment.literal:
-                        next_values.append(item)
-                        continue
-                    if segment.operator == "!=" and target != segment.literal:
-                        next_values.append(item)
-                continue
-            if isinstance(segment, str):
-                if isinstance(current, dict) and segment in current:
-                    next_values.append(current[segment])
-                continue
-            if isinstance(segment, int):
-                if isinstance(current, list) and 0 <= segment < len(current):
-                    next_values.append(current[segment])
-                continue
-        if not next_values:
-            return []
-        values = next_values
-    return values
+def _compile_json_path(path: str) -> Any:
+    return jsonpath.compile(path, strict=True)
 
 
 def select_values(value: Any, path: str) -> Optional[list[Any]]:
-    parsed = _parse_json_path(path)
-    if parsed is None:
+    try:
+        return _compile_json_path(path).findall(value) or None
+    except Exception:
         return None
-    values = _select(value, parsed)
-    if not values:
-        return None
-    return values
 
 
 def get_path_value(value: Any, path: str) -> Any:
-    parsed = _parse_json_path(path)
-    if parsed is None:
+    try:
+        compiled = _compile_json_path(path)
+    except Exception:
         return _MISSING
-    if any(segment is _WILDCARD or isinstance(segment, _JsonFilterExpr) for segment in parsed):
-        values = _select(value, parsed)
-        if not values:
-            return _MISSING
-        return values
-    return _dig(value, parsed)  # type: ignore[arg-type]
+    values = compiled.findall(value)
+    if not values:
+        return _MISSING
+    if compiled.singular_query():
+        return values[-1]
+    return values
 
 
 def _normalize_nonempty_text(value: Any) -> Optional[str]:
@@ -726,10 +505,6 @@ def _extract_usage(
     return None
 
 
-def _merge_usage(models_usage: Dict[str, Dict[str, int]], model_name: str, usage: Dict[str, int]) -> None:
-    merge_model_usage(models_usage, model_name, usage)
-
-
 def merge_model_usage(models_usage: Dict[str, Dict[str, int]], model_name: str, usage: Dict[str, int]) -> bool:
     normalized_model_name = _normalize_nonempty_text(model_name)
     usage_entry = _extract_usage_entry(usage)
@@ -745,87 +520,71 @@ def merge_model_usage(models_usage: Dict[str, Dict[str, int]], model_name: str, 
     return True
 
 
-def build_llm_call(
-    *,
-    model: Any,
-    usage: Any,
-    call_count: Any = 1,
-    cost: Any = None,
-) -> Optional[LlmCall]:
-    model_name = _normalize_nonempty_text(model)
-    usage_entry = _extract_usage_entry(usage)
-    normalized_call_count = _normalize_optional_int(call_count)
-    normalized_cost = _normalize_optional_cost(cost)
-    if model_name is None or usage_entry is None:
+def sum_usage_entries(usages: Iterable[Optional[Dict[str, int]]]) -> Optional[Dict[str, int]]:
+    prompt_tokens = 0
+    completion_tokens = 0
+    total_tokens = 0
+    count = 0
+    for usage in usages:
+        parsed_usage = parse_usage_by_model(usage, "prompt_completion") if isinstance(usage, dict) else None
+        if parsed_usage is None:
+            continue
+        prompt_tokens += parsed_usage["prompt_tokens"]
+        completion_tokens += parsed_usage["completion_tokens"]
+        total_tokens += parsed_usage["total_tokens"]
+        count += 1
+    if count < 1:
         return None
-    if normalized_call_count is None or normalized_call_count < 1:
-        return None
-    if cost is not None and normalized_cost is None:
-        return None
-    return LlmCall(
-        model=model_name,
-        prompt_tokens=usage_entry["prompt_tokens"],
-        completion_tokens=usage_entry["completion_tokens"],
-        total_tokens=usage_entry["total_tokens"],
-        call_count=normalized_call_count,
-        cost=normalized_cost,
+    return _compose_usage_entry(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
     )
 
 
-def build_stats_snapshot_from_events(
+def normalize_stats_snapshot(
     *,
-    llm_events: Iterable[LlmCall],
-    tool_events: Iterable[ToolCall],
+    models_usage: Any,
+    llm_calls: Any,
+    tool_calls: Any,
+    total_cost: Any = None,
+) -> StatsSnapshot:
+    snapshot = build_stats_snapshot(
+        models_usage=models_usage,
+        llm_calls=llm_calls,
+        tool_calls=tool_calls,
+        total_cost=total_cost,
+    )
+    if snapshot is not None:
+        return snapshot
+    return StatsSnapshot(models_usage={}, llm_calls=None, tool_calls=None, total_cost=None)
+
+
+def build_single_model_stats_snapshot(
+    *,
+    model_name: Optional[str],
+    usage: Optional[Dict[str, int]],
+    llm_calls: Optional[int],
+    tool_calls: Optional[int],
     total_cost: Optional[float] = None,
+    normalize_text: Callable[[Optional[str]], Optional[str]] = _normalize_nonempty_text,
+    as_int: Optional[Callable[[Any], Optional[int]]] = None,
 ) -> Optional[StatsSnapshot]:
+    def _as_int(value: Any) -> Optional[int]:
+        return _normalize_optional_int(value)
+
+    int_parser = as_int or _as_int
     models_usage: Dict[str, Dict[str, int]] = {}
-    llm_calls = 0
-    tool_calls = 0
-    has_tool_calls = False
-    running_cost = _normalize_optional_cost(total_cost)
-
-    for event in llm_events:
-        call_count = _normalize_optional_int(event.call_count)
-        if call_count is None or call_count < 1:
-            continue
-        llm_calls += call_count
-
-        model_name = _normalize_nonempty_text(event.model)
-        usage = _compose_usage_entry(
-            prompt_tokens=event.prompt_tokens,
-            completion_tokens=event.completion_tokens,
-            total_tokens=event.total_tokens,
-        )
-        if model_name is not None and usage is not None:
-            _merge_usage(
-                models_usage,
-                model_name,
-                {
-                    "prompt_tokens": usage["prompt_tokens"] * call_count,
-                    "completion_tokens": usage["completion_tokens"] * call_count,
-                    "total_tokens": usage["total_tokens"] * call_count,
-                },
-            )
-        if event.cost is not None:
-            event_cost = _normalize_optional_cost(event.cost)
-            if event_cost is None:
-                continue
-            if running_cost is None:
-                running_cost = 0.0
-            running_cost += event_cost
-
-    for event in tool_events:
-        call_count = _normalize_optional_int(event.call_count)
-        if call_count is None:
-            continue
-        has_tool_calls = True
-        tool_calls += call_count
+    normalized_model_name = normalize_text(model_name)
+    parsed_usage = parse_usage_by_model(usage, "prompt_completion") if isinstance(usage, dict) else None
+    if normalized_model_name is not None and parsed_usage is not None:
+        models_usage = {normalized_model_name: parsed_usage}
 
     return build_stats_snapshot(
         models_usage=models_usage,
-        llm_calls=llm_calls if llm_calls > 0 else None,
-        tool_calls=tool_calls if has_tool_calls else None,
-        total_cost=running_cost,
+        llm_calls=int_parser(llm_calls),
+        tool_calls=int_parser(tool_calls),
+        total_cost=total_cost,
     )
 
 
@@ -850,8 +609,6 @@ def _count_tool_calls(payload: Any) -> int:
             continue
         tool_calls = current.get("tool_calls", _MISSING)
         if isinstance(tool_calls, list):
-            total += len(tool_calls)
-        elif isinstance(tool_calls, dict):
             total += len(tool_calls)
         for value in current.values():
             if isinstance(value, (dict, list)):
@@ -899,7 +656,7 @@ def extract_gemini_style_stats(
             else None
         )
         if model_name is not None and usage is not None:
-            _merge_usage(
+            merge_model_usage(
                 models_usage,
                 model_name,
                 usage,
@@ -946,6 +703,7 @@ def extract_json_result_stats(
 def extract_jsonl_stats(
     artifacts: StatsArtifacts,
     *,
+    spec: Optional[JsonlStatsSpec] = None,
     source_field: str = "jsonl_payloads",
     model_field: str = "$.model",
     usage_field: str = "$.usage",
@@ -953,6 +711,14 @@ def extract_jsonl_stats(
     tool_calls_path: Optional[str] = None,
     usage_patterns: tuple[UsagePattern, ...] = _DEFAULT_USAGE_PATTERNS,
 ) -> Optional[StatsSnapshot]:
+    if spec is not None:
+        source_field = spec.source_field
+        model_field = spec.model_field
+        usage_field = spec.usage_field
+        payload_filter_paths = spec.payload_filter_paths
+        tool_calls_path = spec.tool_calls_path
+        usage_patterns = spec.usage_patterns or _DEFAULT_USAGE_PATTERNS
+
     payloads = getattr(artifacts, source_field, None)
     if not isinstance(payloads, tuple) or not payloads:
         return None
@@ -992,7 +758,7 @@ def extract_jsonl_stats(
 
         model_name = req_str(payload, model_field)
         if model_name is not None and usage is not None:
-            _merge_usage(models_usage, model_name, usage)
+            merge_model_usage(models_usage, model_name, usage)
         if tool_calls_path is None:
             tool_calls += _count_tool_calls(payload)
 
@@ -1035,7 +801,7 @@ def extract_opencode_session_export_stats(
         tokens = last_value(message, "$.info.tokens")
         usage = parse_usage_by_model(tokens, "opencode") if isinstance(tokens, dict) else None
         if provider_id is not None and model_id is not None and usage is not None:
-            _merge_usage(models_usage, f"{provider_id}/{model_id}", usage)
+            merge_model_usage(models_usage, f"{provider_id}/{model_id}", usage)
 
         selected_tool_parts = select_values(message, tool_parts_path)
         if selected_tool_parts is not None:
@@ -1084,14 +850,76 @@ def _merge_stats_snapshots_fallback(snapshots: list[StatsSnapshot]) -> StatsSnap
     return merged
 
 
-def _merge_stats_snapshots_aggregate(snapshots: list[StatsSnapshot]) -> StatsSnapshot:
+def _normalize_snapshot_merge_strategy(
+    strategy: Union[StatsMergeStrategy, Literal["aggregate", "fallback"]],
+) -> StatsMergeStrategy:
+    if isinstance(strategy, StatsMergeStrategy):
+        return strategy
+    if strategy == "aggregate":
+        return StatsMergeStrategy.AGGREGATE
+    if strategy == "fallback":
+        return StatsMergeStrategy.FALLBACK
+    raise ValueError(f"unsupported snapshot merge strategy: {strategy}")
+
+
+def _normalize_numeric_merge_strategy(
+    strategy: Union[NumericMergeStrategy, Literal["first", "max", "sum"]],
+) -> NumericMergeStrategy:
+    if isinstance(strategy, NumericMergeStrategy):
+        return strategy
+    if strategy == "first":
+        return NumericMergeStrategy.FIRST
+    if strategy == "max":
+        return NumericMergeStrategy.MAX
+    if strategy == "sum":
+        return NumericMergeStrategy.SUM
+    raise ValueError(f"unsupported numeric merge strategy: {strategy}")
+
+
+def _merge_numeric_field(
+    values: Iterable[Optional[Union[int, float]]],
+    *,
+    strategy: Union[NumericMergeStrategy, Literal["first", "max", "sum"]],
+) -> Optional[Union[int, float]]:
+    normalized_values = [value for value in values if value is not None]
+    if not normalized_values:
+        return None
+    normalized_strategy = _normalize_numeric_merge_strategy(strategy)
+    if normalized_strategy == NumericMergeStrategy.FIRST:
+        return normalized_values[0]
+    if normalized_strategy == NumericMergeStrategy.MAX:
+        return max(normalized_values)
+    if normalized_strategy == NumericMergeStrategy.SUM:
+        return sum(normalized_values)
+    raise ValueError(f"unsupported numeric merge strategy: {strategy}")
+
+
+def _merge_stats_snapshots_aggregate_with_field_strategy(
+    snapshots: list[StatsSnapshot],
+    *,
+    llm_calls_strategy: Union[NumericMergeStrategy, Literal["first", "max", "sum"]],
+    tool_calls_strategy: Union[NumericMergeStrategy, Literal["first", "max", "sum"]],
+    total_cost_strategy: Union[NumericMergeStrategy, Literal["first", "max", "sum"]],
+) -> StatsSnapshot:
     merged_models_usage: Dict[str, Dict[str, int]] = {}
     for snapshot in snapshots:
         for model_name, usage in snapshot.models_usage.items():
             merge_model_usage(merged_models_usage, model_name, usage)
-    llm_calls = next((snapshot.llm_calls for snapshot in snapshots if snapshot.llm_calls is not None), None)
-    tool_calls = next((snapshot.tool_calls for snapshot in snapshots if snapshot.tool_calls is not None), None)
-    total_cost = next((snapshot.total_cost for snapshot in snapshots if snapshot.total_cost is not None), None)
+    llm_calls_raw = _merge_numeric_field(
+        (snapshot.llm_calls for snapshot in snapshots),
+        strategy=llm_calls_strategy,
+    )
+    tool_calls_raw = _merge_numeric_field(
+        (snapshot.tool_calls for snapshot in snapshots),
+        strategy=tool_calls_strategy,
+    )
+    total_cost_raw = _merge_numeric_field(
+        (snapshot.total_cost for snapshot in snapshots),
+        strategy=total_cost_strategy,
+    )
+    llm_calls = int(llm_calls_raw) if llm_calls_raw is not None else None
+    tool_calls = int(tool_calls_raw) if tool_calls_raw is not None else None
+    total_cost = float(total_cost_raw) if total_cost_raw is not None else None
     return StatsSnapshot(
         models_usage=merged_models_usage,
         llm_calls=llm_calls,
@@ -1103,13 +931,31 @@ def _merge_stats_snapshots_aggregate(snapshots: list[StatsSnapshot]) -> StatsSna
 def merge_stats_snapshots(
     snapshots: Iterable[Optional[StatsSnapshot]],
     *,
-    strategy: Literal["aggregate", "fallback"] = "aggregate",
+    strategy: Union[StatsMergeStrategy, Literal["aggregate", "fallback"]] = StatsMergeStrategy.AGGREGATE,
+    llm_calls_strategy: Union[NumericMergeStrategy, Literal["first", "max", "sum"]] = NumericMergeStrategy.FIRST,
+    tool_calls_strategy: Union[NumericMergeStrategy, Literal["first", "max", "sum"]] = NumericMergeStrategy.FIRST,
+    total_cost_strategy: Union[NumericMergeStrategy, Literal["first", "max", "sum"]] = NumericMergeStrategy.FIRST,
 ) -> StatsSnapshot:
-    if strategy not in {"aggregate", "fallback"}:
-        raise ValueError(f"unsupported snapshot merge strategy: {strategy}")
+    normalized_strategy = _normalize_snapshot_merge_strategy(strategy)
+    normalized_llm_calls_strategy = _normalize_numeric_merge_strategy(llm_calls_strategy)
+    normalized_tool_calls_strategy = _normalize_numeric_merge_strategy(tool_calls_strategy)
+    normalized_total_cost_strategy = _normalize_numeric_merge_strategy(total_cost_strategy)
+    if normalized_strategy == StatsMergeStrategy.FALLBACK and (
+        normalized_llm_calls_strategy != NumericMergeStrategy.FIRST
+        or normalized_tool_calls_strategy != NumericMergeStrategy.FIRST
+        or normalized_total_cost_strategy != NumericMergeStrategy.FIRST
+    ):
+        raise ValueError(
+            "numeric merge strategies are supported only when strategy='aggregate'"
+        )
     validated_snapshots = _validated_snapshots(snapshots)
     if not validated_snapshots:
         return StatsSnapshot(models_usage={}, llm_calls=None, tool_calls=None, total_cost=None)
-    if strategy == "fallback":
+    if normalized_strategy == StatsMergeStrategy.FALLBACK:
         return _merge_stats_snapshots_fallback(validated_snapshots)
-    return _merge_stats_snapshots_aggregate(validated_snapshots)
+    return _merge_stats_snapshots_aggregate_with_field_strategy(
+        validated_snapshots,
+        llm_calls_strategy=normalized_llm_calls_strategy,
+        tool_calls_strategy=normalized_tool_calls_strategy,
+        total_cost_strategy=normalized_total_cost_strategy,
+    )

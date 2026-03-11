@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate, VersionCommandTemplate
-from ..models import RunResult
-from .base import req_int, req_str, select_values
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate, RunParseResult, RunPlan, VersionCommandTemplate
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
+from ..stats_extract import req_int, req_str, select_values
 
 
 class GooseAgent(CodingAgent):
@@ -42,7 +43,7 @@ class GooseAgent(CodingAgent):
     )
     _SESSION_ID_RE = re.compile(r"session id:\s*([^\s]+)", re.IGNORECASE)
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -50,14 +51,14 @@ class GooseAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         images = images or []
         videos = videos or []
         env, env_error = self._build_run_env(
             model_override=model_override,
         )
         if env_error is not None:
-            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
+            self._raise_config_error(env_error)
 
         session_name = f"cakit-goose-{uuid.uuid4().hex}"
         provider = env.get("GOOSE_PROVIDER")
@@ -67,18 +68,31 @@ class GooseAgent(CodingAgent):
         else:
             extra_args = ["--name", session_name]
         template = self.run_template
-        cmd, _ = self._build_templated_command(
-            template=template,
+        return self._build_templated_run_plan(
             prompt=prompt,
             model=model,
             images=images,
             videos=videos,
+            env=env,
             extra_args=extra_args,
+            template=template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                env=env,
+                session_name=session_name,
+                base_env=base_env,
+            ),
         )
 
-        result = self._run(cmd, env=env, base_env=base_env)
-        output = result.output
-        match = self._SESSION_ID_RE.search(self._stdout_only(output))
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        *,
+        env: Dict[str, str],
+        session_name: str,
+        base_env: Optional[Dict[str, str]],
+    ) -> RunParseResult:
+        match = self._SESSION_ID_RE.search(runtime_parsing.stdout_only(output))
         session_id = match.group(1).strip() if match else None
         if session_id == "":
             session_id = None
@@ -87,20 +101,27 @@ class GooseAgent(CodingAgent):
             export_cmd.extend(["--session-id", session_id])
         else:
             export_cmd.extend(["--name", session_name])
-        session_payload = self._run_json_dict_command(export_cmd, env=env, base_env=base_env, stdout_only=True)
+        session_payload = runtime_parsing.run_json_dict_command(
+            args=export_cmd,
+            run=self._run,
+            env=env,
+            base_env=base_env,
+            stdout_only_output=True,
+        )
         models_usage, llm_calls, tool_calls = self._extract_session_stats(
             session_payload=session_payload,
         )
         response: Optional[str] = None
         if isinstance(session_payload, dict):
-            response = self._last_selected_text(
-                session_payload,
-                '$.conversation[?(@.role == "assistant")].content[?(@.type == "text")].text',
+            response = runtime_parsing.last_nonempty_text(
+                select_values(
+                    session_payload,
+                    '$.conversation[?(@.role == "assistant")].content[?(@.type == "text")].text',
+                )
             )
         if response is None:
-            response = self._last_stdout_line(output)
-        return self.finalize_run(
-            command_result=result,
+            response = runtime_parsing.last_stdout_line(output)
+        return RunParseResult(
             response=response,
             models_usage=models_usage,
             llm_calls=llm_calls,
@@ -113,21 +134,21 @@ class GooseAgent(CodingAgent):
         model_override: Optional[str],
     ) -> Tuple[Dict[str, str], Optional[str]]:
         env_source = os.environ
-        provider = self._normalize_text(env_source.get("CAKIT_GOOSE_PROVIDER")) or self._normalize_text(
+        provider = runtime_parsing.normalize_text(env_source.get("CAKIT_GOOSE_PROVIDER")) or runtime_parsing.normalize_text(
             env_source.get("GOOSE_PROVIDER")
         )
         model = (
-            self._normalize_text(model_override)
-            or self._normalize_text(env_source.get("CAKIT_GOOSE_MODEL"))
-            or self._normalize_text(env_source.get("GOOSE_MODEL"))
-            or self._normalize_text(env_source.get("OPENAI_DEFAULT_MODEL"))
+            runtime_parsing.normalize_text(model_override)
+            or runtime_parsing.normalize_text(env_source.get("CAKIT_GOOSE_MODEL"))
+            or runtime_parsing.normalize_text(env_source.get("GOOSE_MODEL"))
+            or runtime_parsing.normalize_text(env_source.get("OPENAI_DEFAULT_MODEL"))
         )
-        openai_api_key = self._resolve_openai_api_key("CAKIT_GOOSE_OPENAI_API_KEY", source_env=env_source)
-        openai_host = self._normalize_text(env_source.get("OPENAI_HOST"))
-        openai_base_path = self._normalize_text(env_source.get("CAKIT_GOOSE_OPENAI_BASE_PATH")) or self._normalize_text(
+        openai_api_key = runtime_env.resolve_openai_api_key("CAKIT_GOOSE_OPENAI_API_KEY", source_env=env_source)
+        openai_host = runtime_parsing.normalize_text(env_source.get("OPENAI_HOST"))
+        openai_base_path = runtime_parsing.normalize_text(env_source.get("CAKIT_GOOSE_OPENAI_BASE_PATH")) or runtime_parsing.normalize_text(
             env_source.get("OPENAI_BASE_PATH")
         )
-        openai_base_url = self._resolve_openai_base_url("CAKIT_GOOSE_OPENAI_BASE_URL", source_env=env_source)
+        openai_base_url = runtime_env.resolve_openai_base_url("CAKIT_GOOSE_OPENAI_BASE_URL", source_env=env_source)
         if openai_base_url:
             parsed = urlparse(openai_base_url)
             if not parsed.scheme or not parsed.netloc:
@@ -148,9 +169,9 @@ class GooseAgent(CodingAgent):
             "CAKIT_GOOSE_OPENAI_BASE_URL",
             "CAKIT_GOOSE_OPENAI_BASE_PATH",
         )
-        cakit_configured = any(self._normalize_text(env_source.get(key)) for key in cakit_keys)
+        cakit_configured = any(runtime_parsing.normalize_text(env_source.get(key)) for key in cakit_keys)
         generic_openai_configured = any(
-            self._normalize_text(env_source.get(key))
+            runtime_parsing.normalize_text(env_source.get(key))
             for key in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_DEFAULT_MODEL")
         )
         if provider is None and (cakit_configured or generic_openai_configured):
@@ -166,7 +187,7 @@ class GooseAgent(CodingAgent):
         else:
             missing = []
         if missing:
-            return {}, self._missing_env_with_fallback_message(missing)
+            return {}, runtime_env.missing_env_with_fallback_message(missing)
         env: Dict[str, str] = {"GOOSE_MODE": "auto"}
         if provider:
             env["GOOSE_PROVIDER"] = provider
@@ -193,7 +214,8 @@ class GooseAgent(CodingAgent):
         prompt_tokens = req_int(payload, "$.accumulated_input_tokens")
         completion_tokens = req_int(payload, "$.accumulated_output_tokens")
         total_tokens = req_int(payload, "$.accumulated_total_tokens")
-        assistant_message_count = self._count_selected(payload, '$.conversation[?(@.role == "assistant")]')
+        assistant_message_values = select_values(payload, '$.conversation[?(@.role == "assistant")]')
+        assistant_message_count = len(assistant_message_values) if assistant_message_values is not None else None
         models_usage: Dict[str, Dict[str, int]] = {}
         if (
             model_name is not None
@@ -207,13 +229,15 @@ class GooseAgent(CodingAgent):
                 "total_tokens": total_tokens,
             }
 
-        tool_calls = self._count_selected_total(
-            payload,
-            (
-                '$.conversation[?(@.role == "assistant")].content[?(@.type == "toolRequest")]',
-                '$.conversation[?(@.role == "assistant")].content[?(@.type == "frontendToolRequest")]',
-            ),
-        )
+        tool_calls = None
+        for path in (
+            '$.conversation[?(@.role == "assistant")].content[?(@.type == "toolRequest")]',
+            '$.conversation[?(@.role == "assistant")].content[?(@.type == "frontendToolRequest")]',
+        ):
+            values = select_values(payload, path)
+            if values is None:
+                continue
+            tool_calls = (tool_calls or 0) + len(values)
         return (
             models_usage,
             assistant_message_count,

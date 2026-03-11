@@ -7,10 +7,21 @@ from typing import Any, Dict, Optional
 from .base import (
     CodingAgent,
     InstallStrategy,
+    RunParseResult,
+    RunPlan,
     RunCommandTemplate,
+    StatsParseResult,
 )
-from ..models import RunResult
-from ..stats_extract import StatsSnapshot, last_value, parse_usage_by_model, req_str, select_values
+from ..stats_extract import (
+    last_value,
+    merge_model_usage,
+    merge_stats_snapshots,
+    normalize_stats_snapshot,
+    parse_usage_by_model,
+    req_str,
+    select_values,
+)
+from ..agent_runtime import parsing as runtime_parsing
 
 
 class QoderAgent(CodingAgent):
@@ -28,7 +39,7 @@ class QoderAgent(CodingAgent):
         media_injection="none",
     )
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -36,33 +47,39 @@ class QoderAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         images = images or []
-        model = self._normalize_text(model_override or os.environ.get("CAKIT_QODER_MODEL"))
+        model = runtime_parsing.normalize_text(model_override or os.environ.get("CAKIT_QODER_MODEL"))
         env = {
             "QODER_PERSONAL_ACCESS_TOKEN": os.environ.get("QODER_PERSONAL_ACCESS_TOKEN"),
         }
-        template = self.run_template
         extra_args = [arg for image in images for arg in ("--attachment", str(image))]
-        cmd, _ = self._build_templated_command(
-            template=template,
+        telemetry_path = Path.home() / ".qoder" / "logs" / "qodercli.log"
+        return self._build_templated_run_plan(
             prompt=prompt,
             model=model,
+            env=env,
+            template=self.run_template,
             extra_args=extra_args,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                command_result,
+                telemetry_path=telemetry_path,
+            ),
         )
 
-        result = self._run(cmd, env=env, base_env=base_env)
-        output = result.output
-        payloads = self._load_output_json_payloads(output)
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        command_result: Any,
+        *,
+        telemetry_path: Path,
+    ) -> RunParseResult:
+        payloads = runtime_parsing.load_output_json_payloads(output)
         parsed_stats = self._extract_stats(payloads)
-        parsed_snapshot, parsed_response = parsed_stats if parsed_stats is not None else (None, None)
-        stats = self._merge_stats_snapshots(
-            snapshots=[parsed_snapshot]
-        )
-        telemetry_path = Path.home() / ".qoder" / "logs" / "qodercli.log"
-        return self.finalize_run(
-            command_result=result,
-            response=parsed_response,
+        stats = merge_stats_snapshots([parsed_stats.snapshot if parsed_stats is not None else None])
+        return RunParseResult(
+            response=parsed_stats.response if parsed_stats is not None else None,
             models_usage=stats.models_usage,
             llm_calls=stats.llm_calls,
             tool_calls=stats.tool_calls,
@@ -70,7 +87,7 @@ class QoderAgent(CodingAgent):
             telemetry_log=str(telemetry_path) if telemetry_path.exists() else None,
         )
 
-    def _extract_stats(self, payloads: list[Dict[str, Any]]) -> Optional[tuple[StatsSnapshot, Optional[str]]]:
+    def _extract_stats(self, payloads: list[Dict[str, Any]]) -> Optional[StatsParseResult]:
         if not payloads:
             return None
         event_types = {
@@ -88,7 +105,7 @@ class QoderAgent(CodingAgent):
 
     def _extract_qoder_message_stats(
         self, payloads: list[Dict[str, Any]]
-    ) -> Optional[tuple[StatsSnapshot, Optional[str]]]:
+    ) -> Optional[StatsParseResult]:
         records = [
             {
                 "model_name": req_str(message, "$.response_meta.model_name"),
@@ -117,119 +134,116 @@ class QoderAgent(CodingAgent):
         ]
         models_usage: Dict[str, Dict[str, int]] = {}
         for record in usage_records:
-            self._merge_model_usage(models_usage, record["model_name"], record["usage"])
+            merge_model_usage(models_usage, record["model_name"], record["usage"])
         tool_calls = sum(record["tool_calls"] for record in records)
         responses = [record["response"] for record in records if record["response"] is not None]
-        snapshot = self._normalize_stats_snapshot(
+        snapshot = normalize_stats_snapshot(
             models_usage=models_usage,
             llm_calls=(len(records) if records else None),
             tool_calls=tool_calls,
         )
-        return snapshot, self._last_nonempty_text(responses)
+        return StatsParseResult(snapshot=snapshot, response=runtime_parsing.last_nonempty_text(responses))
 
     def _extract_stream_message_stats(
         self, payloads: list[Dict[str, Any]]
-    ) -> Optional[tuple[StatsSnapshot, Optional[str]]]:
-        models_usage: Dict[str, Dict[str, int]] = {}
-        tool_calls = 0
-        responses: list[str] = []
-        assistant_messages = 0
-        current_assistant_active = False
-        current_model_name: Optional[str] = None
-        current_prompt_tokens: Optional[int] = None
-        current_completion_tokens: Optional[int] = None
-        current_response_parts: list[str] = []
+    ) -> Optional[StatsParseResult]:
+        assistant_start_messages = [
+            message
+            for message in (
+                select_values(
+                    payloads,
+                    '$[?(@.type == "message_start")].message',
+                )
+                or []
+            )
+            if isinstance(message, dict) and req_str(message, "$.role") == "assistant"
+        ]
+        if not assistant_start_messages:
+            return None
 
+        llm_call_ids = {
+            message_id
+            for message in assistant_start_messages
+            if (message_id := req_str(message, "$.id")) is not None
+        }
+        llm_calls = len(llm_call_ids) if llm_call_ids else len(assistant_start_messages)
+        tool_calls = len(select_values(payloads, '$[?(@.content_block.type == "tool_use")]') or [])
+
+        models_usage: Dict[str, Dict[str, int]] = {}
+        responses: list[str] = []
+        active_message: Optional[dict[str, Any]] = None
+
+        # JSONPath can batch-pick event subsets, but response/usage finalization depends on stream order.
         for payload in payloads:
             event_type = req_str(payload, "$.type")
-            if event_type is None:
-                continue
-
             if event_type == "message_start":
-                current_assistant_active = False
-                current_model_name = None
-                current_prompt_tokens = None
-                current_completion_tokens = None
-                current_response_parts = []
                 message = last_value(payload, "$.message")
                 if not isinstance(message, dict) or req_str(message, "$.role") != "assistant":
+                    active_message = None
                     continue
-                current_assistant_active = True
-                assistant_messages += 1
-                model_name = req_str(message, "$.model")
-                usage = last_value(message, "$.usage")
-                parsed_usage = parse_usage_by_model(usage, "qoder_stream") if isinstance(usage, dict) else None
-                current_model_name = model_name
-                current_prompt_tokens = parsed_usage["prompt_tokens"] if parsed_usage is not None else None
-                current_completion_tokens = parsed_usage["completion_tokens"] if parsed_usage is not None else None
+                parsed_usage = (
+                    parse_usage_by_model(raw_usage, "qoder_stream")
+                    if isinstance(raw_usage := last_value(message, "$.usage"), dict)
+                    else None
+                )
+                active_message = {
+                    "model_name": req_str(message, "$.model"),
+                    "prompt_tokens": parsed_usage["prompt_tokens"] if parsed_usage is not None else None,
+                    "completion_tokens": parsed_usage["completion_tokens"] if parsed_usage is not None else None,
+                    "parts": [],
+                }
                 continue
 
-            if not current_assistant_active:
+            if active_message is None:
                 continue
 
-            if event_type == "content_block_start":
-                content_block = last_value(payload, "$.content_block")
-                if not isinstance(content_block, dict):
-                    continue
-                block_type = req_str(content_block, "$.type")
-                if block_type == "tool_use":
-                    tool_calls += 1
-                    continue
-                if block_type != "text":
-                    continue
-                text = req_str(content_block, "$.text")
-                if text:
-                    current_response_parts.append(text)
+            if event_type == "content_block_start" and req_str(payload, "$.content_block.type") == "text":
+                if (text := req_str(payload, "$.content_block.text")) is not None:
+                    active_message["parts"].append(text)
                 continue
 
-            if event_type == "content_block_delta":
-                delta = last_value(payload, "$.delta")
-                if not isinstance(delta, dict) or req_str(delta, "$.type") != "text_delta":
-                    continue
-                text = req_str(delta, "$.text")
-                if text:
-                    current_response_parts.append(text)
+            if event_type == "content_block_delta" and req_str(payload, "$.delta.type") == "text_delta":
+                if (text := req_str(payload, "$.delta.text")) is not None:
+                    active_message["parts"].append(text)
                 continue
 
             if event_type == "message_delta":
-                usage = last_value(payload, "$.usage")
-                parsed_usage = parse_usage_by_model(usage, "qoder_stream") if isinstance(usage, dict) else None
+                parsed_usage = (
+                    parse_usage_by_model(raw_usage, "qoder_stream")
+                    if isinstance(raw_usage := last_value(payload, "$.usage"), dict)
+                    else None
+                )
                 if parsed_usage is not None:
-                    current_completion_tokens = parsed_usage["completion_tokens"]
+                    active_message["completion_tokens"] = parsed_usage["completion_tokens"]
                 continue
 
             if event_type != "message_stop":
                 continue
 
-            if (
-                current_model_name is not None
-                and current_prompt_tokens is not None
-                and current_completion_tokens is not None
-            ):
-                total_tokens = current_prompt_tokens + current_completion_tokens
-                self._merge_model_usage(
+            model_name = active_message.get("model_name")
+            prompt_tokens = active_message.get("prompt_tokens")
+            completion_tokens = active_message.get("completion_tokens")
+            if model_name is not None and prompt_tokens is not None and completion_tokens is not None:
+                total_tokens = prompt_tokens + completion_tokens
+                merge_model_usage(
                     models_usage,
-                    current_model_name,
+                    model_name,
                     {
-                        "prompt_tokens": current_prompt_tokens,
-                        "completion_tokens": current_completion_tokens,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
                         "total_tokens": total_tokens,
                     },
                 )
-            response = "".join(current_response_parts).strip()
+            response = "".join(active_message.get("parts", [])).strip()
             if response:
                 responses.append(response)
-            current_assistant_active = False
-            current_model_name = None
-            current_prompt_tokens = None
-            current_completion_tokens = None
-            current_response_parts = []
+            active_message = None
 
-        if assistant_messages < 1 or current_assistant_active:
+        if active_message is not None:
             return None
-        snapshot = self._normalize_stats_snapshot(
+        snapshot = normalize_stats_snapshot(
             models_usage=models_usage,
-            llm_calls=assistant_messages,
+            llm_calls=llm_calls,
             tool_calls=tool_calls,
         )
-        return snapshot, self._last_nonempty_text(responses)
+        return StatsParseResult(snapshot=snapshot, response=runtime_parsing.last_nonempty_text(responses))

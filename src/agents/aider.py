@@ -3,15 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import trajectory as runtime_trajectory
 from .base import CodingAgent, InstallStrategy, VersionCommandTemplate
 from ..models import RunResult
-from .base import (
+from ..stats_extract import (
+    merge_model_usage,
     opt_float,
     req_int,
     req_str,
     select_values,
 )
-from ..utils import format_trace_text
 
 
 class AiderAgent(CodingAgent):
@@ -107,24 +110,22 @@ class AiderAgent(CodingAgent):
         if analytics_log.exists():
             analytics_text = self._read_text(analytics_log)
             if analytics_text:
-                loaded_payloads = self._load_output_json_payloads(analytics_text, stdout_only=False)
+                loaded_payloads = runtime_parsing.load_output_json_payloads(analytics_text, stdout_only=False)
                 if loaded_payloads:
                     analytics_payloads = loaded_payloads
         models_usage, llm_calls, tool_calls, total_cost = self._extract_analytics_stats(
             payload_rows=analytics_payloads,
         )
         response = self._extract_response_from_output(output)
-        parts = [output]
-        analytics_text = self._read_text(analytics_log)
-        if analytics_text and analytics_text.strip():
-            parts.append(f"----- ANALYTICS LOG ({analytics_log}) -----\n{analytics_text}")
-        chat_history_text = self._read_text(chat_history)
-        if chat_history_text and chat_history_text.strip():
-            parts.append(f"----- CHAT HISTORY ({chat_history}) -----\n{chat_history_text}")
-        llm_history_text = self._read_text(llm_history)
-        if llm_history_text and llm_history_text.strip():
-            parts.append(f"----- LLM HISTORY ({llm_history}) -----\n{llm_history_text}")
-        trajectory_content = format_trace_text("\n\n".join(parts), source=str(run_dir))
+        trajectory_content = runtime_trajectory.build_trajectory_content(
+            output=output,
+            source=str(run_dir),
+            attachments=[
+                ("ANALYTICS LOG", analytics_log),
+                ("CHAT HISTORY", chat_history),
+                ("LLM HISTORY", llm_history),
+            ],
+        )
         return self.finalize_run(
             command_result=result,
             response=response,
@@ -139,25 +140,30 @@ class AiderAgent(CodingAgent):
     def _resolve_runtime_settings(
         self, *, model_override: Optional[str]
     ) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
-        api_key = self._resolve_openai_api_key("AIDER_OPENAI_API_KEY")
-        api_base = self._resolve_openai_base_url("AIDER_OPENAI_API_BASE")
-        model = self._resolve_litellm_model(
-            "AIDER_MODEL",
+        resolved, error = runtime_env.resolve_openai_env(
+            api_key_env="AIDER_OPENAI_API_KEY",
+            model_env="AIDER_MODEL",
+            base_url_env="AIDER_OPENAI_API_BASE",
             model_override=model_override,
-            output_format="slash",
+            normalize_text=runtime_parsing.normalize_text,
         )
-
-        missing: list[tuple[str, str]] = []
-        if api_key is None:
-            missing.append(("AIDER_OPENAI_API_KEY", "OPENAI_API_KEY"))
+        if error is not None:
+            return None, error
+        model_raw = resolved.get("model")
+        model = (
+            runtime_env.normalize_litellm_model(
+                model_raw,
+                output_format="slash",
+            )
+            if isinstance(model_raw, str)
+            else None
+        )
         if model is None:
-            missing.append(("AIDER_MODEL", "OPENAI_DEFAULT_MODEL"))
-        if missing:
-            return None, self._missing_env_with_fallback_message(missing)
+            return None, runtime_env.missing_env_with_fallback_message([("AIDER_MODEL", "OPENAI_DEFAULT_MODEL")])
 
         return {
-            "api_key": api_key,
-            "api_base": api_base or "",
+            "api_key": str(resolved.get("api_key")),
+            "api_base": str(resolved.get("base_url") or ""),
             "model": model,
         }, None
 
@@ -169,7 +175,11 @@ class AiderAgent(CodingAgent):
         if not payload_rows:
             return {}, None, None, None
 
-        message_send_properties = self._selected_dicts(payload_rows, '$[?(@.event == "message_send")].properties')
+        message_send_properties = [
+            item
+            for item in (select_values(payload_rows, '$[?(@.event == "message_send")].properties') or [])
+            if isinstance(item, dict)
+        ]
         llm_calls = len(message_send_properties) if message_send_properties else None
         models_usage: Dict[str, Dict[str, int]] = {}
         total_cost: Optional[float] = None
@@ -187,7 +197,7 @@ class AiderAgent(CodingAgent):
                 "total_tokens": total_tokens,
             }
 
-            self._merge_model_usage(models_usage, model_name, usage)
+            merge_model_usage(models_usage, model_name, usage)
 
             candidate_total_cost = opt_float(properties, "$.total_cost")
             if candidate_total_cost is not None:
@@ -202,7 +212,7 @@ class AiderAgent(CodingAgent):
         return models_usage, llm_calls, tool_calls, total_cost
 
     def _extract_response_from_output(self, output: str) -> Optional[str]:
-        stdout = self._stdout_only(output)
+        stdout = runtime_parsing.stdout_only(output)
         if not stdout.strip():
             return None
 
@@ -231,7 +241,25 @@ class AiderAgent(CodingAgent):
         if not entries:
             return None
 
-        answer = self._joined_selected_text(entries, '$[?(@.section == "answer")].text')
+        answer_parts = [
+            text
+            for text in (
+                runtime_parsing.normalize_text(item)
+                for item in (select_values(entries, '$[?(@.section == "answer")].text') or [])
+            )
+            if text is not None
+        ]
+        answer = "\n".join(answer_parts) if answer_parts else None
         if answer:
             return answer
-        return self._joined_selected_text(entries, '$[?(@.section == "body")].text')
+        body_parts = [
+            text
+            for text in (
+                runtime_parsing.normalize_text(item)
+                for item in (select_values(entries, '$[?(@.section == "body")].text') or [])
+            )
+            if text is not None
+        ]
+        if not body_parts:
+            return None
+        return "\n".join(body_parts)

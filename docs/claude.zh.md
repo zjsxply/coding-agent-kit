@@ -36,7 +36,7 @@
 **备注**
 - cakit 会为 Claude Code 运行设置 `IS_SANDBOX=1`，以便在 root/sudo 环境下使用 `--dangerously-skip-permissions`。
 - `CAKIT_CLAUDE_USE_OAUTH` 用于在同时存在 API key 和 auth token 时选择 OAuth。
-- telemetry 行为：若未设置 `CLAUDE_CODE_ENABLE_TELEMETRY` 且设置了 `OTEL_EXPORTER_OTLP_ENDPOINT`，cakit 会在本次运行中自动启用 telemetry；若显式设置了 `CLAUDE_CODE_ENABLE_TELEMETRY`，则以该值为准。
+- telemetry 行为：若未设置 `CLAUDE_CODE_ENABLE_TELEMETRY` 且设置了 `OTEL_EXPORTER_OTLP_ENDPOINT`，cakit 会在本次运行中自动启用 telemetry；若显式设置了 `CLAUDE_CODE_ENABLE_TELEMETRY`，则以该值为准。若显式设置为假值，cakit 还会在子进程中移除 `OTEL_EXPORTER_OTLP_ENDPOINT`。
 - cakit 在运行 Claude 时会固定设置 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`。
 - 在运行环境和网络策略允许时，常规联网动作（例如 `curl`）通常可用。
 - 使用第三方 Anthropic 兼容 API 时，即使基础联网可用，Web Search 工具通常也不可用。

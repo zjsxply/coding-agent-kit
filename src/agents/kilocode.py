@@ -5,12 +5,14 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import (
-    CodingAgent,
-    InstallStrategy,
+from .base import CodingAgent, InstallStrategy
+from ..stats_extract import (
+    StatsArtifacts,
     StatsSnapshot,
+    build_single_model_stats_snapshot,
     extract_opencode_session_export_stats,
     last_value,
+    merge_stats_snapshots,
     opt_float,
     parse_usage_by_model,
     req_str,
@@ -18,7 +20,9 @@ from .base import (
     sum_int,
 )
 from ..models import RunResult
-from ..utils import format_trace_text
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import trajectory as runtime_trajectory
 
 
 class KiloCodeAgent(CodingAgent):
@@ -126,7 +130,7 @@ class KiloCodeAgent(CodingAgent):
         payloads = self._load_json_payloads_with_ansi_cleanup(output)
 
         global_state_path = run_home / ".kilocode" / "cli" / "global" / "global-state.json"
-        loaded_global_state = self._load_json(global_state_path)
+        loaded_global_state = runtime_parsing.load_json(global_state_path)
         global_state = loaded_global_state if isinstance(loaded_global_state, dict) else None
 
         task_item: Optional[Dict[str, Any]] = None
@@ -165,9 +169,13 @@ class KiloCodeAgent(CodingAgent):
 
         if trajectory_payload:
             trajectory_source = str(task_dir) if task_dir else str(run_home)
-            trajectory_content = format_trace_text(json.dumps(trajectory_payload, ensure_ascii=True), source=trajectory_source)
+            trajectory_content = runtime_trajectory.build_trajectory_from_raw(
+                raw_text=json.dumps(trajectory_payload, ensure_ascii=True),
+                output=output,
+                source=trajectory_source,
+            )
         else:
-            trajectory_content = format_trace_text(output, source=str(run_home))
+            trajectory_content = runtime_trajectory.build_trajectory_content(output=output, source=str(run_home))
         return self.finalize_run(
             command_result=result,
             response=self._extract_v0_response(payloads, ui_messages, api_history, output),
@@ -190,24 +198,17 @@ class KiloCodeAgent(CodingAgent):
         agent_version: Optional[str] = None,
     ) -> RunResult:
         images = images or []
-        api_key = self._resolve_openai_api_key("KILO_OPENAI_API_KEY")
-        model = self._normalize_model_id(
-            self._resolve_openai_model("KILO_OPENAI_MODEL_ID", model_override=model_override)
-        )
-        base_url = self._resolve_openai_base_url("KILO_OPENAI_BASE_URL")
-
-        missing: List[tuple[str, str]] = []
-        if api_key is None:
-            missing.append(("KILO_OPENAI_API_KEY", "OPENAI_API_KEY"))
-        if model is None:
-            missing.append(("KILO_OPENAI_MODEL_ID", "OPENAI_DEFAULT_MODEL"))
-        if missing:
-            message = self._missing_env_with_fallback_message(missing) or "missing required Kilo Code API settings"
+        runtime_settings, runtime_error = self._resolve_runtime_provider_settings(model_override=model_override)
+        if runtime_settings is None:
+            message = runtime_error or "missing required Kilo Code API settings"
             return self._build_error_run_result(
                 message=message,
                 cakit_exit_code=1,
                 agent_version=agent_version,
             )
+        api_key = str(runtime_settings["api_key"])
+        model = str(runtime_settings["model"])
+        base_url = runtime_settings["base_url"]
 
         run_home = self._make_temp_dir(prefix="cakit-kilocode-home-")
         env = {
@@ -220,9 +221,9 @@ class KiloCodeAgent(CodingAgent):
             env["OPENAI_BASE_URL"] = base_url
 
         cmd = ["kilocode", "run", "--auto", "--format", "json"]
-        normalized_run_model = self._normalize_text(model)
+        normalized_run_model = runtime_parsing.normalize_text(model)
         model_arg = (
-            self._normalize_provider_model(
+            runtime_env.normalize_provider_model(
                 normalized_run_model,
                 default_provider="openai",
                 colon_as_provider=False,
@@ -241,18 +242,18 @@ class KiloCodeAgent(CodingAgent):
         result = self._run(cmd, env=env, base_env=base_env)
         output = result.output
         payloads = self._load_json_payloads_with_ansi_cleanup(output)
-        session_id = self._normalize_text(last_value(payloads, "$[*].sessionID"))
+        session_id = runtime_parsing.normalize_text(last_value(payloads, "$[*].sessionID"))
         export_payload: Optional[Dict[str, Any]] = None
         if isinstance(session_id, str) and session_id.strip():
             export_result = self._run(["kilocode", "export", session_id.strip()], env=env, base_env=base_env)
             if export_result.exit_code == 0:
-                export_payload = self._parse_output_json_object(export_result.output)
+                export_payload = runtime_parsing.parse_output_json_object(export_result.output)
 
-        artifacts = self._build_stats_artifacts(
+        artifacts = StatsArtifacts(
             raw_output=output,
             session_payload=export_payload,
         )
-        snapshot = self._merge_stats_snapshots(
+        snapshot = merge_stats_snapshots(
             snapshots=[extract_opencode_session_export_stats(artifacts)]
         )
 
@@ -261,18 +262,23 @@ class KiloCodeAgent(CodingAgent):
         }
         if export_payload is not None:
             trajectory_payload["session_export"] = export_payload
-        trajectory_content = format_trace_text(
-            json.dumps(trajectory_payload, ensure_ascii=True),
+        trajectory_content = runtime_trajectory.build_trajectory_from_raw(
+            raw_text=json.dumps(trajectory_payload, ensure_ascii=True),
+            output=output,
             source=str(run_home),
         )
         response = (
-            self._last_selected_text(payloads, '$[?(@.type == "text")].part.text')
-            or self._last_selected_text(
-                export_payload,
-                '$.messages[?(@.info.role == "assistant")].parts[?(@.type == "text")].text',
+            runtime_parsing.last_nonempty_text(select_values(payloads, '$[?(@.type == "text")].part.text'))
+            or runtime_parsing.last_nonempty_text(
+                select_values(
+                    export_payload,
+                    '$.messages[?(@.info.role == "assistant")].parts[?(@.type == "text")].text',
+                )
             )
-            or self._last_selected_text(payloads, '$[?(@.type == "error")].error.data.message')
-            or self._last_stdout_line(output)
+            or runtime_parsing.last_nonempty_text(
+                select_values(payloads, '$[?(@.type == "error")].error.data.message')
+            )
+            or runtime_parsing.last_stdout_line(output)
         )
         return self.finalize_run(
             command_result=result,
@@ -285,11 +291,16 @@ class KiloCodeAgent(CodingAgent):
             trajectory_content=trajectory_content,
         )
 
-    def _build_runtime_config_payload(self, model_override: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        api_key = self._resolve_openai_api_key("KILO_OPENAI_API_KEY")
-        base_url = self._resolve_openai_base_url("KILO_OPENAI_BASE_URL")
-        model = self._normalize_model_id(
-            self._resolve_openai_model("KILO_OPENAI_MODEL_ID", model_override=model_override)
+    def _resolve_runtime_provider_settings(
+        self,
+        *,
+        model_override: Optional[str],
+    ) -> Tuple[Optional[Dict[str, Optional[str]]], Optional[str]]:
+        api_key = runtime_env.resolve_openai_api_key("KILO_OPENAI_API_KEY")
+        base_url = runtime_env.resolve_openai_base_url("KILO_OPENAI_BASE_URL")
+        model = runtime_env.extract_model_id(
+            runtime_env.resolve_openai_model("KILO_OPENAI_MODEL_ID", model_override=model_override),
+            colon_as_provider=False,
         )
 
         missing: List[tuple[str, str]] = []
@@ -298,7 +309,16 @@ class KiloCodeAgent(CodingAgent):
         if model is None:
             missing.append(("KILO_OPENAI_MODEL_ID", "OPENAI_DEFAULT_MODEL"))
         if missing:
-            return None, self._missing_env_with_fallback_message(missing)
+            return None, runtime_env.missing_env_with_fallback_message(missing)
+        return {"api_key": api_key, "base_url": base_url, "model": model}, None
+
+    def _build_runtime_config_payload(self, model_override: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        runtime_settings, runtime_error = self._resolve_runtime_provider_settings(model_override=model_override)
+        if runtime_settings is None:
+            return None, runtime_error
+        api_key = str(runtime_settings["api_key"])
+        base_url = runtime_settings["base_url"]
+        model = str(runtime_settings["model"])
 
         provider: Dict[str, Any] = {
             "id": "default",
@@ -339,11 +359,8 @@ class KiloCodeAgent(CodingAgent):
         }
         return payload, None
 
-    def _normalize_model_id(self, value: Optional[str]) -> Optional[str]:
-        return self._extract_model_id(value, colon_as_provider=False)
-
     def _load_json_payloads_with_ansi_cleanup(self, output: str) -> List[Dict[str, Any]]:
-        stdout = self._stdout_only(output)
+        stdout = runtime_parsing.stdout_only(output)
         cleaned = self._ANSI_OSC_RE.sub("", stdout)
         cleaned = self._ANSI_CSI_RE.sub("", cleaned)
         cleaned = cleaned.replace("\r", "")
@@ -356,13 +373,13 @@ class KiloCodeAgent(CodingAgent):
                 line = line[line.find("{") :]
             if not line.startswith("{"):
                 continue
-            parsed = self._parse_json(line)
+            parsed = runtime_parsing.parse_json(line)
             if isinstance(parsed, dict):
                 payloads.append(parsed)
         return payloads
 
     def _load_json_array(self, path: Path) -> Optional[List[Dict[str, Any]]]:
-        parsed = self._load_json(path)
+        parsed = runtime_parsing.load_json(path)
         if not isinstance(parsed, list):
             return None
         if any(not isinstance(item, dict) for item in parsed):
@@ -381,7 +398,7 @@ class KiloCodeAgent(CodingAgent):
         config_name = req_str(task_item, "$.apiConfigName")
         if config_name is not None and isinstance(global_state, dict):
             filter_path = f"$.listApiConfigMeta[?(@.name == {json.dumps(config_name, ensure_ascii=True)})].modelId"
-            model_name = self._normalize_text(last_value(global_state, filter_path))
+            model_name = runtime_parsing.normalize_text(last_value(global_state, filter_path))
         if model_name is None:
             for text in reversed(select_values(api_history, '$[?(@.role == "user")].content[*].text') or []):
                 if not isinstance(text, str):
@@ -398,10 +415,10 @@ class KiloCodeAgent(CodingAgent):
         ]
         usage_entries: List[Dict[str, int]] = []
         for message in api_req_started_messages:
-            text = self._normalize_text(last_value(message, "$.text"))
+            text = runtime_parsing.normalize_text(last_value(message, "$.text"))
             if text is None:
                 continue
-            usage_payload = self._parse_json(text)
+            usage_payload = runtime_parsing.parse_json(text)
             if not isinstance(usage_payload, dict):
                 continue
             usage = parse_usage_by_model(usage_payload, "tokens_in_out")
@@ -420,8 +437,9 @@ class KiloCodeAgent(CodingAgent):
             }
         )
         llm_calls = len(api_req_started_messages) if api_req_started_messages else None
-        tool_calls = self._count_selected(api_history, '$[?(@.role == "assistant")].content[?(@.type == "tool_use")]')
-        return self._build_single_model_stats_snapshot(
+        tool_call_values = select_values(api_history, '$[?(@.role == "assistant")].content[?(@.type == "tool_use")]')
+        tool_calls = len(tool_call_values) if tool_call_values is not None else None
+        return build_single_model_stats_snapshot(
             model_name=model_name,
             usage=usage,
             llm_calls=llm_calls,
@@ -443,11 +461,13 @@ class KiloCodeAgent(CodingAgent):
                 continue
             if req_str(message, "$.say") not in {"completion_result", "text"}:
                 continue
-            text = self._normalize_text(last_value(message, "$.text"))
+            text = runtime_parsing.normalize_text(last_value(message, "$.text"))
             if text is not None:
                 return text
         return (
-            self._last_selected_text(api_history, '$[?(@.role == "assistant")].content[?(@.type == "text")].text')
-            or self._last_selected_text(payloads, "$[*].content")
-            or self._last_stdout_line(output)
+            runtime_parsing.last_nonempty_text(
+                select_values(api_history, '$[?(@.role == "assistant")].content[?(@.type == "text")].text')
+            )
+            or runtime_parsing.last_nonempty_text(select_values(payloads, "$[*].content"))
+            or runtime_parsing.last_stdout_line(output)
         )

@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate, VersionCommandTemplate
-from ..models import RunResult
-from ..stats_extract import last_value, parse_usage_by_model, req_str, select_values, sum_int
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    RunCommandTemplate,
+    RunParseResult,
+    RunPlan,
+    VersionCommandTemplate,
+)
+from ..stats_extract import last_value, merge_model_usage, parse_usage_by_model, req_str, select_values, sum_int
+from ..agent_runtime import command_exec as runtime_command
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
 
 
 class DeepAgentsAgent(CodingAgent):
@@ -34,7 +44,7 @@ class DeepAgentsAgent(CodingAgent):
     )
     _THREAD_ID_RE = re.compile(r"Thread:\s*([0-9a-fA-F]{8})")
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -42,19 +52,29 @@ class DeepAgentsAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         env, env_error, selected_model = self._build_run_env(model_override=model_override)
         if env_error is not None:
-            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
-
-        template = self.run_template
-        cmd, _ = self._build_templated_command(
-            template=template,
+            self._raise_config_error(env_error)
+        return self._build_templated_run_plan(
             prompt=prompt,
             model=selected_model,
+            env=env,
+            template=self.run_template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                command_result,
+                base_env=base_env,
+            ),
         )
-        result = self._run(cmd, env=env, base_env=base_env)
-        output = result.output
+
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        command_result: Any,
+        *,
+        base_env: Optional[Dict[str, str]],
+    ) -> RunParseResult:
         match = self._THREAD_ID_RE.search(output)
         thread_id = match.group(1).lower() if match else None
 
@@ -68,7 +88,7 @@ class DeepAgentsAgent(CodingAgent):
             if parsed is not None:
                 models_usage, llm_calls, tool_calls, response = parsed
         if response is None:
-            response = self._last_stdout_line(
+            response = runtime_parsing.last_stdout_line(
                 output,
                 skip_prefixes=(
                     "Running task non-interactively",
@@ -79,9 +99,7 @@ class DeepAgentsAgent(CodingAgent):
                     "✓ Auto-approved:",
                 ),
             )
-
-        return self.finalize_run(
-            command_result=result,
+        return RunParseResult(
             response=response,
             models_usage=models_usage,
             llm_calls=llm_calls,
@@ -94,7 +112,11 @@ class DeepAgentsAgent(CodingAgent):
     ) -> Optional[tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int], Optional[str]]]:
         if not isinstance(payload, dict):
             return None
-        assistant_messages = self._selected_dicts(payload, '$.messages[?(@.type == "ai")]')
+        assistant_messages = [
+            item
+            for item in (select_values(payload, '$.messages[?(@.type == "ai")]') or [])
+            if isinstance(item, dict)
+        ]
         models_usage: Dict[str, Dict[str, int]] = {}
         for message in assistant_messages:
             model_name = req_str(message, "$.response_metadata.model_name")
@@ -102,9 +124,10 @@ class DeepAgentsAgent(CodingAgent):
             usage = parse_usage_by_model(usage_raw, "input_output") if isinstance(usage_raw, dict) else None
             if model_name is None or usage is None:
                 continue
-            self._merge_model_usage(models_usage, model_name, usage)
+            merge_model_usage(models_usage, model_name, usage)
 
-        nested_tool_calls = self._count_selected(payload, '$.messages[?(@.type == "ai")].tool_calls[*]')
+        nested_tool_call_values = select_values(payload, '$.messages[?(@.type == "ai")].tool_calls[*]')
+        nested_tool_calls = len(nested_tool_call_values) if nested_tool_call_values is not None else None
         scalar_tool_calls = sum_int(payload, '$.messages[?(@.type == "ai")].tool_calls')
         tool_calls = (
             None
@@ -116,7 +139,7 @@ class DeepAgentsAgent(CodingAgent):
             (
                 text
                 for text in (
-                    self._extract_content_text(last_value(message, "$.content"), allow_scalars=True)
+                    runtime_parsing.extract_content_text(last_value(message, "$.content"), allow_scalars=True)
                     for message in reversed(assistant_messages)
                 )
                 if text is not None
@@ -133,25 +156,28 @@ class DeepAgentsAgent(CodingAgent):
     def _build_run_env(
         self, *, model_override: Optional[str]
     ) -> tuple[Dict[str, str], Optional[str], str]:
-        api_key = self._resolve_openai_api_key("DEEPAGENTS_OPENAI_API_KEY")
-        base_url = self._resolve_openai_base_url("DEEPAGENTS_OPENAI_BASE_URL")
-        model = self._resolve_litellm_model(
-            "DEEPAGENTS_OPENAI_MODEL",
+        resolved, error = runtime_env.resolve_openai_env(
+            api_key_env="DEEPAGENTS_OPENAI_API_KEY",
+            model_env="DEEPAGENTS_OPENAI_MODEL",
+            base_url_env="DEEPAGENTS_OPENAI_BASE_URL",
             model_override=model_override,
-            output_format="colon",
+            normalize_text=runtime_parsing.normalize_text,
         )
-
-        missing: list[tuple[str, str]] = []
-        if not api_key:
-            missing.append(("DEEPAGENTS_OPENAI_API_KEY", "OPENAI_API_KEY"))
+        if error is not None:
+            return {}, error, ""
+        model_raw = resolved.get("model")
+        model = (
+            runtime_env.normalize_litellm_model(model_raw, output_format="colon")
+            if isinstance(model_raw, str)
+            else None
+        )
         if not model:
-            missing.append(("DEEPAGENTS_OPENAI_MODEL", "OPENAI_DEFAULT_MODEL"))
-        if missing:
-            return {}, self._missing_env_with_fallback_message(missing), ""
+            return {}, runtime_env.missing_env_with_fallback_message([("DEEPAGENTS_OPENAI_MODEL", "OPENAI_DEFAULT_MODEL")]), ""
 
         env: Dict[str, str] = {
-            "OPENAI_API_KEY": api_key,
+            "OPENAI_API_KEY": str(resolved.get("api_key")),
         }
+        base_url = resolved.get("base_url")
         if base_url:
             env["OPENAI_BASE_URL"] = base_url
         return env, None, model
@@ -159,7 +185,12 @@ class DeepAgentsAgent(CodingAgent):
     def _extract_checkpoint_stats(
         self, *, thread_id: str, base_env: Optional[Dict[str, str]]
     ) -> Optional[Dict[str, Any]]:
-        binary = self._resolve_binary()
+        binary = runtime_command.resolve_binary(
+            agent_name=self.name,
+            binary=self.binary,
+            npm_prefix=self._npm_prefix(),
+            env_source=os.environ,
+        )
         if not binary:
             return None
         binary_path = Path(binary).expanduser().resolve()
@@ -249,7 +280,8 @@ print(
     )
 )
 """
-        return self._run_json_dict_command(
-            [str(python_executable), "-c", parser_code, thread_id],
+        return runtime_parsing.run_json_dict_command(
+            args=[str(python_executable), "-c", parser_code, thread_id],
+            run=self._run,
             base_env=base_env,
         )

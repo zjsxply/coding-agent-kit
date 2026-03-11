@@ -163,7 +163,7 @@ Telemetry:
 - Gemini CLI: local log `~/.gemini/telemetry.log`
 - Crush: local log `<run_data_dir>/logs/crush.log` (run-local `--data-dir`)
 - Auggie CLI: run-local log `<tmp_run_dir>/auggie.log` (cakit passes `--log-file`)
-- Qwen Code: local log `~/.qwen/telemetry.log`
+- Qwen Code: run-unique local log `~/.qwen/telemetry/cakit-<timestamp>-<ns>-<id>.log`
 - Qoder CLI: local log `~/.qoder/logs/qodercli.log`
 
 Image and video input support:

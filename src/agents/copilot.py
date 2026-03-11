@@ -7,8 +7,21 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate, extract_jsonl_stats, last_value
-from ..models import RunResult
+from ..agent_runtime import parsing as runtime_parsing
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    RunParseResult,
+    RunPlan,
+    RunCommandTemplate,
+)
+from ..stats_extract import (
+    JsonlStatsSpec,
+    StatsArtifacts,
+    extract_jsonl_stats,
+    last_value,
+    merge_stats_snapshots,
+)
 
 
 class CopilotAgent(CodingAgent):
@@ -28,7 +41,7 @@ class CopilotAgent(CodingAgent):
     )
     _LOG_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[^ ]+\s+\[[A-Z]+\]\s?(.*)$")
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -36,7 +49,7 @@ class CopilotAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         output_root = os.environ.get("CAKIT_OUTPUT_DIR")
         base_output = Path(output_root) if output_root else Path.home() / ".cache" / "cakit"
         stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
@@ -47,65 +60,62 @@ class CopilotAgent(CodingAgent):
             "GH_TOKEN": os.environ.get("GH_TOKEN"),
             "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN"),
         }
-        template = self.run_template
-        cmd, _ = self._build_templated_command(
-            template=template,
+        return self._build_templated_run_plan(
             prompt=prompt,
             model=model,
+            env=env,
             images=images,
             videos=None,
+            template=self.run_template,
             extra_args=["--log-dir", str(log_dir)],
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                command_result,
+                log_dir=log_dir,
+            ),
         )
-        result = self._run(cmd, env, base_env=base_env)
-        output = result.output
+
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        command_result: Any,
+        *,
+        log_dir: Path,
+    ) -> RunParseResult:
         model_calls: List[Dict[str, Any]] = []
         if log_dir.exists():
             for path in sorted(log_dir.glob("process-*.log")):
-                log_text = self._read_text_lossy(path)
-                if log_text is None:
-                    continue
-                lines = log_text.splitlines()
-                messages = [self._LOG_LINE_RE.sub(r"\1", line) for line in lines]
-                data_indices = [index for index, message in enumerate(messages) if message.strip() == "data:"]
-                for current, start in enumerate(data_indices):
-                    next_start = data_indices[current + 1] if current + 1 < len(data_indices) else len(messages)
-                    raw_block = "\n".join(messages[start + 1 : next_start]).lstrip()
-                    if not raw_block.startswith("{"):
-                        continue
-                    try:
-                        payload, _ = json.JSONDecoder().raw_decode(raw_block)
-                    except Exception:
-                        continue
-                    if isinstance(payload, dict):
-                        model_calls.append(payload)
-        artifacts = self._build_stats_artifacts(
+                model_calls.extend(self._parse_process_log(path))
+        artifacts = StatsArtifacts(
             raw_output=output,
-            jsonl_payloads=model_calls,
+            jsonl_payloads=tuple(model_calls),
         )
-        stats = self._merge_stats_snapshots(
+        stats_spec = JsonlStatsSpec(
+            payload_filter_paths=(
+                '$[?(@.object == "chat.completion")]',
+                '$[?(@.model != null)]',
+                '$[?(@.usage != null)]',
+                '$[?(@.choices != null)]',
+            ),
+            tool_calls_path="$[*].choices[*].message.tool_calls[*]",
+        )
+        stats = merge_stats_snapshots(
             snapshots=[
                 extract_jsonl_stats(
                     artifacts,
-                    payload_filter_paths=(
-                        '$[?(@.object == "chat.completion")]',
-                        '$[?(@.model != null)]',
-                        '$[?(@.usage != null)]',
-                        '$[?(@.choices != null)]',
-                    ),
-                    tool_calls_path="$[*].choices[*].message.tool_calls[*]",
+                    spec=stats_spec,
                 ),
             ]
         )
         response: Optional[str] = None
         for payload in reversed(model_calls):
-            cleaned = self._normalize_text(last_value(payload, "$.choices[*].message.content"))
+            cleaned = runtime_parsing.normalize_text(last_value(payload, "$.choices[*].message.content"))
             if cleaned is not None:
                 response = cleaned
                 break
         if response is None:
-            response = self._normalize_text(self._stdout_only(output))
-        return self.finalize_run(
-            command_result=result,
+            response = runtime_parsing.normalize_text(runtime_parsing.stdout_only(output))
+        return RunParseResult(
             response=response,
             models_usage=stats.models_usage,
             llm_calls=stats.llm_calls,
@@ -113,3 +123,42 @@ class CopilotAgent(CodingAgent):
             total_cost=stats.total_cost,
             telemetry_log=str(log_dir),
         )
+
+    def _parse_process_log(self, path: Path) -> List[Dict[str, Any]]:
+        payloads: List[Dict[str, Any]] = []
+        decoder = json.JSONDecoder()
+        data_lines: Optional[List[str]] = None
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as file:
+                for raw_line in file:
+                    message = self._LOG_LINE_RE.sub(r"\1", raw_line.rstrip("\r\n"))
+                    if message.strip() == "data:":
+                        parsed = self._decode_data_block(data_lines, decoder)
+                        if parsed is not None:
+                            payloads.append(parsed)
+                        data_lines = []
+                        continue
+                    if data_lines is not None:
+                        data_lines.append(message)
+        except Exception:
+            return payloads
+
+        parsed = self._decode_data_block(data_lines, decoder)
+        if parsed is not None:
+            payloads.append(parsed)
+        return payloads
+
+    @staticmethod
+    def _decode_data_block(lines: Optional[List[str]], decoder: json.JSONDecoder) -> Optional[Dict[str, Any]]:
+        if not lines:
+            return None
+        raw_block = "\n".join(lines).lstrip()
+        if not raw_block.startswith("{"):
+            return None
+        try:
+            payload, _ = decoder.raw_decode(raw_block)
+        except Exception:
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None

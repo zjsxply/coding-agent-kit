@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "Unified CLI to install and run coding agents for research"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0", "python-dotenv>=1.0.1", "python-jsonpath>=2.0.2", "tomli-w>=1.0.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0.2", "flake8>=7.1.1"]
 
 [project.scripts]
-cakit = "src.cli:main"
+cakit = "src.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

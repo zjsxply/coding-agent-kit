@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
-import time
-import uuid
 import hashlib
+import os
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -15,8 +14,18 @@ from .base import (
     VersionCommandTemplate,
 )
 from ..models import RunResult
-from ..stats_extract import last_value, parse_usage_by_model, req_str, select_values
-from ..utils import extract_last_response
+from ..stats_extract import (
+    build_single_model_stats_snapshot,
+    last_value,
+    parse_usage_by_model,
+    req_str,
+    select_values,
+    sum_usage_entries,
+)
+from ..agent_runtime import install_version as runtime_install
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import env as runtime_env
+from ..io_helpers import dump_toml
 
 
 class KimiAgent(CodingAgent):
@@ -51,41 +60,53 @@ class KimiAgent(CodingAgent):
     ) -> CommandResult:
         if version and version.strip():
             package_spec = f"kimi-cli=={version.strip()}"
-            return self._uv_tool_install(
-                package_spec,
+            result = runtime_install.uv_tool_install(
+                package_spec=package_spec,
                 python_version="3.13",
+                force=False,
+                with_packages=None,
+                fallback_no_cache_dir=False,
+                run=self._run,
+                ensure_uv_fn=lambda: runtime_install.ensure_uv(self._run),
+                pip_install_fn=lambda packages, no_cache: runtime_install.pip_install(
+                    packages=packages,
+                    no_cache_dir=no_cache,
+                    run=self._run,
+                ),
+            )
+            if isinstance(result, CommandResult):
+                return result
+            return CommandResult(
+                exit_code=getattr(result, "exit_code", 1),
+                stdout=getattr(result, "stdout", ""),
+                stderr=getattr(result, "stderr", ""),
+                duration_seconds=getattr(result, "duration_seconds", 0.0),
             )
         return self._run(["bash", "-lc", "curl -LsSf https://code.kimi.com/install.sh | bash"])
 
     def configure(self) -> Optional[str]:
-        api_key = self._resolve_openai_api_key("KIMI_API_KEY")
-        base_url = self._resolve_openai_base_url("KIMI_BASE_URL")
-        raw_provider_type = os.environ.get("CAKIT_KIMI_PROVIDER_TYPE")
-        if isinstance(raw_provider_type, str):
-            normalized_provider_type = raw_provider_type.strip()
-            provider_type = (
-                normalized_provider_type
-                if normalized_provider_type in self._ALLOWED_PROVIDER_TYPES
-                else None
-            )
-        else:
-            provider_type = None
+        settings = self._resolve_runtime_settings(model_override=None)
+        api_key = settings["api_key"]
+        base_url = settings["base_url"]
+        provider_type = settings["provider_type"]
 
         required = [api_key, base_url]
         if any(not value for value in required):
             return None
         if provider_type is None:
             return None
-        config_lines = [
-            '[providers."kimi"]',
-            'name = "Kimi"',
-            f'type = "{provider_type}"',
-            f'base_url = "{base_url}"',
-            f'api_key = "{api_key}"',
-        ]
-        config = "\n".join(config_lines) + "\n"
+        config = {
+            "providers": {
+                "kimi": {
+                    "name": "Kimi",
+                    "type": provider_type,
+                    "base_url": base_url,
+                    "api_key": api_key,
+                }
+            }
+        }
         path = Path.home() / ".kimi" / "config.toml"
-        self._write_text(path, config)
+        self._write_text(path, dump_toml(config))
         return str(path)
 
     def _run_impl(
@@ -99,12 +120,12 @@ class KimiAgent(CodingAgent):
     ) -> RunResult:
         images = images or []
         videos = videos or []
-        run_started = time.time()
-        requested_model_name = self._resolve_openai_model("KIMI_MODEL_NAME", model_override=model_override)
+        settings = self._resolve_runtime_settings(model_override=model_override)
+        requested_model_name = settings["model_name"]
         session_id = str(uuid.uuid4())
         env: Dict[str, Optional[str]] = {
-            "KIMI_API_KEY": self._resolve_openai_api_key("KIMI_API_KEY"),
-            "KIMI_BASE_URL": self._resolve_openai_base_url("KIMI_BASE_URL"),
+            "KIMI_API_KEY": settings["api_key"],
+            "KIMI_BASE_URL": settings["base_url"],
             "KIMI_CLI_NO_AUTO_UPDATE": "1",
         }
         if requested_model_name:
@@ -132,14 +153,13 @@ class KimiAgent(CodingAgent):
         )
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        payloads = self._load_output_json_payloads(output, stdout_only=False)
+        payloads = runtime_parsing.load_output_json_payloads(output, stdout_only=False)
         usage, tool_calls, llm_calls, model_name = self._resolve_run_stats(
             payloads=payloads,
             session_id=session_id,
             prompt=run_prompt,
-            run_started=run_started,
         )
-        snapshot = self._build_single_model_stats_snapshot(
+        snapshot = build_single_model_stats_snapshot(
             model_name=model_name,
             usage=usage,
             llm_calls=llm_calls,
@@ -149,11 +169,30 @@ class KimiAgent(CodingAgent):
 
         return self.finalize_run(
             command_result=result,
-            response=extract_last_response(payloads, output),
+            response=runtime_parsing.extract_last_response(payloads, output),
             models_usage=snapshot.models_usage if snapshot is not None else {},
             llm_calls=snapshot.llm_calls if snapshot is not None else None,
             tool_calls=snapshot.tool_calls if snapshot is not None else None,
         )
+
+    def _resolve_runtime_settings(self, *, model_override: Optional[str]) -> Dict[str, Optional[str]]:
+        raw_provider_type = os.environ.get("CAKIT_KIMI_PROVIDER_TYPE")
+        provider_type: Optional[str]
+        if isinstance(raw_provider_type, str):
+            normalized_provider_type = raw_provider_type.strip()
+            provider_type = (
+                normalized_provider_type
+                if normalized_provider_type in self._ALLOWED_PROVIDER_TYPES
+                else None
+            )
+        else:
+            provider_type = None
+        return {
+            "api_key": runtime_env.resolve_openai_api_key("KIMI_API_KEY"),
+            "base_url": runtime_env.resolve_openai_base_url("KIMI_BASE_URL"),
+            "model_name": runtime_env.resolve_openai_model("KIMI_MODEL_NAME", model_override=model_override),
+            "provider_type": provider_type,
+        }
 
     def _resolve_run_stats(
         self,
@@ -161,15 +200,12 @@ class KimiAgent(CodingAgent):
         payloads: List[Dict[str, Any]],
         session_id: str,
         prompt: str,
-        run_started: float,
     ) -> Tuple[Optional[Dict[str, int]], Optional[int], Optional[int], Optional[str]]:
         usage: Optional[Dict[str, int]] = None
         tool_calls: Optional[int] = None
         llm_calls: Optional[int] = None
         model_name: Optional[str] = None
-        session_usage, session_tool_calls, session_llm_calls, session_model_name = self._extract_session_stats(
-            session_id, prompt, run_started
-        )
+        session_usage, session_tool_calls, session_llm_calls, session_model_name = self._extract_session_stats(session_id, prompt)
         if session_usage is not None:
             usage = session_usage
         if session_tool_calls is not None:
@@ -182,13 +218,14 @@ class KimiAgent(CodingAgent):
             raw_usage = last_value(payloads, "$[*].usage")
             usage = parse_usage_by_model(raw_usage, "prompt_completion") if isinstance(raw_usage, dict) else None
         if tool_calls is None:
-            tool_calls = self._count_selected(payloads, "$[*].tool_calls[*]")
+            tool_call_values = select_values(payloads, "$[*].tool_calls[*]")
+            tool_calls = len(tool_call_values) if tool_call_values is not None else None
         if model_name is None:
             model_name = self._extract_model_name_from_log(session_id, prompt)
         return usage, tool_calls, llm_calls, model_name
 
     def _extract_session_stats(
-        self, session_id: Optional[str], prompt: str, run_started: float
+        self, session_id: Optional[str], prompt: str
     ) -> Tuple[Optional[Dict[str, int]], Optional[int], Optional[int], Optional[str]]:
         wire_path = self._find_session_wire_path(session_id)
         if not wire_path:
@@ -202,11 +239,8 @@ class KimiAgent(CodingAgent):
         for line in lines:
             if not line:
                 continue
-            record = self._parse_json_dict(line)
+            record = runtime_parsing.parse_json_dict(line)
             if record is None:
-                continue
-            timestamp = last_value(record, "$.timestamp")
-            if isinstance(timestamp, (int, float)) and timestamp < (run_started - 2):
                 continue
             message = last_value(record, "$.message")
             if isinstance(message, dict):
@@ -215,7 +249,8 @@ class KimiAgent(CodingAgent):
             return None, None, None, None
 
         turn_start_idx: Optional[int] = None
-        for idx, message in enumerate(messages):
+        for idx in range(len(messages) - 1, -1, -1):
+            message = messages[idx]
             if req_str(message, "$.type") != "TurnBegin":
                 continue
             payload = last_value(message, "$.payload")
@@ -223,11 +258,15 @@ class KimiAgent(CodingAgent):
                 continue
             user_input = last_value(payload, "$.user_input")
             if isinstance(user_input, list):
-                user_input = self._joined_selected_text(
-                    user_input,
-                    '$[?(@.type == "text")].text',
-                    separator="",
-                )
+                user_input_parts = [
+                    text
+                    for text in (
+                        runtime_parsing.normalize_text(item)
+                        for item in (select_values(user_input, '$[?(@.type == "text")].text') or [])
+                    )
+                    if text is not None
+                ]
+                user_input = "".join(user_input_parts) if user_input_parts else None
             if isinstance(user_input, str) and user_input == prompt:
                 turn_start_idx = idx
                 break
@@ -241,13 +280,15 @@ class KimiAgent(CodingAgent):
                 break
         turn_messages = messages[turn_start_idx + 1:turn_end_idx]
 
-        tool_calls = self._count_selected_total(
-            turn_messages,
-            (
-                '$[?(@.type == "ToolCall")]',
-                '$[?(@.type == "SubagentEvent")].payload.event[?(@.type == "ToolCall")]',
-            ),
-        )
+        tool_calls = None
+        for path in (
+            '$[?(@.type == "ToolCall")]',
+            '$[?(@.type == "SubagentEvent")].payload.event[?(@.type == "ToolCall")]',
+        ):
+            values = select_values(turn_messages, path)
+            if values is None:
+                continue
+            tool_calls = (tool_calls or 0) + len(values)
 
         status_payloads: List[Dict[str, Any]] = [
             payload
@@ -288,7 +329,7 @@ class KimiAgent(CodingAgent):
                 status_without_message_id.append(normalized)
 
         usage_values = list(usage_by_message_id.values()) + status_without_message_id
-        usage = self._sum_usage_entries(usage_values)
+        usage = sum_usage_entries(usage_values)
         return usage, tool_calls, llm_calls, model_name
 
     def _find_session_wire_path(self, session_id: Optional[str]) -> Optional[Path]:
@@ -299,7 +340,7 @@ class KimiAgent(CodingAgent):
         kaos_name = "local"
         meta_text = self._read_text(Path.home() / ".kimi" / "kimi.json")
         if meta_text:
-            meta = self._parse_json(meta_text)
+            meta = runtime_parsing.parse_json(meta_text)
             if isinstance(meta, dict):
                 work_dirs = meta.get("work_dirs")
                 if isinstance(work_dirs, list):
@@ -320,17 +361,17 @@ class KimiAgent(CodingAgent):
         if not session_id:
             return None
         log_path = Path.home() / ".kimi" / "logs" / "kimi.log"
-        text = self._read_text(log_path)
-        if not text:
+        lines = self._tail_lines(log_path, max_bytes=4 * 1024 * 1024)
+        if not lines:
             return None
-        lines = text.splitlines()
         start_idx: Optional[int] = None
         session_markers = (
             f"Created new session: {session_id}",
             f"Switching to session: {session_id}",
             f"Session {session_id} not found, creating new session",
         )
-        for idx, line in enumerate(lines):
+        for idx in range(len(lines) - 1, -1, -1):
+            line = lines[idx]
             if any(marker in line for marker in session_markers):
                 start_idx = idx
                 break
@@ -340,7 +381,7 @@ class KimiAgent(CodingAgent):
         anchor_idx: Optional[int] = None
         prompt_first_line = prompt.splitlines()[0] if prompt else ""
         workdir_str = str(self.workdir)
-        for idx in range(start_idx + 1, len(lines)):
+        for idx in range(len(lines) - 1, start_idx, -1):
             line = lines[idx]
             if "load_agents_md" in line and workdir_str in line:
                 anchor_idx = idx
@@ -365,3 +406,22 @@ class KimiAgent(CodingAgent):
                 continue
             return remain[:end_pos] or None
         return None
+
+    @staticmethod
+    def _tail_lines(path: Path, *, max_bytes: int) -> List[str]:
+        try:
+            with path.open("rb") as file:
+                file.seek(0, os.SEEK_END)
+                size = file.tell()
+                offset = max(0, size - max_bytes)
+                file.seek(offset)
+                content = file.read()
+        except Exception:
+            return []
+        text = content.decode("utf-8", errors="ignore")
+        if offset > 0:
+            first_newline = text.find("\n")
+            if first_newline == -1:
+                return []
+            text = text[first_newline + 1 :]
+        return text.splitlines()

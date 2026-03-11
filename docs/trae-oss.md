@@ -30,7 +30,7 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
   - `--model <...>` when model is configured or overridden.
 - Trajectory file path for `--trajectory-file`:
   - `CAKIT_TRAE_TRAJECTORY` when set (supports `~` expansion)
-  - fallback: `<cwd>/trae_trajectory.json`
+  - fallback: run-unique temp path `/tmp/cakit-trae-<uuid>.json`
 - Model priority is: `--model` > `TRAE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`.
 
 ## Stats extraction

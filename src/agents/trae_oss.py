@@ -1,14 +1,30 @@
 from __future__ import annotations
 
-import json
 import os
+import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate
-from ..models import RunResult
-from ..stats_extract import parse_usage_by_model, req_str, select_values
-from ..utils import format_trace_text
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    ParsedStats,
+    RunCommandTemplate,
+    RunParseResult,
+    RunPlan,
+)
+from ..stats_extract import (
+    build_single_model_stats_snapshot,
+    parse_usage_by_model,
+    req_str,
+    select_values,
+    sum_usage_entries,
+)
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import trajectory as runtime_trajectory
+from ..io_helpers import dump_yaml
 
 
 class TraeOssAgent(CodingAgent):
@@ -39,41 +55,43 @@ class TraeOssAgent(CodingAgent):
         return result.exit_code == 0 and bool(result.output.strip())
 
     def configure(self) -> Optional[str]:
-        api_key = self._resolve_openai_api_key("TRAE_AGENT_API_KEY")
-        api_base = self._resolve_openai_base_url("TRAE_AGENT_API_BASE")
-        model = self._resolve_openai_model("TRAE_AGENT_MODEL")
+        api_key, api_base, model = self._resolve_runtime_settings()
         if not api_key or not api_base or not model:
             return None
 
-        def yaml_quote(value: Optional[str]) -> str:
-            return json.dumps(value)
-
-        config = (
-            "agents:\n"
-            "  trae_agent:\n"
-            "    enable_lakeview: false\n"
-            "    model: trae_agent_model\n"
-            "    max_steps: 200\n"
-            "    tools:\n"
-            "      - bash\n"
-            "      - str_replace_based_edit_tool\n"
-            "      - sequentialthinking\n"
-            "      - task_done\n"
-            "model_providers:\n"
-            "  custom:\n"
-            f"    api_key: {yaml_quote(api_key)}\n"
-            "    provider: openai\n"
-            f"    base_url: {yaml_quote(api_base)}\n"
-            "models:\n"
-            "  trae_agent_model:\n"
-            "    model_provider: custom\n"
-            f"    model: {yaml_quote(model)}\n"
-        )
+        config = {
+            "agents": {
+                "trae_agent": {
+                    "enable_lakeview": False,
+                    "model": "trae_agent_model",
+                    "max_steps": 200,
+                    "tools": [
+                        "bash",
+                        "str_replace_based_edit_tool",
+                        "sequentialthinking",
+                        "task_done",
+                    ],
+                }
+            },
+            "model_providers": {
+                "custom": {
+                    "api_key": api_key,
+                    "provider": "openai",
+                    "base_url": api_base,
+                }
+            },
+            "models": {
+                "trae_agent_model": {
+                    "model_provider": "custom",
+                    "model": model,
+                }
+            },
+        }
         path = Path.home() / ".config" / "trae" / "config.yaml"
-        self._write_text(path, config)
+        self._write_text(path, dump_yaml(config))
         return str(path)
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -81,9 +99,8 @@ class TraeOssAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
-        api_key = self._resolve_openai_api_key("TRAE_AGENT_API_KEY")
-        api_base = self._resolve_openai_base_url("TRAE_AGENT_API_BASE")
+    ) -> Optional[RunPlan]:
+        api_key, api_base, model = self._resolve_runtime_settings(model_override=model_override)
         env = {
             "TRAE_AGENT_API_KEY": api_key,
             "TRAE_AGENT_API_BASE": api_base,
@@ -95,7 +112,8 @@ class TraeOssAgent(CodingAgent):
         if traj_env:
             trajectory_file = Path(traj_env).expanduser()
         else:
-            trajectory_file = self.workdir / "trae_trajectory.json"
+            trajectory_file = Path(tempfile.gettempdir()) / f"cakit-trae-{uuid.uuid4().hex}.json"
+        trajectory_file.parent.mkdir(parents=True, exist_ok=True)
         template = self.run_template
         extra_args = [
             "--working-dir",
@@ -106,34 +124,43 @@ class TraeOssAgent(CodingAgent):
         config_path = Path.home() / ".config" / "trae" / "config.yaml"
         if config_path.exists():
             extra_args.extend(["--config-file", str(config_path)])
-        model = self._resolve_openai_model("TRAE_AGENT_MODEL", model_override=model_override)
-        cmd, _ = self._build_templated_command(
-            template=template,
+        return self._build_templated_run_plan(
             prompt=prompt,
             model=model,
+            env=env,
             extra_args=extra_args,
+            template=template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                command_result,
+                trajectory_file=trajectory_file,
+            ),
         )
-        result = self._run(cmd, env, base_env=base_env)
-        output = result.output
 
-        trajectory_payload = self._load_json_dict(trajectory_file)
-        model_name, usage, llm_calls, tool_calls, response = self._extract_trajectory_stats(trajectory_payload)
-        snapshot = self._build_single_model_stats_snapshot(
-            model_name=model_name,
-            usage=usage,
-            llm_calls=llm_calls,
-            tool_calls=tool_calls,
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        command_result: Any,
+        *,
+        trajectory_file: Path,
+    ) -> RunParseResult:
+        trajectory_payload = runtime_parsing.load_json_dict(trajectory_file)
+        parsed_stats = self._extract_trajectory_stats(trajectory_payload)
+        snapshot = build_single_model_stats_snapshot(
+            model_name=parsed_stats.model_name,
+            usage=parsed_stats.usage,
+            llm_calls=parsed_stats.llm_calls,
+            tool_calls=parsed_stats.tool_calls,
             total_cost=None,
         )
-
         trajectory_raw = self._read_text(trajectory_file) if trajectory_file.exists() else None
-        if trajectory_raw and trajectory_raw.strip():
-            trajectory_content = format_trace_text(trajectory_raw, source=str(trajectory_file))
-        else:
-            trajectory_content = format_trace_text(output, source=str(trajectory_file))
-        return self.finalize_run(
-            command_result=result,
-            response=response or self._last_stdout_line(output),
+        trajectory_content = runtime_trajectory.build_trajectory_from_raw(
+            raw_text=trajectory_raw,
+            output=output,
+            source=str(trajectory_file),
+        )
+        return RunParseResult(
+            response=parsed_stats.response or runtime_parsing.last_stdout_line(output),
             models_usage=snapshot.models_usage if snapshot is not None else {},
             llm_calls=snapshot.llm_calls if snapshot is not None else None,
             tool_calls=snapshot.tool_calls if snapshot is not None else None,
@@ -141,11 +168,13 @@ class TraeOssAgent(CodingAgent):
         )
 
     def _extract_trajectory_stats(
-        self, payload: Optional[Dict[str, Any]]
-    ) -> tuple[Optional[str], Optional[Dict[str, int]], Optional[int], Optional[int], Optional[str]]:
+        self,
+        payload: Optional[Dict[str, Any]],
+    ) -> ParsedStats:
         model_name = req_str(payload, "$.model")
 
-        llm_calls = self._count_selected(payload, "$.llm_interactions[*]")
+        llm_call_values = select_values(payload, "$.llm_interactions[*]")
+        llm_calls = len(llm_call_values) if llm_call_values is not None else None
 
         usage_values = select_values(payload, "$.llm_interactions[*].response.usage")
         parsed_usages = [
@@ -157,15 +186,40 @@ class TraeOssAgent(CodingAgent):
             )
             if parsed is not None
         ]
-        usage = self._sum_usage_entries(parsed_usages)
+        usage = sum_usage_entries(parsed_usages)
 
-        tool_calls = self._count_selected(payload, "$.agent_steps[*].tool_calls[*]")
+        tool_call_values = select_values(payload, "$.agent_steps[*].tool_calls[*]")
+        tool_calls = len(tool_call_values) if tool_call_values is not None else None
 
-        response = self._first_selected_text(
-            payload,
+        response = next(
             (
-                "$.final_result",
-                "$.llm_interactions[*].response.content",
+                text
+                for text in (
+                    runtime_parsing.last_nonempty_text(select_values(payload, path))
+                    for path in (
+                        "$.final_result",
+                        "$.llm_interactions[*].response.content",
+                    )
+                )
+                if text is not None
             ),
+            None,
         )
-        return model_name, usage, llm_calls, tool_calls, response
+        return ParsedStats(
+            model_name=model_name,
+            usage=usage,
+            llm_calls=llm_calls,
+            tool_calls=tool_calls,
+            response=response,
+        )
+
+    def _resolve_runtime_settings(
+        self,
+        *,
+        model_override: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        return (
+            runtime_env.resolve_openai_api_key("TRAE_AGENT_API_KEY"),
+            runtime_env.resolve_openai_base_url("TRAE_AGENT_API_BASE"),
+            runtime_env.resolve_openai_model("TRAE_AGENT_MODEL", model_override=model_override),
+        )

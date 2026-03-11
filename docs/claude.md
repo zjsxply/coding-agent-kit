@@ -36,7 +36,7 @@ This document explains how cakit runs Claude Code and extracts metadata.
 **Notes**
 - cakit sets `IS_SANDBOX=1` for Claude Code runs so `--dangerously-skip-permissions` can be used in root/sudo environments.
 - `CAKIT_CLAUDE_USE_OAUTH` is the cakit switch for choosing OAuth when both API key and auth token are present.
-- Telemetry behavior: if `CLAUDE_CODE_ENABLE_TELEMETRY` is unset and `OTEL_EXPORTER_OTLP_ENDPOINT` is set, cakit enables telemetry for the run; if `CLAUDE_CODE_ENABLE_TELEMETRY` is explicitly set, that value is respected.
+- Telemetry behavior: if `CLAUDE_CODE_ENABLE_TELEMETRY` is unset and `OTEL_EXPORTER_OTLP_ENDPOINT` is set, cakit enables telemetry for the run; if `CLAUDE_CODE_ENABLE_TELEMETRY` is explicitly set, that value is respected. When explicitly set to a falsey value, cakit also unsets `OTEL_EXPORTER_OTLP_ENDPOINT` for the child process.
 - cakit always sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` for Claude runs.
 - Standard network actions (for example `curl`) generally work when the runtime/network policy allows them.
 - With third-party Anthropic-compatible APIs, Web Search tool support is typically unavailable even if basic network access works.

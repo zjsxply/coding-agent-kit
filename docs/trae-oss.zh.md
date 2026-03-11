@@ -30,7 +30,7 @@
   - 配置了模型时追加 `--model <...>`
 - `--trajectory-file` 的路径来源：
   - 设置了 `CAKIT_TRAE_TRAJECTORY` 时使用该值（支持 `~` 展开）
-  - 未设置时回退为 `<cwd>/trae_trajectory.json`
+  - 未设置时回退为 run 唯一路径 `/tmp/cakit-trae-<uuid>.json`
 - 模型优先级为：`--model` > `TRAE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`。
 
 ## 统计提取

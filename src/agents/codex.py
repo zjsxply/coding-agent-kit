@@ -9,11 +9,18 @@ from typing import Any, Dict, List, Optional
 from .base import (
     CodingAgent,
     InstallStrategy,
+)
+from ..io_helpers import dump_toml
+from ..models import RunResult
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import env as runtime_env
+from ..stats_extract import (
     last_value,
+    merge_stats_snapshots,
+    normalize_stats_snapshot,
     select_values,
     sum_int,
 )
-from ..models import RunResult
 
 
 class CodexAgent(CodingAgent):
@@ -30,54 +37,32 @@ class CodexAgent(CodingAgent):
     )
 
     def configure(self) -> Optional[str]:
-        use_oauth = self._use_oauth()
-        model = self._resolve_openai_model("CODEX_MODEL")
-        lines = ["project_root_markers = []"]
+        use_oauth, api_key, base_url, model = self._resolve_runtime_auth(model_override=None)
+        config: Dict[str, Any] = {"project_root_markers": []}
         if model:
-            lines.append(f"model = \"{model}\"")
-        api_key = self._resolve_openai_api_key("CODEX_API_KEY")
+            config["model"] = model
         if not use_oauth and api_key:
-            base_url = self._resolve_openai_base_url("CODEX_API_BASE")
-            provider = "custom"
-            lines.extend(
-                [
-                    f"model_provider = \"{provider}\"",
-                    "",
-                    f"[model_providers.{provider}]",
-                    "name = \"custom\"",
-                    "env_key = \"CODEX_API_KEY\"",
-                    "wire_api = \"responses\"",
-                ]
-            )
+            provider_config: Dict[str, str] = {
+                "name": "custom",
+                "env_key": "CODEX_API_KEY",
+                "wire_api": "responses",
+            }
             if base_url:
-                lines.insert(lines.index("env_key = \"CODEX_API_KEY\""), f"base_url = \"{base_url}\"")
-        otel_exporter = os.environ.get("CODEX_OTEL_EXPORTER")
-        otel_endpoint = os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-        otel_protocol = os.environ.get("CODEX_OTEL_PROTOCOL")
-        otel_env = os.environ.get("CODEX_OTEL_ENVIRONMENT")
-        otel_log_prompt = os.environ.get("CODEX_OTEL_LOG_USER_PROMPT")
-        if otel_exporter:
-            lines.append("")
-            lines.append("[otel]")
-            lines.append(f"exporter = \"{otel_exporter}\"")
-            if otel_env:
-                lines.append(f"environment = \"{otel_env}\"")
-            if otel_log_prompt is not None:
-                value = str(otel_log_prompt).strip().lower() in {"1", "true", "yes", "y"}
-                lines.append(f"log_user_prompt = {str(value).lower()}")
-            if otel_endpoint:
-                lines.append("")
-                lines.append(f"[otel.exporter.\"{otel_exporter}\"]")
-                lines.append(f"endpoint = \"{otel_endpoint}\"")
-                if otel_protocol:
-                    lines.append(f"protocol = \"{otel_protocol}\"")
-        config = "\n".join(lines) + "\n"
-        codex_home = os.environ.get("CODEX_HOME")
-        if codex_home:
-            config_path = Path(codex_home).expanduser() / "config.toml"
-        else:
-            config_path = Path(os.path.expanduser("~/.codex/config.toml"))
-        self._write_text(config_path, config)
+                provider_config["base_url"] = base_url
+            config["model_provider"] = "custom"
+            config["model_providers"] = {"custom": provider_config}
+        otel_exporter, otel_endpoint, otel_protocol, otel_env, otel_log_prompt = self._resolve_otel_settings()
+        otel_config = self._build_otel_config(
+            exporter_name=otel_exporter,
+            endpoint=otel_endpoint,
+            protocol=otel_protocol,
+            environment=otel_env,
+            log_user_prompt=otel_log_prompt,
+        )
+        if otel_config is not None:
+            config["otel"] = otel_config
+        config_path = self._config_path()
+        self._write_text(config_path, dump_toml(config))
         return str(config_path)
 
     def _run_impl(
@@ -93,12 +78,10 @@ class CodexAgent(CodingAgent):
         if self._use_oauth() and not self._auth_path().exists():
             message = f"codex OAuth is enabled but auth file not found at {self._auth_path()}; run `codex login`."
             return self._build_error_run_result(message=message, cakit_exit_code=2)
-        api_base = self._resolve_openai_base_url("CODEX_API_BASE")
+        use_oauth, api_key, api_base, model = self._resolve_runtime_auth(model_override=model_override)
         env = {
             "OPENAI_API_BASE": api_base,
         }
-        use_oauth = self._use_oauth()
-        api_key = None if use_oauth else self._resolve_openai_api_key("CODEX_API_KEY")
         if api_key:
             env["CODEX_API_KEY"] = api_key
             env["OPENAI_API_KEY"] = api_key
@@ -120,7 +103,6 @@ class CodexAgent(CodingAgent):
             "--output-last-message",
             str(last_message_path),
         ]
-        model = self._resolve_openai_model("CODEX_MODEL", model_override=model_override)
         if model:
             cmd.extend(["--model", model])
         if reasoning_effort:
@@ -134,7 +116,7 @@ class CodexAgent(CodingAgent):
             unset_env = ["OPENAI_API_KEY", "CODEX_API_KEY"]
         result = self._run(cmd, env, input_text=prompt, unset_env=unset_env, base_env=base_env)
         output = result.output
-        payloads = self._load_output_json_payloads(output, stdout_only=False)
+        payloads = runtime_parsing.load_output_json_payloads(output, stdout_only=False)
         usage, llm_calls = self._extract_turn_completed_metrics(payloads)
         model_name = self._extract_model_name(payloads)
         models_usage: Dict[str, Dict[str, int]] = {}
@@ -150,12 +132,12 @@ class CodexAgent(CodingAgent):
                     normalized_id = item_id.strip()
                     if normalized_id:
                         tool_item_ids.add(normalized_id)
-        extracted_stats = self._normalize_stats_snapshot(
+        extracted_stats = normalize_stats_snapshot(
             models_usage=models_usage,
             llm_calls=llm_calls,
             tool_calls=len(tool_item_ids),
         )
-        stats = self._merge_stats_snapshots(snapshots=[extracted_stats])
+        stats = merge_stats_snapshots([extracted_stats])
         message_text = self._read_text(last_message_path)
         response = message_text.strip() if isinstance(message_text, str) and message_text.strip() else None
         return self.finalize_run(
@@ -165,8 +147,36 @@ class CodexAgent(CodingAgent):
             llm_calls=stats.llm_calls,
             tool_calls=stats.tool_calls,
             total_cost=stats.total_cost,
-            telemetry_log=os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+            telemetry_log=self._resolve_otel_settings()[1],
         )
+
+    def _resolve_runtime_auth(
+        self,
+        *,
+        model_override: Optional[str],
+    ) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
+        use_oauth = self._use_oauth()
+        api_key = None if use_oauth else runtime_env.resolve_openai_api_key("CODEX_API_KEY")
+        api_base = runtime_env.resolve_openai_base_url("CODEX_API_BASE")
+        model = runtime_env.resolve_openai_model("CODEX_MODEL", model_override=model_override)
+        return use_oauth, api_key, api_base, model
+
+    def _resolve_otel_settings(
+        self,
+    ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
+        return (
+            os.environ.get("CODEX_OTEL_EXPORTER"),
+            os.environ.get("CODEX_OTEL_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
+            os.environ.get("CODEX_OTEL_PROTOCOL"),
+            os.environ.get("CODEX_OTEL_ENVIRONMENT"),
+            os.environ.get("CODEX_OTEL_LOG_USER_PROMPT"),
+        )
+
+    def _config_path(self) -> Path:
+        codex_home = os.environ.get("CODEX_HOME")
+        if codex_home:
+            return Path(codex_home).expanduser() / "config.toml"
+        return Path(os.path.expanduser("~/.codex/config.toml"))
 
     def _use_oauth(self) -> bool:
         value = os.environ.get("CAKIT_CODEX_USE_OAUTH")
@@ -179,6 +189,61 @@ class CodexAgent(CodingAgent):
         if codex_home:
             return Path(codex_home).expanduser() / "auth.json"
         return Path.home() / ".codex" / "auth.json"
+
+    def _build_otel_config(
+        self,
+        *,
+        exporter_name: Optional[str],
+        endpoint: Optional[str],
+        protocol: Optional[str],
+        environment: Optional[str],
+        log_user_prompt: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        exporter_config = self._build_otel_exporter_config(
+            exporter_name=exporter_name,
+            endpoint=endpoint,
+            protocol=protocol,
+        )
+        if exporter_config is None:
+            return None
+        otel_config: Dict[str, Any] = {"exporter": exporter_config}
+        if environment:
+            otel_config["environment"] = environment
+        if log_user_prompt is not None:
+            otel_config["log_user_prompt"] = str(log_user_prompt).strip().lower() in {"1", "true", "yes", "y"}
+        return otel_config
+
+    def _build_otel_exporter_config(
+        self,
+        *,
+        exporter_name: Optional[str],
+        endpoint: Optional[str],
+        protocol: Optional[str],
+    ) -> Optional[object]:
+        if not exporter_name:
+            return None
+        normalized_exporter = exporter_name.strip().lower()
+        if not normalized_exporter:
+            return None
+        if normalized_exporter in {"none", "statsig"}:
+            return normalized_exporter
+        if normalized_exporter == "otlp-grpc":
+            if not endpoint:
+                return None
+            return {"otlp-grpc": {"endpoint": endpoint}}
+        if normalized_exporter == "otlp-http":
+            if not endpoint:
+                return None
+            normalized_protocol = protocol.strip().lower() if isinstance(protocol, str) and protocol.strip() else "binary"
+            if normalized_protocol not in {"binary", "json"}:
+                return None
+            return {
+                "otlp-http": {
+                    "endpoint": endpoint,
+                    "protocol": normalized_protocol,
+                }
+            }
+        return None
 
     def _extract_turn_completed_metrics(
         self, payloads: List[Dict[str, Any]]
@@ -227,7 +292,7 @@ class CodexAgent(CodingAgent):
             if records_text is None:
                 time.sleep(0.1)
                 continue
-            records = self._load_output_json_payloads(records_text, stdout_only=False)
+            records = runtime_parsing.load_output_json_payloads(records_text, stdout_only=False)
             model_name = last_value(records, '$[?(@.type=="turn_context")].payload.model')
             if isinstance(model_name, str):
                 normalized = model_name.strip()

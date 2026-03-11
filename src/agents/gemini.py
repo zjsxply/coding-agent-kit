@@ -5,8 +5,15 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate, extract_gemini_style_stats, req_str
-from ..models import RunResult
+from ..agent_runtime import parsing as runtime_parsing
+from .base import (
+    CodingAgent,
+    InstallStrategy,
+    RunCommandTemplate,
+    RunParseResult,
+    RunPlan,
+)
+from ..stats_extract import StatsArtifacts, extract_gemini_style_stats, merge_stats_snapshots, req_str
 
 
 class GeminiAgent(CodingAgent):
@@ -25,10 +32,9 @@ class GeminiAgent(CodingAgent):
     )
 
     def configure(self) -> Optional[str]:
-        settings_path = Path.home() / ".gemini" / "settings.json"
-        telemetry_path = Path.home() / ".gemini" / "telemetry.log"
+        settings_path, telemetry_path = self._settings_paths()
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        loaded = self._load_json_dict(settings_path)
+        loaded = runtime_parsing.load_json_dict(settings_path)
         data: Dict[str, Any] = loaded if loaded is not None else {}
         data["telemetry"] = {
             "enabled": True,
@@ -41,7 +47,7 @@ class GeminiAgent(CodingAgent):
         self._write_text(settings_path, json.dumps(data, ensure_ascii=True, indent=2))
         return str(settings_path)
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -49,13 +55,13 @@ class GeminiAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         model = model_override or os.environ.get("GEMINI_MODEL")
         images = images or []
         videos = videos or []
-        telemetry_path = Path.home() / ".gemini" / "telemetry.log"
+        settings_path, telemetry_path = self._settings_paths()
         telemetry_path.parent.mkdir(parents=True, exist_ok=True)
-        if not (Path.home() / ".gemini" / "settings.json").exists():
+        if not settings_path.exists():
             self.configure()
         env = {
             "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY"),
@@ -63,22 +69,33 @@ class GeminiAgent(CodingAgent):
             "GOOGLE_GEMINI_BASE_URL": os.environ.get("GOOGLE_GEMINI_BASE_URL"),
             "GOOGLE_CLOUD_PROJECT": os.environ.get("GOOGLE_CLOUD_PROJECT"),
         }
-        template = self.run_template
-        cmd, _ = self._build_templated_command(
-            template=template,
+        return self._build_templated_run_plan(
             prompt=prompt,
             model=model,
             images=images,
             videos=videos,
+            env=env,
+            template=self.run_template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                command_result,
+                telemetry_path=telemetry_path,
+            ),
         )
-        result = self._run(cmd, env, base_env=base_env)
-        output = result.output
-        payload = self._parse_output_json_object(output)
-        artifacts = self._build_stats_artifacts(
+
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        command_result: Any,
+        *,
+        telemetry_path: Path,
+    ) -> RunParseResult:
+        payload = runtime_parsing.parse_output_json_object(output)
+        artifacts = StatsArtifacts(
             raw_output=output,
             json_payload=payload,
         )
-        stats = self._merge_stats_snapshots(
+        stats = merge_stats_snapshots(
             snapshots=[
                 extract_gemini_style_stats(
                     artifacts,
@@ -86,8 +103,7 @@ class GeminiAgent(CodingAgent):
                 ),
             ]
         )
-        return self.finalize_run(
-            command_result=result,
+        return RunParseResult(
             response=(req_str(payload, "$.response") if isinstance(payload, dict) else None),
             models_usage=stats.models_usage,
             llm_calls=stats.llm_calls,
@@ -95,3 +111,7 @@ class GeminiAgent(CodingAgent):
             total_cost=stats.total_cost,
             telemetry_log=str(telemetry_path),
         )
+
+    def _settings_paths(self) -> tuple[Path, Path]:
+        settings_dir = Path.home() / ".gemini"
+        return settings_dir / "settings.json", settings_dir / "telemetry.log"

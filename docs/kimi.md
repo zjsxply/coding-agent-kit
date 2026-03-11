@@ -90,13 +90,14 @@ Reference:
 1. cakit generates a UUID per run and passes it via `--session`, then reads `wire.jsonl` using the exact session path derived from `work_dir` + Kimi metadata:
    - `~/.kimi/sessions/<kaos_or_md5>/<session_id>/wire.jsonl`
 2. From the session `wire.jsonl`:
+   - Turn boundary is matched by scanning backward for the latest `TurnBegin` whose `payload.user_input` equals the final run prompt, then reading until the following `TurnEnd`.
    - `StatusUpdate.payload.token_usage` -> token usage (`models_usage`)
    - `SubagentEvent.event.type == "StatusUpdate"` token usage is aggregated into the same total
    - `StatusUpdate` + subagent `StatusUpdate` count -> `llm_calls`
    - `ToolCall` + subagent `ToolCall` count -> `tool_calls`
    - model name from `payload.model` when present
 3. If session data is still incomplete, parse stdout `stream-json` payloads with exact fields only (usage/response only).
-4. If session wire has usage but no model field, parse `~/.kimi/logs/kimi.log` by exact `session_id` markers (`Created new session:` / `Switching to session:` / `Session ... not found`) and read `Using LLM model: ... model='...'` in that same block.
+4. If session wire has usage but no model field, parse the tail of `~/.kimi/logs/kimi.log` by exact `session_id` markers (`Created new session:` / `Switching to session:` / `Session ... not found`) and read `Using LLM model: ... model='...'` in that same block.
 5. No guessed placeholders are written for model name. If model cannot be extracted from run artifacts, `models_usage` remains empty.
 
 Model name is extracted from run artifacts only (session wire / session logs). It is not backfilled from config/env input.

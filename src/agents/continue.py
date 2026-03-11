@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate
-from ..models import RunResult
+from ..agent_runtime import env as runtime_env
+from ..agent_runtime import parsing as runtime_parsing
+from ..io_helpers import dump_yaml
 from .base import (
-    last_value,
-    opt_float,
-    req_int,
-    req_str,
-    select_values,
+    CodingAgent,
+    InstallStrategy,
+    RunCommandTemplate,
+    RunParseResult,
+    RunPlan,
 )
+from ..stats_extract import last_value, merge_model_usage, opt_float, req_int, req_str, select_values
 
 class ContinueAgent(CodingAgent):
     name = "continue"
@@ -44,7 +45,7 @@ class ContinueAgent(CodingAgent):
         self._write_text(config_path, self._build_config_yaml(api_key=api_key, model=model, base_url=base_url))
         return str(config_path)
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -52,10 +53,10 @@ class ContinueAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
+    ) -> Optional[RunPlan]:
         resolved, env_error = self._resolve_openai_auth(model_override=model_override)
         if env_error is not None:
-            return self._build_error_run_result(message=env_error, cakit_exit_code=1)
+            self._raise_config_error(env_error)
 
         run_home = self._make_temp_dir(prefix="cakit-continue-", keep=True)
         config_path = run_home / "config.yaml"
@@ -74,31 +75,42 @@ class ContinueAgent(CodingAgent):
             "OPENAI_MODEL": resolved["model"],
             "OPENAI_BASE_URL": resolved.get("base_url"),
         }
-        template = self.run_template
-        cmd, _ = self._build_templated_command(
-            template=template,
+        return self._build_templated_run_plan(
             prompt=prompt,
+            env=env,
+            template=self.run_template,
             extra_args=["--config", str(config_path)],
+            parse_output=lambda output, command_result: self._parse_pipeline_output(
+                output,
+                command_result,
+                run_home=run_home,
+            ),
         )
-        result = self._run(cmd, env, base_env=base_env)
-        output = result.output
+
+    def _parse_pipeline_output(
+        self,
+        output: str,
+        command_result: Any,
+        *,
+        run_home: Path,
+    ) -> RunParseResult:
         sessions_dir = run_home / "sessions"
         session_payload: Optional[Dict[str, Any]] = None
         if sessions_dir.is_dir():
             session_id: Optional[str] = None
             manifest_path = sessions_dir / "sessions.json"
             if manifest_path.is_file():
-                manifest = self._load_json(manifest_path)
+                manifest = runtime_parsing.load_json(manifest_path)
                 if isinstance(manifest, list) and manifest:
                     last_item = manifest[-1]
                     if isinstance(last_item, dict):
-                        session_id = self._normalize_text(last_value(last_item, "$.sessionId"))
+                        session_id = runtime_parsing.normalize_text(last_value(last_item, "$.sessionId"))
             else:
                 candidates = sorted(path for path in sessions_dir.glob("*.json") if path.name != "sessions.json")
                 if len(candidates) == 1:
                     session_id = candidates[0].stem
             if session_id:
-                session_payload = self._load_json_dict(sessions_dir / f"{session_id}.json")
+                session_payload = runtime_parsing.load_json_dict(sessions_dir / f"{session_id}.json")
         models_usage, llm_calls, tool_calls, total_cost = self._extract_session_stats(
             session_payload=session_payload,
         )
@@ -109,15 +121,23 @@ class ContinueAgent(CodingAgent):
                 '$.history[?(@.message.role == "assistant")].message',
             )
             if isinstance(last_message, dict):
-                direct_content = self._normalize_text(last_value(last_message, "$.content"))
+                direct_content = runtime_parsing.normalize_text(last_value(last_message, "$.content"))
                 if direct_content is not None:
                     response = direct_content
                 else:
-                    response = self._joined_selected_text(last_message, "$.content[*].text")
+                    text_parts = [
+                        text
+                        for text in (
+                            runtime_parsing.normalize_text(item)
+                            for item in (select_values(last_message, "$.content[*].text") or [])
+                        )
+                        if text is not None
+                    ]
+                    if text_parts:
+                        response = "\n".join(text_parts)
         if response is None:
-            response = self._last_stdout_line(output)
-        return self.finalize_run(
-            command_result=result,
+            response = runtime_parsing.last_stdout_line(output)
+        return RunParseResult(
             response=response,
             models_usage=models_usage,
             llm_calls=llm_calls,
@@ -127,46 +147,43 @@ class ContinueAgent(CodingAgent):
         )
 
     def _resolve_openai_auth(self, *, model_override: Optional[str]) -> tuple[Dict[str, str], Optional[str]]:
-        api_key = self._resolve_openai_api_key("CAKIT_CONTINUE_OPENAI_API_KEY")
-        model = self._resolve_openai_model("CAKIT_CONTINUE_OPENAI_MODEL", model_override=model_override)
-        base_url = self._resolve_openai_base_url("CAKIT_CONTINUE_OPENAI_BASE_URL")
+        resolved, error = runtime_env.resolve_openai_env(
+            api_key_env="CAKIT_CONTINUE_OPENAI_API_KEY",
+            model_env="CAKIT_CONTINUE_OPENAI_MODEL",
+            base_url_env="CAKIT_CONTINUE_OPENAI_BASE_URL",
+            model_override=model_override,
+            normalize_text=runtime_parsing.normalize_text,
+        )
+        if error is not None:
+            return {}, error
 
-        missing: list[tuple[str, str]] = []
-        if not api_key:
-            missing.append(("CAKIT_CONTINUE_OPENAI_API_KEY", "OPENAI_API_KEY"))
-        if not model:
-            missing.append(("CAKIT_CONTINUE_OPENAI_MODEL", "OPENAI_DEFAULT_MODEL"))
-        if missing:
-            return {}, self._missing_env_with_fallback_message(missing)
-
-        resolved: Dict[str, str] = {
-            "api_key": api_key,
-            "model": model,
+        auth: Dict[str, str] = {
+            "api_key": str(resolved.get("api_key")),
+            "model": str(resolved.get("model")),
         }
-        if base_url:
-            resolved["base_url"] = base_url
-        return resolved, None
+        base_url = resolved.get("base_url")
+        if isinstance(base_url, str) and base_url.strip():
+            auth["base_url"] = base_url
+        return auth, None
 
     def _build_config_yaml(self, *, api_key: str, model: str, base_url: Optional[str]) -> str:
-        lines = [
-            "name: CAKIT Continue Config",
-            "version: 1.0.0",
-            "schema: v1",
-            "models:",
-            "  - name: cakit-openai",
-            "    provider: openai",
-            f"    model: {json.dumps(model)}",
-            f"    apiKey: {json.dumps(api_key)}",
-        ]
+        config = {
+            "name": "CAKIT Continue Config",
+            "version": "1.0.0",
+            "schema": "v1",
+            "models": [
+                {
+                    "name": "cakit-openai",
+                    "provider": "openai",
+                    "model": model,
+                    "apiKey": api_key,
+                    "roles": ["chat"],
+                }
+            ],
+        }
         if base_url:
-            lines.append(f"    apiBase: {json.dumps(base_url)}")
-        lines.extend(
-            [
-                "    roles:",
-                "      - chat",
-            ]
-        )
-        return "\n".join(lines) + "\n"
+            config["models"][0]["apiBase"] = base_url
+        return dump_yaml(config)
 
     def _extract_session_stats(
         self,
@@ -200,7 +217,7 @@ class ContinueAgent(CodingAgent):
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
             }
-            self._merge_model_usage(models_usage, model_name, usage_entry)
+            merge_model_usage(models_usage, model_name, usage_entry)
 
         tool_call_values = select_values(
             payload,

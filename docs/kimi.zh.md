@@ -90,13 +90,14 @@ Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：
 1. cakit 每次运行生成 UUID 并通过 `--session` 传入，然后按 `work_dir` + Kimi metadata 计算出的精确路径读取 `wire.jsonl`：
    - `~/.kimi/sessions/<kaos_or_md5>/<session_id>/wire.jsonl`
 2. 从 session 的 `wire.jsonl` 中读取：
+   - turn 边界通过倒序扫描定位到“最后一个 `payload.user_input` 与本次最终 prompt 相等的 `TurnBegin`”，并读取到后续第一个 `TurnEnd`。
    - `StatusUpdate.payload.token_usage` -> token usage（`models_usage`）
    - `SubagentEvent.event.type == "StatusUpdate"` 的 token usage 也会聚合进总量
    - `StatusUpdate` + subagent `StatusUpdate` 条数 -> `llm_calls`
    - `ToolCall` + subagent `ToolCall` 条数 -> `tool_calls`
    - 如存在 `payload.model` 则读取模型名
 3. 若 session 数据仍不完整，再解析 stdout `stream-json`，且只读取明确字段（仅用于 usage/response）。
-4. 若 session wire 里有 usage 但没有模型字段，再按精确 `session_id` 在 `~/.kimi/logs/kimi.log` 中定位 `Created new session:` / `Switching to session:` / `Session ... not found` 区段，并读取同区段的 `Using LLM model: ... model='...'`。
+4. 若 session wire 里有 usage 但没有模型字段，再按精确 `session_id` 在 `~/.kimi/logs/kimi.log` 的尾部区段中定位 `Created new session:` / `Switching to session:` / `Session ... not found`，并读取同区段的 `Using LLM model: ... model='...'`。
 5. 不写模型名占位值；若运行产物中提取不到模型名，`models_usage` 保持为空对象。
 
 模型名仅从本次运行产物提取（session wire / session 日志），不从配置或输入参数回填。

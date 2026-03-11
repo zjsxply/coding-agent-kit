@@ -10,9 +10,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .base import CodingAgent, CommandResult, InstallStrategy, RunCommandTemplate
-from ..models import RunResult
-from .base import last_value, parse_usage_by_model, select_values
+from .base import CodingAgent, CommandResult, InstallStrategy, RunCommandTemplate, RunParseResult, RunPlan
+from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import env as runtime_env
+from ..stats_extract import last_value, parse_usage_by_model, select_values, sum_usage_entries
 
 
 class CursorAgent(CodingAgent):
@@ -40,7 +41,7 @@ class CursorAgent(CodingAgent):
             return self._install_specific_version(version.strip())
         return self._run(["bash", "-c", "curl -fsS https://cursor.com/install | bash"])
 
-    def _run_impl(
+    def _build_run_plan(
         self,
         prompt: str,
         images: Optional[list[Path]] = None,
@@ -48,50 +49,59 @@ class CursorAgent(CodingAgent):
         reasoning_effort: Optional[str] = None,
         model_override: Optional[str] = None,
         base_env: Optional[Dict[str, str]] = None,
-    ) -> RunResult:
-        model = self._resolve_openai_model("CURSOR_MODEL", model_override=model_override)
-        endpoint = self._resolve_openai_base_url("CURSOR_API_BASE")
-        env = {"CURSOR_API_KEY": self._resolve_openai_api_key("CURSOR_API_KEY")}
+    ) -> Optional[RunPlan]:
+        model = runtime_env.resolve_openai_model("CURSOR_MODEL", model_override=model_override)
+        endpoint = runtime_env.resolve_openai_base_url("CURSOR_API_BASE")
+        env = {"CURSOR_API_KEY": runtime_env.resolve_openai_api_key("CURSOR_API_KEY")}
         template = self.run_template
         extra_args: list[str] = []
         if endpoint:
             extra_args.extend(["--endpoint", endpoint])
-        cmd, _ = self._build_templated_command(
-            template=template,
+        return self._build_templated_run_plan(
             prompt=prompt,
             model=model,
+            env=env,
             extra_args=extra_args,
+            template=template,
+            parse_output=lambda output, command_result: self._parse_pipeline_output(output),
         )
-        result = self._run(cmd, env, base_env=base_env)
-        output = result.output
-        payloads = self._load_output_json_payloads(output)
 
-        response = self._first_selected_text(
-            payloads,
+    def _parse_pipeline_output(self, output: str) -> RunParseResult:
+        payloads = runtime_parsing.load_output_json_payloads(output)
+
+        response = next(
             (
-                '$[?(@.type == "result")].result',
-                '$[?(@.type == "assistant")].message.content[?(@.type == "text")].text',
+                text
+                for text in (
+                    runtime_parsing.last_nonempty_text(select_values(payloads, path))
+                    for path in (
+                        '$[?(@.type == "result")].result',
+                        '$[?(@.type == "assistant")].message.content[?(@.type == "text")].text',
+                    )
+                )
+                if text is not None
             ),
+            None,
         )
 
         usage = self._extract_usage(payloads)
-        system_payloads = self._selected_dicts(payloads, '$[?(@.type == "system")]')
+        system_payloads = [item for item in (select_values(payloads, '$[?(@.type == "system")]') or []) if isinstance(item, dict)]
         init_payloads = [
-            item for item in system_payloads if self._normalize_text(last_value(item, "$.subtype")) == "init"
+            item for item in system_payloads if runtime_parsing.normalize_text(last_value(item, "$.subtype")) == "init"
         ]
-        model_name = self._normalize_text(last_value(init_payloads, "$[*].model"))
+        model_name = runtime_parsing.normalize_text(last_value(init_payloads, "$[*].model"))
         models_usage = {model_name: usage} if model_name is not None and usage is not None else {}
 
-        tool_payloads = self._selected_dicts(payloads, '$[?(@.type == "tool_call")]')
+        tool_payloads = [item for item in (select_values(payloads, '$[?(@.type == "tool_call")]') or []) if isinstance(item, dict)]
         started_call_ids = {
             normalized
             for call_id in (select_values(tool_payloads, '$[?(@.subtype == "started")].call_id') or [])
-            if (normalized := self._normalize_text(call_id)) is not None
+            if (normalized := runtime_parsing.normalize_text(call_id)) is not None
         }
         all_call_ids = {
             normalized
             for call_id in (select_values(tool_payloads, "$[*].call_id") or [])
-            if (normalized := self._normalize_text(call_id)) is not None
+            if (normalized := runtime_parsing.normalize_text(call_id)) is not None
         }
         tool_calls = (
             len(started_call_ids) if started_call_ids else len(all_call_ids) if all_call_ids else len(tool_payloads)
@@ -100,25 +110,25 @@ class CursorAgent(CodingAgent):
         model_call_ids = {
             normalized
             for value in (select_values(payloads, '$[?(@.type == "assistant")].model_call_id') or [])
-            if (normalized := self._normalize_text(value)) is not None
+            if (normalized := runtime_parsing.normalize_text(value)) is not None
         }
         model_call_ids.update(
             normalized
             for value in (select_values(payloads, '$[?(@.type == "tool_call")].model_call_id') or [])
-            if (normalized := self._normalize_text(value)) is not None
+            if (normalized := runtime_parsing.normalize_text(value)) is not None
         )
         if model_call_ids:
             llm_calls: Optional[int] = len(model_call_ids)
         else:
-            assistant_payload_count = self._count_selected(payloads, '$[?(@.type == "assistant")]')
+            assistant_payload_values = select_values(payloads, '$[?(@.type == "assistant")]')
+            assistant_payload_count = len(assistant_payload_values) if assistant_payload_values is not None else None
             if assistant_payload_count:
                 llm_calls = assistant_payload_count
             else:
-                llm_calls = 1 if self._count_selected(payloads, '$[?(@.type == "result")]') is not None else None
+                llm_calls = 1 if select_values(payloads, '$[?(@.type == "result")]') is not None else None
 
-        return self.finalize_run(
-            command_result=result,
-            response=response or self._last_stdout_line(output),
+        return RunParseResult(
+            response=response or runtime_parsing.last_stdout_line(output),
             models_usage=models_usage,
             llm_calls=llm_calls,
             tool_calls=tool_calls,
@@ -135,7 +145,7 @@ class CursorAgent(CodingAgent):
             ('$[?(@.message.usage != null)]', "$.message.usage"),
             ('$[?(@.result.usage != null)]', "$.result.usage"),
         ):
-            usage_payloads = self._selected_dicts(payloads, usage_filter)
+            usage_payloads = [item for item in (select_values(payloads, usage_filter) or []) if isinstance(item, dict)]
             for payload in usage_payloads:
                 usage_raw = last_value(payload, usage_path)
                 if not isinstance(usage_raw, dict):
@@ -145,7 +155,7 @@ class CursorAgent(CodingAgent):
                 )
                 if usage is None:
                     continue
-                model_call_id = self._normalize_text(last_value(payload, "$.model_call_id"))
+                model_call_id = runtime_parsing.normalize_text(last_value(payload, "$.model_call_id"))
                 if model_call_id is not None:
                     previous = usage_by_model_call_id.get(model_call_id)
                     if previous is None or usage["total_tokens"] >= previous["total_tokens"]:
@@ -154,7 +164,7 @@ class CursorAgent(CodingAgent):
                 usage_without_model_call_id.append(usage)
 
         items = list(usage_by_model_call_id.values()) + usage_without_model_call_id
-        return self._sum_usage_entries(items)
+        return sum_usage_entries(items)
 
     def _install_specific_version(self, version: str) -> CommandResult:
         started = time.monotonic()
