@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -10,9 +11,9 @@ from .base import (
     RunParseResult,
     RunPlan,
     RunCommandTemplate,
-    StatsParseResult,
 )
 from ..stats_extract import (
+    StatsSnapshot,
     last_value,
     merge_model_usage,
     merge_stats_snapshots,
@@ -22,6 +23,12 @@ from ..stats_extract import (
     select_values,
 )
 from ..agent_runtime import parsing as runtime_parsing
+
+
+@dataclass(frozen=True)
+class _StatsParseResult:
+    snapshot: Optional[StatsSnapshot] = None
+    response: Optional[str] = None
 
 
 class QoderAgent(CodingAgent):
@@ -87,7 +94,7 @@ class QoderAgent(CodingAgent):
             telemetry_log=str(telemetry_path) if telemetry_path.exists() else None,
         )
 
-    def _extract_stats(self, payloads: list[Dict[str, Any]]) -> Optional[StatsParseResult]:
+    def _extract_stats(self, payloads: list[Dict[str, Any]]) -> Optional[_StatsParseResult]:
         if not payloads:
             return None
         event_types = {
@@ -105,7 +112,7 @@ class QoderAgent(CodingAgent):
 
     def _extract_qoder_message_stats(
         self, payloads: list[Dict[str, Any]]
-    ) -> Optional[StatsParseResult]:
+    ) -> Optional[_StatsParseResult]:
         records = [
             {
                 "model_name": req_str(message, "$.response_meta.model_name"),
@@ -142,11 +149,11 @@ class QoderAgent(CodingAgent):
             llm_calls=(len(records) if records else None),
             tool_calls=tool_calls,
         )
-        return StatsParseResult(snapshot=snapshot, response=runtime_parsing.last_nonempty_text(responses))
+        return _StatsParseResult(snapshot=snapshot, response=runtime_parsing.last_nonempty_text(responses))
 
     def _extract_stream_message_stats(
         self, payloads: list[Dict[str, Any]]
-    ) -> Optional[StatsParseResult]:
+    ) -> Optional[_StatsParseResult]:
         assistant_start_messages = [
             message
             for message in (
@@ -246,4 +253,4 @@ class QoderAgent(CodingAgent):
             llm_calls=llm_calls,
             tool_calls=tool_calls,
         )
-        return StatsParseResult(snapshot=snapshot, response=runtime_parsing.last_nonempty_text(responses))
+        return _StatsParseResult(snapshot=snapshot, response=runtime_parsing.last_nonempty_text(responses))

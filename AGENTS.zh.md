@@ -69,6 +69,30 @@
   - 代码与文档必须保持一致。行为有变更时需在同一提交/修改中同步更新文档，且文档应与实现完全一致（不要出现不匹配的 fallback 或字段描述）。
   - 测试后必须更新 `README.md` 与 `README.zh.md` 的测试覆盖矩阵，并从 `cakit run` 输出中的 `agent_version` 记录 `测试版本`。
 
+## 仓库架构设计
+- 根目录职责：
+  - `README.md` / `README.zh.md`：面向用户的行为说明、支持的 coding agent、登录方式与测试覆盖。
+  - `AGENTS.md` / `AGENTS.zh.md`：贡献约束、仓库架构、实现边界与工作流要求。
+  - `.env.template` / `.env.template.zh`：cakit 受管控环境变量模板，二者保持镜像同步。
+  - `docs/`：各 agent 与跨主题行为文档；必须与实际 CLI 行为一致。
+  - `tests/`：可用性流程脚本与本地媒体测试素材；不要把临时调试输出写进这里。
+- `src/` 分层：
+  - `src/cli/`：只放 CLI 入口与多 agent 编排。参数解析、目标展开、退出码收口、最终 JSON 输出都在这里；不要把 agent-specific 安装/运行解析塞进这一层。
+  - `src/agents/`：每个 coding agent 一个文件、一个类。agent-specific 的安装、配置、运行、版本获取和本地解析逻辑都放这里。
+  - `src/agent_runtime/`：多个 coding agent 共用的运行时机制（命令执行、环境拼装、媒体处理、安装/版本辅助、trajectory 转换），保持 agent-agnostic。
+  - `src/stats_extract.py`：只放基于 JSONPath 的共享统计提取与聚合 helper。
+  - `src/models.py`：CLI 与 agent 层共享的稳定 dataclass 与结果载荷约定。
+  - `src/io_helpers.py`：只放序列化与输出 helper。
+- 依赖方向：
+  - `src/cli/` 可以依赖 `src/agents/`、`src/models.py` 与其他共享 helper。
+  - `src/agents/` 可以依赖 `src/agent_runtime/`、`src/stats_extract.py`、`src/models.py` 与通用 helper。
+  - `src/agent_runtime/` 与 `src/stats_extract.py` 禁止反向依赖具体 coding agent 模块。
+- 新代码落点规则：
+  - 多 agent 的 install/configure 聚合编排放在 `src/cli/`；单个 agent 的安装器不要特判 `all` 这类聚合选择器。
+  - 可复用的 run/install 机制应优先下沉到 `src/agent_runtime/` 或 `src/agents/base.py`，不要先在多个 coding agent 中复制。
+  - 解析逻辑尽量下沉：共享且格式感知的解析放 `src/stats_extract.py`，仅单 agent 使用的解析留在对应 `src/agents/<agent>.py`。
+  - 临时诊断文件统一写到 `/tmp`，不要写入仓库目录。
+
 ## 代码结构与风格
 - 代码存放与职责划分：
   - `src/agents/`：每个 agent 一个文件、一个 class。所有 agent-specific 逻辑（安装、运行、usage 提取等）必须放在对应 class 内。
@@ -107,6 +131,7 @@
 
 ## 行为约束
 - `cakit run` 若发现未安装对应 agent，需要自动执行 `cakit install <agent>` 并提示。
+- `cakit install all` / `cakit install '*'` 必须在 CLI 聚合层并行安装各目标。单个 target 安装失败或安装器抛出未捕获异常时，不得中断其余安装；失败 agent 的信息必须在最终聚合输出中统一返回。
 - 预期成功的命令必须返回 0；usage 解析失败或关键信息缺失必须返回非 0。
 - `cakit install` 需自动安装缺失的运行时依赖（如 Node.js、uv），并兼容无 `sudo` 或 root 环境。
 - 默认安装行为必须始终指向上游 latest：未传 `--version` 时，代码中不得写死固定默认版本。

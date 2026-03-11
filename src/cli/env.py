@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -9,7 +10,7 @@ from dotenv import dotenv_values
 
 from ..agents import create_agent
 from ..io_helpers import emit_json
-from .install import install_agent
+from .install import ensure_agent_installed
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -142,12 +143,28 @@ def run_agent_command(
         resolved_model_override = None
     agent = create_agent(agent_name, workdir=workdir)
     if not agent.is_installed():
-        print(f"[run] {agent_name} not installed; running cakit install {agent_name}.")
-        install_result = install_agent(agent_name, scope="user")
-        if not install_result.ok:
-            print(f"[run] install failed: {install_result.details}")
-            return 1
+        print(f"[run] {agent_name} not installed; running cakit install {agent_name}.", file=sys.stderr)
+        attempted_install, install_result = ensure_agent_installed(
+            agent_name,
+            scope="user",
+            output_stream=sys.stderr,
+        )
+        if attempted_install and install_result is not None and not install_result.ok:
+            result = agent._build_error_run_result(
+                message=f"{agent_name} install failed: {install_result.details or 'unknown install error'}",
+                cakit_exit_code=1,
+                raw_output=install_result.details,
+            )
+            emit_json(result.to_dict())
+            return result.cakit_exit_code if result.cakit_exit_code is not None else 1
         agent = create_agent(agent_name, workdir=workdir)
+        if not agent.is_installed():
+            result = agent._build_error_run_result(
+                message=f"{agent_name} is not installed after auto-install.",
+                cakit_exit_code=1,
+            )
+            emit_json(result.to_dict())
+            return result.cakit_exit_code if result.cakit_exit_code is not None else 1
     result = agent.run(
         prompt,
         images=image_paths,

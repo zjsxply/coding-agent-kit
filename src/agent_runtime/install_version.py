@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+from ..io_helpers import file_lock
+
 
 def build_install_package_spec(package: str, version: Optional[str], *, style: str) -> str:
     if not version:
@@ -165,26 +167,24 @@ def parse_version_json_path(
         return None
 
     value = select_last_value(payload, resolved_path)
-    if value is None:
+    if not isinstance(value, str):
         return None
-    if isinstance(value, str):
-        cleaned = value.strip()
-        return cleaned or None
-    cleaned = str(value).strip()
+    cleaned = value.strip()
     return cleaned or None
 
 
 def ensure_uv(run: Callable[[Iterable[str]], Any]) -> bool:
-    if shutil.which("uv") is not None:
-        return True
-    if not sys.platform.startswith("linux"):
-        return False
-    if shutil.which("curl") is None:
-        return False
-    install = run(["bash", "-lc", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
-    if getattr(install, "exit_code", 1) != 0:
-        return False
-    return shutil.which("uv") is not None or (Path.home() / ".local" / "bin" / "uv").exists()
+    with file_lock("deps-uv"):
+        if shutil.which("uv") is not None:
+            return True
+        if not sys.platform.startswith("linux"):
+            return False
+        if shutil.which("curl") is None:
+            return False
+        install = run(["bash", "-lc", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
+        if getattr(install, "exit_code", 1) != 0:
+            return False
+        return shutil.which("uv") is not None or (Path.home() / ".local" / "bin" / "uv").exists()
 
 
 def pip_install(

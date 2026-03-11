@@ -35,33 +35,28 @@ DEFAULT_WEB_KEYWORD_GROUPS = [
 DEFAULT_BASIC_EXPECTED = "CAKIT_HEALTHCHECK_OK"
 DEFAULT_VIDEO_EXPECTED = "CAKIT VIDEO TEST 123"
 DEFAULT_BASIC_PROMPT = f"Reply with exactly this text and nothing else: {DEFAULT_BASIC_EXPECTED}"
-CASE_ORDER = {"basic": 0, "image": 1, "video": 2, "web": 3}
-TASK_CHOICES = ("basic", "image", "video", "web")
+CASE_ORDER = {
+    "basic": 0,
+    "image": 1,
+    "image-prompt-path": 2,
+    "video": 3,
+    "video-prompt-path": 4,
+    "web": 5,
+}
+TASK_CHOICES = ("basic", "image", "image-prompt-path", "video", "video-prompt-path", "web")
 
 def _build_agent_env(_agent: str) -> Dict[str, str]:
     return dict(os.environ)
 
 
-def _extract_last_json(text: str) -> Dict[str, Any]:
-    decoder = json.JSONDecoder()
-    idx = 0
-    last_obj: Optional[Dict[str, Any]] = None
-    while idx < len(text):
-        ch = text[idx]
-        if ch != "{":
-            idx += 1
-            continue
-        try:
-            obj, end = decoder.raw_decode(text, idx)
-        except Exception:
-            idx += 1
-            continue
-        if isinstance(obj, dict):
-            last_obj = obj
-        idx = end
-    if last_obj is None:
-        raise ValueError("no JSON object found in command output")
-    return last_obj
+def _parse_stdout_json_object(text: str) -> Dict[str, Any]:
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("command output is empty")
+    payload = json.loads(stripped)
+    if not isinstance(payload, dict):
+        raise ValueError("command output is not a JSON object")
+    return payload
 
 
 def _empty_payload() -> Dict[str, Any]:
@@ -92,11 +87,26 @@ def _run_cakit(
         return 124, _empty_payload(), stdout, stderr, "timeout"
     parse_error: Optional[str] = None
     try:
-        payload = _extract_last_json(proc.stdout)
+        payload = _parse_stdout_json_object(proc.stdout)
     except Exception as exc:
         payload = _empty_payload()
         parse_error = str(exc)
     return proc.returncode, payload, proc.stdout, proc.stderr, parse_error
+
+
+def _build_prompt_path_prompt(*, media_kind: str, media_path: Path) -> str:
+    resolved = media_path.expanduser().resolve()
+    if media_kind == "image":
+        return (
+            f"Read the local image file at this exact path: {resolved}. "
+            "Open that local file directly from the path in this prompt. "
+            "What is shown in the image? What text can you read?"
+        )
+    return (
+        f"Read the local video file at this exact path: {resolved}. "
+        "Open that local file directly from the path in this prompt. "
+        "What happens in the video? List any visible text."
+    )
 
 
 def _is_int(value: Any) -> bool:
@@ -177,6 +187,7 @@ def _run_case(
     image: Optional[Path],
     video: Optional[Path],
     expected_keywords: Optional[List[str]],
+    required: bool,
     timeout_seconds: int,
     workdir: Path,
 ) -> Dict[str, Any]:
@@ -208,6 +219,7 @@ def _run_case(
     return {
         "label": label,
         "ok": ok,
+        "required": required,
         "command_rc": rc,
         "cakit_exit_code": payload.get("cakit_exit_code"),
         "command_exit_code": payload.get("command_exit_code"),
@@ -249,6 +261,7 @@ def _build_case_specs(
                 "image": None,
                 "video": None,
                 "expected_keywords": [DEFAULT_BASIC_EXPECTED],
+                "required": True,
             }
         )
     if "image" in tasks:
@@ -261,6 +274,19 @@ def _build_case_specs(
                 "image": image_path,
                 "video": None,
                 "expected_keywords": image_keywords,
+                "required": True,
+            }
+        )
+    if "image-prompt-path" in tasks:
+        specs.append(
+            {
+                "agent": agent,
+                "label": "image-prompt-path",
+                "prompt": _build_prompt_path_prompt(media_kind="image", media_path=image_path),
+                "image": None,
+                "video": None,
+                "expected_keywords": ["unminimize", "ubuntu", "verteen/ubuntu-unminimize"],
+                "required": False,
             }
         )
     if "video" in tasks:
@@ -272,6 +298,19 @@ def _build_case_specs(
                 "image": None,
                 "video": video_path,
                 "expected_keywords": [DEFAULT_VIDEO_EXPECTED],
+                "required": True,
+            }
+        )
+    if "video-prompt-path" in tasks:
+        specs.append(
+            {
+                "agent": agent,
+                "label": "video-prompt-path",
+                "prompt": _build_prompt_path_prompt(media_kind="video", media_path=video_path),
+                "image": None,
+                "video": None,
+                "expected_keywords": [DEFAULT_VIDEO_EXPECTED],
+                "required": False,
             }
         )
     if "web" in tasks:
@@ -283,6 +322,7 @@ def _build_case_specs(
                 "image": None,
                 "video": None,
                 "expected_keywords": DEFAULT_WEB_KEYWORDS,
+                "required": True,
             }
         )
     for spec in specs:
@@ -300,6 +340,7 @@ def _run_case_spec(spec: Dict[str, Any], timeout_seconds: int) -> Dict[str, Any]
         image=spec["image"],
         video=spec["video"],
         expected_keywords=spec["expected_keywords"],
+        required=bool(spec.get("required", True)),
         timeout_seconds=timeout_seconds,
         workdir=Path(spec["workdir"]),
     )
@@ -307,14 +348,9 @@ def _run_case_spec(spec: Dict[str, Any], timeout_seconds: int) -> Dict[str, Any]
     return result
 
 
-def _run_agent_case_specs(case_specs: List[Dict[str, Any]], timeout_seconds: int) -> List[Dict[str, Any]]:
-    ordered_specs = sorted(case_specs, key=lambda spec: CASE_ORDER.get(str(spec.get("label")), 99))
-    return [_run_case_spec(spec, timeout_seconds) for spec in ordered_specs]
-
-
 def _build_agent_report(agent: str, cases: List[Dict[str, Any]]) -> Dict[str, Any]:
     ordered_cases = sorted(cases, key=lambda case: CASE_ORDER.get(str(case.get("label")), 99))
-    overall_ok = all(case["ok"] for case in ordered_cases)
+    overall_ok = all(case["ok"] for case in ordered_cases if bool(case.get("required", True)))
     version = None
     for case in ordered_cases:
         if isinstance(case.get("agent_version"), str) and case["agent_version"]:
@@ -336,25 +372,25 @@ def _run_all_cases(
     max_workers: int,
 ) -> Dict[str, List[Dict[str, Any]]]:
     cases_by_agent: Dict[str, List[Dict[str, Any]]] = {}
-    specs_by_agent: Dict[str, List[Dict[str, Any]]] = {}
-    for spec in case_specs:
-        specs_by_agent.setdefault(str(spec["agent"]), []).append(spec)
-    if not parallel or len(case_specs) <= 1:
-        for agent_specs in specs_by_agent.values():
-            for result in _run_agent_case_specs(agent_specs, timeout_seconds):
-                cases_by_agent.setdefault(str(result["agent"]), []).append(result)
+    ordered_specs = sorted(
+        case_specs,
+        key=lambda spec: (
+            str(spec.get("agent")),
+            CASE_ORDER.get(str(spec.get("label")), 99),
+        ),
+    )
+    if not parallel or len(ordered_specs) <= 1:
+        for spec in ordered_specs:
+            result = _run_case_spec(spec, timeout_seconds)
+            cases_by_agent.setdefault(str(result["agent"]), []).append(result)
         return cases_by_agent
 
-    workers = min(max_workers, len(specs_by_agent))
+    workers = min(max_workers, len(ordered_specs))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [
-            executor.submit(_run_agent_case_specs, agent_specs, timeout_seconds)
-            for agent_specs in specs_by_agent.values()
-        ]
+        futures = [executor.submit(_run_case_spec, spec, timeout_seconds) for spec in ordered_specs]
         for future in concurrent.futures.as_completed(futures):
-            results = future.result()
-            for result in results:
-                cases_by_agent.setdefault(str(result["agent"]), []).append(result)
+            result = future.result()
+            cases_by_agent.setdefault(str(result["agent"]), []).append(result)
     return cases_by_agent
 
 
@@ -448,12 +484,20 @@ def main() -> int:
     parser.add_argument("--web-url", default=DEFAULT_WEB_URL, help="URL used for web access test")
     parser.add_argument(
         "--tasks",
-        default="basic,image,video,web",
-        help="Comma-separated tasks to run: basic,image,video,web (default: all)",
+        default="basic,image,image-prompt-path,video,video-prompt-path,web",
+        help=(
+            "Comma-separated tasks to run: "
+            "basic,image,image-prompt-path,video,video-prompt-path,web (default: all)"
+        ),
     )
     parser.add_argument("--timeout-seconds", type=int, default=900, help="Per-case timeout in seconds")
     parser.add_argument("--no-parallel", action="store_true", help="Run cases sequentially")
     parser.add_argument("--max-workers", type=int, default=6, help="Max workers for parallel execution")
+    parser.add_argument(
+        "--preinstall-first",
+        action="store_true",
+        help="Preinstall each agent before running cases instead of exercising cakit run auto-install.",
+    )
     args = parser.parse_args()
 
     image_path = Path(args.image).expanduser().resolve()
@@ -469,10 +513,10 @@ def main() -> int:
             )
         )
         return 2
-    if "image" in tasks and not image_path.exists():
+    if any(task in tasks for task in ("image", "image-prompt-path")) and not image_path.exists():
         print(json.dumps({"error": f"image not found: {image_path}"}, ensure_ascii=False, indent=2))
         return 2
-    if "video" in tasks and not video_path.exists():
+    if any(task in tasks for task in ("video", "video-prompt-path")) and not video_path.exists():
         print(json.dumps({"error": f"video not found: {video_path}"}, ensure_ascii=False, indent=2))
         return 2
     if not _is_positive_int(args.max_workers):
@@ -482,23 +526,24 @@ def main() -> int:
     started = time.time()
     run_root = Path("/tmp") / f"cakit-availability-{time.time_ns()}"
     run_root.mkdir(parents=True, exist_ok=True)
-    install_ok, install_errors = _preinstall_agents(
-        agents=args.agents,
-        timeout_seconds=args.timeout_seconds,
-    )
-    if not install_ok:
-        report = {
-            "timestamp": int(started),
-            "ok": False,
-            "runtime_seconds": round(time.time() - started, 3),
-            "parallel": not args.no_parallel,
-            "max_workers": args.max_workers,
-            "run_root": str(run_root),
-            "install_errors": install_errors,
-            "agents": [],
-        }
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-        return 1
+    if args.preinstall_first:
+        install_ok, install_errors = _preinstall_agents(
+            agents=args.agents,
+            timeout_seconds=args.timeout_seconds,
+        )
+        if not install_ok:
+            report = {
+                "timestamp": int(started),
+                "ok": False,
+                "runtime_seconds": round(time.time() - started, 3),
+                "parallel": not args.no_parallel,
+                "max_workers": args.max_workers,
+                "run_root": str(run_root),
+                "install_errors": install_errors,
+                "agents": [],
+            }
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 1
     agents_reports = _test_agents(
         agents=args.agents,
         image_path=image_path,

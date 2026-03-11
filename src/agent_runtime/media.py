@@ -7,6 +7,10 @@ import uuid
 from pathlib import Path
 
 
+class MediaStageError(RuntimeError):
+    pass
+
+
 def stage_media_files(media_paths: list[Path], *, staged_media_dirs: set[Path]) -> list[Path]:
     staged: list[Path] = []
     run_stage = f"{os.getpid()}-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
@@ -16,6 +20,8 @@ def stage_media_files(media_paths: list[Path], *, staged_media_dirs: set[Path]) 
 
     for index, media_path in enumerate(media_paths):
         src = media_path.expanduser().resolve()
+        if not src.exists() or not src.is_file():
+            raise MediaStageError(f"media file not found: {src}")
         suffix = src.suffix
         stem = src.stem or "media"
         safe_stem = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in stem)
@@ -24,8 +30,8 @@ def stage_media_files(media_paths: list[Path], *, staged_media_dirs: set[Path]) 
             if src != target:
                 shutil.copy2(src, target)
             staged.append(target)
-        except Exception:
-            staged.append(src)
+        except OSError as exc:
+            raise MediaStageError(f"failed to stage media file {src}: {exc}") from exc
     return staged
 
 

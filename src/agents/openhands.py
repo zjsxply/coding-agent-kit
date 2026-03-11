@@ -140,14 +140,6 @@ class OpenHandsAgent(CodingAgent):
     ):
         if command_result.exit_code == 0 and has_error_event:
             run_result.cakit_exit_code = 1
-            return run_result
-        run_result.cakit_exit_code = self._resolve_strict_run_exit_code(
-            command_exit_code=command_result.exit_code,
-            models_usage=run_result.models_usage,
-            llm_calls=run_result.llm_calls,
-            tool_calls=run_result.tool_calls,
-            response=run_result.response,
-        )
         return run_result
 
     def _build_run_env(self, *, model_override: Optional[str] = None) -> Dict[str, str]:

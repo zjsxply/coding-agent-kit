@@ -151,44 +151,6 @@ def load_json_payloads(text: str) -> List[Dict[str, Any]]:
     return payloads
 
 
-def _collect_response_candidates(obj: Any, candidates: list[str]) -> None:
-    if isinstance(obj, list):
-        for entry in obj:
-            _collect_response_candidates(entry, candidates)
-        return
-    if not isinstance(obj, dict):
-        return
-    nested_item = obj.get("item")
-    if isinstance(nested_item, (dict, list)):
-        _collect_response_candidates(nested_item, candidates)
-    content = obj.get("content")
-    if isinstance(content, list):
-        _collect_response_candidates(content, candidates)
-    for key in ("text", "message", "content", "output", "final", "response", "answer"):
-        if key in obj:
-            value = obj.get(key)
-            if isinstance(value, str):
-                cleaned = value.strip()
-                if cleaned:
-                    candidates.append(cleaned)
-    for value in obj.values():
-        if isinstance(value, (dict, list)):
-            _collect_response_candidates(value, candidates)
-
-
-def extract_last_response(payloads: list[Dict[str, Any]], raw_output: str) -> Optional[str]:
-    candidates: list[str] = []
-    for payload in payloads:
-        _collect_response_candidates(payload, candidates)
-    if candidates:
-        return candidates[-1]
-    stdout = stdout_only(raw_output)
-    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-    if not lines:
-        return None
-    return lines[-1]
-
-
 def load_json(
     path: Path,
     *,
@@ -235,30 +197,17 @@ def load_output_json_payloads(output: str, *, stdout_only_output: bool = True) -
 
 
 def extract_last_json_value(text: str) -> Optional[Any]:
-    decoder = json.JSONDecoder()
-    last_value_obj: Optional[Any] = None
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if char not in {"{", "["}:
-            index += 1
-            continue
-        try:
-            value, end = decoder.raw_decode(text, index)
-        except Exception:
-            index += 1
-            continue
-        if isinstance(value, (dict, list)):
-            last_value_obj = value
-        index = end
-    return last_value_obj
+    stripped = text.strip()
+    if not stripped:
+        return None
+    return parse_json(stripped)
 
 
 def parse_output_json(output: str) -> Optional[Any]:
     stdout = stdout_only(output).strip()
     if not stdout:
         return None
-    return extract_last_json_value(stdout)
+    return parse_json(stdout)
 
 
 def parse_output_json_object(output: str) -> Optional[Dict[str, Any]]:

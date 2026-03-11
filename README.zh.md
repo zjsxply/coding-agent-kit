@@ -25,6 +25,7 @@ cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 对于 Python/uv 类 agent，`--scope` 当前会被忽略，安装行为按对应 agent 安装器默认逻辑执行。
 `all` 和 `*` 可用于安装全部已支持 agent（`*` 需加引号，避免被 shell 展开）。
 省略 `<agent>` 时，默认等同于 `all`。
+当目标为 `all` / `*` 时，cakit 会并行安装各 agent，并在最终聚合输出里统一报告失败项，而不是在首个失败处提前中断。
 未传 `--version` 时，`cakit install` 始终安装执行当下可获得的上游最新版本（latest）。
 可使用 `--version` 指定安装版本/引用：
 - `codex` / `codebuddy` / `claude` / `copilot` / `gemini` / `qwen` / `qoder` / `continue` / `crush` / `opencode` / `auggie` / `kilocode` / `openclaw` / `kimi`：npm 包版本号或 tag（例如 `0.98.0`、`2026.2.15`、`1.9.0`）。

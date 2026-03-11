@@ -169,11 +169,24 @@ class KimiAgent(CodingAgent):
 
         return self.finalize_run(
             command_result=result,
-            response=runtime_parsing.extract_last_response(payloads, output),
+            response=self._extract_stream_response(payloads, output),
             models_usage=snapshot.models_usage if snapshot is not None else {},
             llm_calls=snapshot.llm_calls if snapshot is not None else None,
             tool_calls=snapshot.tool_calls if snapshot is not None else None,
         )
+
+    def _extract_stream_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
+        assistant_contents = select_values(payloads, '$[?(@.role == "assistant")].content')
+        for content in reversed(assistant_contents or []):
+            if isinstance(content, str):
+                normalized = runtime_parsing.normalize_text(content)
+                if normalized is not None:
+                    return normalized
+                continue
+            text = runtime_parsing.extract_content_text(content, allow_scalars=False)
+            if text is not None:
+                return text
+        return runtime_parsing.last_stdout_line(output)
 
     def _resolve_runtime_settings(self, *, model_override: Optional[str]) -> Dict[str, Optional[str]]:
         raw_provider_type = os.environ.get("CAKIT_KIMI_PROVIDER_TYPE")

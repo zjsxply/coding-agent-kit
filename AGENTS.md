@@ -69,6 +69,30 @@
   - Code and documentation must stay consistent. When behavior changes, update docs in the same PR/patch and ensure they reflect the exact implementation (no mismatched fallbacks or fields).
   - Update `README.md` and `README.zh.md` Test Coverage Matrix after testing, and record `Test Version` from `agent_version` in `cakit run` output.
 
+## Repository Architecture
+- Root-level responsibilities:
+  - `README.md` / `README.zh.md`: user-facing behavior, supported coding agents, login methods, and test coverage.
+  - `AGENTS.md` / `AGENTS.zh.md`: contributor rules, repository architecture, implementation constraints, and workflow requirements.
+  - `.env.template` / `.env.template.zh`: mirrored cakit-managed environment-variable templates.
+  - `docs/`: detailed per-agent and cross-cutting behavior docs; keep these aligned with the actual CLI behavior.
+  - `tests/`: availability workflow scripts and local media fixtures; do not use this directory for ad-hoc debugging output.
+- `src/` layering:
+  - `src/cli/`: CLI entrypoints and multi-agent orchestration only. Keep argument parsing, target fan-out, exit-code handling, and final JSON emission here; do not move agent-specific install/run parsing into this layer.
+  - `src/agents/`: one file per coding agent, one class per agent. Agent-specific install/config/run/version logic and agent-local parsing stay here.
+  - `src/agent_runtime/`: shared runtime mechanics used by multiple coding agents (command execution, environment shaping, media handling, install/version helpers, trajectory conversion). Keep this layer agent-agnostic.
+  - `src/stats_extract.py`: shared JSONPath-based stats extraction and aggregation helpers only.
+  - `src/models.py`: stable dataclasses and payload contracts shared across CLI and agent layers.
+  - `src/io_helpers.py`: serialization/output helpers only.
+- Dependency direction:
+  - `src/cli/` may depend on `src/agents/`, `src/models.py`, and other shared helpers.
+  - `src/agents/` may depend on `src/agent_runtime/`, `src/stats_extract.py`, `src/models.py`, and generic helpers.
+  - `src/agent_runtime/` and `src/stats_extract.py` must not import concrete coding-agent modules.
+- Placement rules for new code:
+  - Put multi-agent install/configure orchestration in `src/cli/`; individual agent installers must not special-case aggregate selectors such as `all`.
+  - Put reusable run/install mechanics in `src/agent_runtime/` or `src/agents/base.py` before copying logic into multiple coding agents.
+  - Keep parsing logic as low as possible: shared format-aware parsing in `src/stats_extract.py`, agent-private parsing in the corresponding `src/agents/<agent>.py`.
+  - Put temporary diagnostics under `/tmp`, not in the repository tree.
+
 ## Code Structure and Style
 - Code placement and responsibilities:
   - `src/agents/`: one file per agent, one class per agent. All agent-specific logic (install, run, usage extraction, etc.) must live in the corresponding class.
@@ -107,6 +131,7 @@
 
 ## Behavioral Constraints
 - If an agent is not installed, `cakit run` must auto-run `cakit install <agent>` with a notice.
+- `cakit install all` / `cakit install '*'` must install targets in parallel at the CLI aggregation layer. A single target failure or uncaught installer exception must not interrupt the remaining installs; report failed agent details in the final aggregate output instead.
 - Commands that are expected to succeed must return exit code 0; usage parsing failures or missing critical fields must return non-zero.
 - `cakit install` must auto-install missing runtime dependencies (e.g., Node.js, uv) and work without `sudo` or in root environments.
 - Default install behavior must always target latest upstream release: when `--version` is not provided, do not pin a hardcoded default version in code.

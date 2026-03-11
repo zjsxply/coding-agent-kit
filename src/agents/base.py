@@ -24,7 +24,6 @@ __all__ = [
     "InstallStrategy",
     "ParsedStats",
     "RunCommandTemplate",
-    "StatsParseResult",
     "VersionCommandTemplate",
     "RunParseResult",
     "RunPlan",
@@ -64,12 +63,6 @@ class ParsedStats:
     llm_calls: Optional[int] = None
     tool_calls: Optional[int] = None
     total_cost: Optional[float] = None
-    response: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class StatsParseResult:
-    snapshot: Optional[StatsSnapshot] = None
     response: Optional[str] = None
 
 
@@ -778,7 +771,10 @@ class CodingAgent(abc.ABC):
         if not media_paths:
             return prompt, []
 
-        staged_paths = runtime_media.stage_media_files(media_paths, staged_media_dirs=self._staged_media_dirs)
+        try:
+            staged_paths = runtime_media.stage_media_files(media_paths, staged_media_dirs=self._staged_media_dirs)
+        except runtime_media.MediaStageError as exc:
+            self._raise_config_error(str(exc))
         refs: list[str] = []
         for staged in staged_paths:
             try:

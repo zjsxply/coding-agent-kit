@@ -146,6 +146,7 @@ class SweAgent(CodingAgent):
         model = runtime_env.resolve_openai_model("SWE_AGENT_MODEL", model_override=model_override)
         repo_path = self._resolve_repo_path(base_env=base_env)
         output_dir = self._make_temp_dir(prefix="cakit-sweagent-")
+        supports_output_dir = self._supports_output_dir(env=env, base_env=base_env)
         cmd = [
             "sweagent",
             "run",
@@ -154,8 +155,9 @@ class SweAgent(CodingAgent):
             f"--env.repo.path={repo_path}",
             "--problem_statement.text",
             prompt,
-            f"--output_dir={output_dir}",
         ]
+        if supports_output_dir:
+            cmd.append(f"--output_dir={output_dir}")
         config_path = Path.home() / ".config" / "sweagent" / "config.yaml"
         if config_path.exists():
             cmd.extend(["--config", str(config_path)])
@@ -163,25 +165,9 @@ class SweAgent(CodingAgent):
             cmd.extend(["--agent.model.name", model])
         result = self._run_sweagent_command(cmd, env=env, base_env=base_env)
         output = result.output
-        if result.exit_code != 0 and "--output_dir" in output and "unrecognized" in output:
-            cmd = [
-                "sweagent",
-                "run",
-                "--env.deployment.type=local",
-                "--env.repo.type=local",
-                f"--env.repo.path={repo_path}",
-                "--problem_statement.text",
-                prompt,
-            ]
-            if config_path.exists():
-                cmd.extend(["--config", str(config_path)])
-            if model:
-                cmd.extend(["--agent.model.name", model])
-            result = self._run_sweagent_command(cmd, env=env, base_env=base_env)
-            output = result.output
 
         trajectory_files: list[Path] = []
-        if output_dir.exists():
+        if supports_output_dir and output_dir.exists():
             trajectory_files = sorted(path for path in output_dir.rglob("*.traj") if path.is_file())
         if not trajectory_files:
             trajectory_payloads = None
@@ -405,6 +391,12 @@ class SweAgent(CodingAgent):
             return self._run(args, env=env, base_env=base_env)
         finally:
             self.workdir = original_workdir
+
+    def _supports_output_dir(self, *, env: Optional[Dict[str, str]], base_env: Optional[Dict[str, str]]) -> bool:
+        help_result = self._run_sweagent_command(["sweagent", "run", "--help"], env=env, base_env=base_env)
+        if help_result.exit_code != 0:
+            return False
+        return "--output_dir" in help_result.output
 
     def _extract_single_trajectory_stats(
         self,

@@ -30,9 +30,6 @@ class OpenClawAgent(CodingAgent):
     )
 
     _SAFE_PROVIDER_ID_RE = re.compile(r"[^a-z0-9._-]+")
-    _DEFAULT_CONTEXT_WINDOW = 32_000
-    _DEFAULT_MAX_TOKENS = 32_000
-
     def configure(self) -> Optional[str]:
         settings, err = self._resolve_runtime_settings(model_override=None)
         if err is not None:
@@ -50,7 +47,9 @@ class OpenClawAgent(CodingAgent):
         )
         if not config_path.exists():
             return None
-        self._patch_custom_provider_limits(config_path)
+        limit_error = self._patch_custom_provider_limits(config_path)
+        if limit_error is not None:
+            self._raise_config_error(limit_error)
         return str(config_path)
 
     def _run_impl(
@@ -90,7 +89,9 @@ class OpenClawAgent(CodingAgent):
             if direct_config.exists()
             else nested_config
         )
-        self._patch_custom_provider_limits(runtime_config_path)
+        limit_error = self._patch_custom_provider_limits(runtime_config_path)
+        if limit_error is not None:
+            return self._build_error_run_result(message=limit_error, cakit_exit_code=1)
         extra_args = ["--session-id", session_id]
         if reasoning_effort:
             extra_args.extend(["--thinking", reasoning_effort])
@@ -220,27 +221,27 @@ class OpenClawAgent(CodingAgent):
             return Path(root).expanduser()
         return Path.home() / ".openclaw"
 
-    def _patch_custom_provider_limits(self, config_path: Path) -> None:
-        min_context_window = self._resolve_limit_env(
-            "CAKIT_OPENCLAW_CONTEXT_WINDOW",
-            self._DEFAULT_CONTEXT_WINDOW,
-        )
-        min_max_tokens = self._resolve_limit_env(
-            "CAKIT_OPENCLAW_MAX_TOKENS",
-            self._DEFAULT_MAX_TOKENS,
-        )
+    def _patch_custom_provider_limits(self, config_path: Path) -> Optional[str]:
+        min_context_window, context_error = self._resolve_limit_env("CAKIT_OPENCLAW_CONTEXT_WINDOW")
+        if context_error is not None:
+            return context_error
+        min_max_tokens, max_tokens_error = self._resolve_limit_env("CAKIT_OPENCLAW_MAX_TOKENS")
+        if max_tokens_error is not None:
+            return max_tokens_error
+        if min_context_window is None and min_max_tokens is None:
+            return None
         text = self._read_text(config_path)
         if not text:
-            return
+            return f"openclaw config not found or empty for custom limit overrides: {config_path}"
         payload = runtime_parsing.parse_json_dict(text)
         if payload is None:
-            return
+            return f"failed to parse openclaw config for custom limit overrides: {config_path}"
         models = payload.get("models")
         if not isinstance(models, dict):
-            return
+            return "openclaw config is missing models.providers for custom limit overrides"
         providers = models.get("providers")
         if not isinstance(providers, dict):
-            return
+            return "openclaw config is missing providers for custom limit overrides"
         changed = False
         for provider in providers.values():
             if not isinstance(provider, dict):
@@ -253,26 +254,27 @@ class OpenClawAgent(CodingAgent):
                     continue
                 context_window = runtime_parsing.as_int(model.get("contextWindow"))
                 max_tokens = runtime_parsing.as_int(model.get("maxTokens"))
-                if context_window is None or context_window < min_context_window:
+                if min_context_window is not None and (context_window is None or context_window < min_context_window):
                     model["contextWindow"] = min_context_window
                     changed = True
-                if max_tokens is None or max_tokens < min_max_tokens:
+                if min_max_tokens is not None and (max_tokens is None or max_tokens < min_max_tokens):
                     model["maxTokens"] = min_max_tokens
                     changed = True
         if changed:
             self._write_text(config_path, json.dumps(payload, ensure_ascii=True, indent=2))
+        return None
 
-    def _resolve_limit_env(self, env_key: str, default: int) -> int:
+    def _resolve_limit_env(self, env_key: str) -> Tuple[Optional[int], Optional[str]]:
         raw = runtime_parsing.normalize_text(os.environ.get(env_key))
         if raw is None:
-            return default
+            return None, None
         try:
             value = int(raw)
-        except Exception:
-            return default
+        except ValueError:
+            return None, f"invalid {env_key}: expected a positive integer"
         if value <= 0:
-            return default
-        return value
+            return None, f"invalid {env_key}: expected a positive integer"
+        return value, None
 
     def _resolve_session_path(
         self,

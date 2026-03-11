@@ -25,6 +25,7 @@ For npm-based agents, use `--scope global` to run system-level install commands 
 For Python/uv-based agents, `--scope` is currently ignored; cakit uses the agent installer's default behavior.
 `all` and `*` install all supported agents (`*` should be quoted to avoid shell expansion).
 If `<agent>` is omitted, it defaults to `all`.
+For `all` / `*`, cakit installs targets in parallel and reports failed agents together in the final aggregate output instead of stopping at the first failure.
 When `--version` is omitted, `cakit install` always installs the latest upstream release available at install time.
 Use `--version` to install a specific version or reference:
 - `codex` / `codebuddy` / `claude` / `copilot` / `gemini` / `qwen` / `qoder` / `continue` / `crush` / `opencode` / `auggie` / `kilocode` / `openclaw` / `kimi`: npm package version or tag (for example `0.98.0`, `2026.2.15`, `1.9.0`).

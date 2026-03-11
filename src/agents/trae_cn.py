@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import platform
-import re
 import tempfile
 import time
 from pathlib import Path
@@ -213,18 +212,6 @@ class TraeCnAgent(CodingAgent):
                     break
 
         model_name = req_str(payload, "$.model")
-        if model_name is None:
-            instruction_contents = select_values(payload, "$.agent_states[*].instruction[*].content")
-            for content in instruction_contents or []:
-                if not isinstance(content, str):
-                    continue
-                match = re.search(r"underlying model is ([^\\.]+)\\.", content)
-                if not match:
-                    continue
-                candidate = match.group(1).strip()
-                if candidate:
-                    model_name = candidate
-                    break
 
         llm_call_values = select_values(payload, '$.agent_states[*].messages[?(@.role == "assistant")]')
         llm_calls = len(llm_call_values) if llm_call_values is not None else None
