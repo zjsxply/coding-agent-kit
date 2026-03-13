@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Callable, Optional, TextIO
 
 from ..agents import create_agent, list_agents
@@ -128,6 +129,56 @@ def _install_target(target: str, *, scope: str, version: Optional[str]) -> Targe
     }
 
 
+def _resolve_configure_post_command() -> Optional[str]:
+    raw_value = os.environ.get("CAKIT_CONFIGURE_POST_COMMAND")
+    if raw_value is None:
+        return None
+    command = raw_value.strip()
+    return command or None
+
+
+def _run_configure_post_command(target: str, config_path: str) -> TargetCommandResult:
+    command = _resolve_configure_post_command()
+    if command is None:
+        return True, {}
+
+    config_file = Path(config_path).expanduser()
+    command_env = os.environ.copy()
+    command_env["CAKIT_CONFIGURE_AGENT"] = target
+    command_env["CAKIT_CONFIG_PATH"] = str(config_file)
+    command_env["CAKIT_CONFIG_DIR"] = str(config_file.parent)
+    command_cwd = config_file.parent if config_file.parent.exists() else Path.cwd()
+
+    try:
+        result = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=str(command_cwd),
+            env=command_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    except OSError as exc:
+        return False, {
+            "post_config_command": command,
+            "details": f"post-config command failed: {exc}",
+            "error_type": type(exc).__name__,
+        }
+
+    payload: dict[str, object] = {
+        "post_config_command": command,
+        "post_config_exit_code": result.returncode,
+    }
+    output = (result.stdout or "").strip()
+    if output:
+        payload["post_config_output"] = output
+    if result.returncode != 0:
+        payload["details"] = f"post-config command failed with exit code {result.returncode}"
+        return False, payload
+    return True, payload
+
+
 def _configure_target(target: str) -> TargetCommandResult:
     config_path = create_agent(target).configure()
     payload: dict[str, object] = {
@@ -137,7 +188,10 @@ def _configure_target(target: str) -> TargetCommandResult:
     }
     if config_path is None:
         payload["details"] = "no config written"
-    return True, payload
+        return True, payload
+    post_ok, post_payload = _run_configure_post_command(target, config_path)
+    payload.update(post_payload)
+    return post_ok, payload
 
 
 def run_logged_command(

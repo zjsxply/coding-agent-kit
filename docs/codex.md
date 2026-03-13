@@ -39,6 +39,8 @@ This document explains how cakit collects Codex CLI metadata.
 **Notes**
 - If `CAKIT_CODEX_USE_OAUTH` is set, cakit expects a login file at `${CODEX_HOME}/auth.json` created by `codex login`.
 - For API-key mode, set `CODEX_API_KEY` and `CODEX_API_BASE` if you need a non-default base URL.
+- If you need unsupported custom Codex settings after `cakit configure codex`, set `CAKIT_CONFIGURE_POST_COMMAND`; the hook receives `CAKIT_CONFIG_PATH` for post-processing `config.toml`.
+- `cakit run codex` currently invokes `codex exec --dangerously-bypass-approvals-and-sandbox`, so sandbox config keys written to `config.toml` (for example `[sandbox_workspace_write].network_access = false`) are not enforced during `cakit run codex`. Top-level config such as `web_search = "disabled"` is still respected.
 - Model priority is: `--model` > `CODEX_MODEL` > `OPENAI_DEFAULT_MODEL`.
 - To avoid accidental auth mode selection, cakit removes both `OPENAI_API_KEY` and `CODEX_API_KEY` from the Codex CLI environment when OAuth is enabled.
 - If API-key mode is requested but `CODEX_API_KEY` is missing, cakit avoids passing `OPENAI_API_KEY`/`CODEX_API_KEY` to Codex (so an existing OAuth login can still work).

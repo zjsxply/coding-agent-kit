@@ -119,6 +119,18 @@ cakit configure [<agent|all|*>]
 用于根据当前环境变量重新生成 agent 配置。
 省略 `<agent>` 时，默认等同于 `all`。
 如更新了环境变量，请先重新执行 `set -a; source .env; set +a`，再执行 `cakit configure [<agent|all|*>]`。
+若设置了 `CAKIT_CONFIGURE_POST_COMMAND`，cakit 会在某个 target 实际写出配置文件后执行该 `bash -lc` 命令，并向 hook 暴露 `CAKIT_CONFIGURE_AGENT`、`CAKIT_CONFIG_PATH`、`CAKIT_CONFIG_DIR`。
+若该后处理命令返回非 0，`cakit configure` 会将该 target 判定为失败。
+这类 hook 往往是 agent 专属的，建议在 `cakit configure <agent>` 前临时导出，而不是长期写进 `.env`。
+示例：在 `cakit configure codex` 后禁用 Codex 的 web search：
+
+```bash
+export CAKIT_CONFIGURE_POST_COMMAND='if [ "$CAKIT_CONFIGURE_AGENT" = "codex" ]; then printf "\nweb_search = \"disabled\"\n" >> "$CAKIT_CONFIG_PATH"; fi'
+cakit configure codex
+```
+
+对 Codex 而言，`cakit run codex` 当前会调用 `codex exec --dangerously-bypass-approvals-and-sandbox`，因此像 `[sandbox_workspace_write].network_access = false` 这类沙箱配置虽然会写进配置文件，但不会被 `cakit run codex` 实际执行时强制生效。
+
 若某个 agent 不需要配置文件，`cakit configure` 可能返回 `"config_path": null` 但仍表示成功。
 注：Claude Code 直接读取环境变量，`cakit configure claude` 是空操作（不会写入配置文件）。
 
@@ -275,7 +287,6 @@ cakit tools
 - [ ] `cakit run` 增加参数：禁用联网搜索 / 完全禁用联网
 - [ ] 写一个安装脚本 `.sh`，并构建测试点：启动 Docker 容器（包括 Ubuntu、Debian 等系统），保证这个安装脚本能在任意 Docker 镜像环境内把 cakit 安装成功
 - [ ] 支持 multiagent
-- [ ] 支持 额外的设置脚本
 - [ ] 新增API的Mock Server以便利化测试
 - [ ] `cakit run` 支持 `--timeout`，并在超时时返回半成品运行产物
 - [ ] 支持 `AGENTS.md`
@@ -284,6 +295,7 @@ cakit tools
 - [ ] `cakit` 不再需要 `configure` 命令（默认由 `run` 自动配置并完全托管）
 - [ ] 支持 MCP
 - [ ] 支持 balanced 模式
+- [x] 支持 额外的设置脚本
 - [x] 支持 skills
 - [x] 支持安装指定版本
 - [x] 校验 Kimi token 统计口径（含 subagent 聚合）

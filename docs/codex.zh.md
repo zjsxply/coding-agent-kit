@@ -39,6 +39,8 @@
 **备注**
 - 若设置了 `CAKIT_CODEX_USE_OAUTH`，cakit 会要求 `${CODEX_HOME}/auth.json`（由 `codex login` 生成）。
 - 若使用 API Key 模式，请设置 `CODEX_API_KEY`，并在需要时设置 `CODEX_API_BASE`。
+- 若 `cakit configure codex` 之后还需要补充 cakit 尚未覆盖的自定义 Codex 设置，可设置 `CAKIT_CONFIGURE_POST_COMMAND`；该 hook 会收到 `CAKIT_CONFIG_PATH` 以便后处理 `config.toml`。
+- `cakit run codex` 当前会调用 `codex exec --dangerously-bypass-approvals-and-sandbox`，所以写入 `config.toml` 的沙箱配置键（例如 `[sandbox_workspace_write].network_access = false`）不会在 `cakit run codex` 中被强制执行；但 `web_search = "disabled"` 这类顶层配置仍然会生效。
 - 模型优先级为：`--model` > `CODEX_MODEL` > `OPENAI_DEFAULT_MODEL`。
 - 为避免意外的鉴权路径选择：当启用 OAuth 时，cakit 会从 Codex CLI 子进程环境中移除 `OPENAI_API_KEY` 与 `CODEX_API_KEY`。
 - 若请求 API Key 模式但未设置 `CODEX_API_KEY`，cakit 会避免向 Codex 传递 `OPENAI_API_KEY`/`CODEX_API_KEY`（这样在已登录 OAuth 的情况下仍可工作）。

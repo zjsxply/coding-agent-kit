@@ -119,6 +119,18 @@ cakit configure [<agent|all|*>]
 This regenerates the agent config based on current environment variables.
 If `<agent>` is omitted, it defaults to `all`.
 If you update environment variables later, rerun `set -a; source .env; set +a` and then rerun `cakit configure [<agent|all|*>]`.
+If `CAKIT_CONFIGURE_POST_COMMAND` is set, cakit runs that `bash -lc` command after a target writes a config file and exposes `CAKIT_CONFIGURE_AGENT`, `CAKIT_CONFIG_PATH`, and `CAKIT_CONFIG_DIR` to the hook.
+If the post-config command exits non-zero, `cakit configure` fails for that target.
+This hook is usually agent-specific; prefer exporting it ad hoc before `cakit configure <agent>` instead of saving it permanently in `.env`.
+Example: disable Codex web search after `cakit configure codex`:
+
+```bash
+export CAKIT_CONFIGURE_POST_COMMAND='if [ "$CAKIT_CONFIGURE_AGENT" = "codex" ]; then printf "\nweb_search = \"disabled\"\n" >> "$CAKIT_CONFIG_PATH"; fi'
+cakit configure codex
+```
+
+For Codex specifically, `cakit run codex` currently invokes `codex exec --dangerously-bypass-approvals-and-sandbox`, so sandbox keys such as `[sandbox_workspace_write].network_access = false` are written to config but are not enforced by `cakit run codex`.
+
 If an agent does not require a config file, `cakit configure` may report `"config_path": null` and still succeed.
 Note: Claude Code reads environment variables directly; `cakit configure claude` is a no-op.
 
@@ -275,7 +287,6 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 - [ ] Add `cakit run` flag: disable web search vs fully disable network
 - [ ] Write an install script `.sh`, then add test points that start Docker containers (including Ubuntu, Debian, etc.) to ensure the install script can install cakit successfully in arbitrary Docker image environments
 - [ ] Support multiagent
-- [ ] Support additional setup scripts
 - [ ] Add an API mock server to simplify testing
 - [ ] Support `--timeout` in `cakit run` and return partial run artifacts on timeout
 - [ ] Support `AGENTS.md`
@@ -284,6 +295,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 - [ ] `cakit` should no longer need the `configure` command (configuration should be fully managed automatically by `cakit run`)
 - [ ] Support MCP
 - [ ] Support balanced mode
+- [x] Support additional setup scripts
 - [x] Support skills
 - [x] Support installing specific versions
 - [x] Validate Kimi token accounting semantics (including subagent aggregation)
