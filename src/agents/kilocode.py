@@ -206,33 +206,37 @@ class KiloCodeAgent(CodingAgent):
                 cakit_exit_code=1,
                 agent_version=agent_version,
             )
-        api_key = str(runtime_settings["api_key"])
-        model = str(runtime_settings["model"])
-        base_url = runtime_settings["base_url"]
+        config_payload, config_error = self._build_runtime_config_payload(model_override=model_override)
+        if config_payload is None:
+            message = config_error or "missing required Kilo Code API settings"
+            return self._build_error_run_result(
+                message=message,
+                cakit_exit_code=1,
+                agent_version=agent_version,
+            )
 
         run_home = self._make_temp_dir(prefix="cakit-kilocode-home-")
+        runtime_config_path = run_home / ".kilocode" / "cli" / "config.json"
+        self._write_text(runtime_config_path, json.dumps(config_payload, ensure_ascii=True, indent=2))
         env = {
             "HOME": str(run_home),
-            "OPENAI_API_KEY": api_key,
             "KILO_DISABLE_AUTOUPDATE": "true",
             "KILO_TELEMETRY": "false",
+            "OPENAI_API_KEY": str(runtime_settings["api_key"]),
         }
-        if base_url:
+        base_url = runtime_settings["base_url"]
+        if isinstance(base_url, str) and base_url.strip():
             env["OPENAI_BASE_URL"] = base_url
 
-        cmd = ["kilocode", "run", "--auto", "--format", "json"]
-        normalized_run_model = runtime_parsing.normalize_text(model)
-        model_arg = (
-            runtime_env.normalize_provider_model(
-                normalized_run_model,
-                default_provider="openai",
-                colon_as_provider=False,
-            )
-            if normalized_run_model is not None
-            else None
-        )
-        if model_arg:
-            cmd.extend(["--model", model_arg])
+        cmd = [
+            "kilocode",
+            "run",
+            "--auto",
+            "--format",
+            "json",
+            "--model",
+            self._format_v1_model_arg(str(runtime_settings["model"])),
+        ]
         for image_path in images:
             cmd.extend(["--file", str(image_path)])
         # `--file` is an array option; delimiter avoids prompt being parsed as another file.
@@ -311,6 +315,13 @@ class KiloCodeAgent(CodingAgent):
         if missing:
             return None, runtime_env.missing_env_with_fallback_message(missing)
         return {"api_key": api_key, "base_url": base_url, "model": model}, None
+
+    @staticmethod
+    def _format_v1_model_arg(model: str) -> str:
+        normalized = model.strip()
+        if "/" in normalized:
+            return normalized
+        return f"openai/{normalized}"
 
     def _build_runtime_config_payload(self, model_override: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         runtime_settings, runtime_error = self._resolve_runtime_provider_settings(model_override=model_override)

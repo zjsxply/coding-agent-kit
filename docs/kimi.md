@@ -31,6 +31,7 @@ Environment variable mapping:
 | `KIMI_API_KEY` | Provider API key (fallback: `OPENAI_API_KEY`) | required |
 | `KIMI_BASE_URL` | Provider base URL (fallback: `OPENAI_BASE_URL`) | required |
 | `KIMI_MODEL_NAME` | Upstream model ID (`model`), used for runtime `--model` (fallback: `OPENAI_DEFAULT_MODEL`) | optional |
+| `KIMI_MODEL_CAPABILITIES` | Upstream model capabilities, comma-separated (for example `image_in,video_in`) | optional |
 | `CAKIT_KIMI_PROVIDER_TYPE` | Provider `type` in Kimi config | required (`kimi`, `openai_legacy`, `openai_responses`) |
 
 If any required variable above is missing, or `CAKIT_KIMI_PROVIDER_TYPE` is outside the allowed set, `cakit configure kimi` returns `config_path: null` and does not write a config file.
@@ -47,7 +48,8 @@ Reference:
 `cakit run kimi --image <path>` is supported.
 
 - cakit uses print mode `--prompt` input and injects absolute image paths into the prompt so Kimi can read the files.
-- cakit prompts Kimi to use `ReadMediaFile` to open image paths before answering.
+- cakit prompts Kimi to use `ReadMediaFile` when that tool is available, and otherwise to fall back to other available tools.
+- If the current provider/model does not advertise media capabilities automatically, set `KIMI_MODEL_CAPABILITIES=image_in` (or `image_in,video_in`) so Kimi CLI exposes the media-reading path.
 - Image understanding still depends on the selected model capability. If the model does not support image input, Kimi may fail or report that image reading is unsupported.
 
 ## Video Input
@@ -55,7 +57,8 @@ Reference:
 `cakit run kimi --video <path>` is supported.
 
 - For video runs, cakit uses print mode `--prompt` input and injects absolute video paths into the prompt.
-- cakit prompts Kimi to use `ReadMediaFile` to open video paths before answering.
+- cakit prompts Kimi to use `ReadMediaFile` when that tool is available, and otherwise to fall back to other available tools.
+- If the current provider/model does not advertise media capabilities automatically, set `KIMI_MODEL_CAPABILITIES=image_in,video_in` so Kimi CLI exposes the media-reading path.
 - Video understanding depends on the selected model capability. If the model does not support video input, Kimi may fail or report that video reading is unsupported.
 
 ## Agent Swarm
@@ -69,6 +72,7 @@ Kimi supports Agent Swarm style workflows. You can trigger it directly in prompt
 - cakit passes the resolved model via both:
   - CLI flag: `kimi ... --model <resolved_model>`
   - env var: `KIMI_MODEL_NAME=<resolved_model>`
+- When `KIMI_MODEL_CAPABILITIES` is set, cakit forwards it unchanged to the child Kimi process.
 - `cakit run kimi --model <name>` takes priority for that run.
 - If `--model` is omitted, cakit resolves model from `KIMI_MODEL_NAME`, then `OPENAI_DEFAULT_MODEL`.
 - cakit always sets `KIMI_CLI_NO_AUTO_UPDATE=1` when running Kimi.

@@ -95,6 +95,8 @@ class ClaudeAgent(CodingAgent):
         extra_args: list[str] = []
         for directory in add_dirs:
             extra_args.extend(["--add-dir", directory])
+        if add_dirs:
+            extra_args.append("--")
         template = self.run_template
         cmd, _ = self._build_templated_command(
             template=template,

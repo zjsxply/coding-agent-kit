@@ -56,6 +56,15 @@ class OpenHandsAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
     ) -> Optional[RunPlan]:
         env = self._build_run_env(model_override=model_override)
+        run_root = self._make_temp_dir(prefix="cakit-openhands-")
+        persistence_dir = run_root / "persistence"
+        conversations_root = persistence_dir / "conversations"
+        env.update(
+            {
+                "HOME": str(run_root / "home"),
+                "OPENHANDS_PERSISTENCE_DIR": str(persistence_dir),
+            }
+        )
 
         has_error_event = {"value": False}
         return self._build_templated_run_plan(
@@ -66,6 +75,7 @@ class OpenHandsAgent(CodingAgent):
                 output,
                 command_result,
                 has_error_event=has_error_event,
+                conversations_root=conversations_root,
             ),
             post_finalize=lambda run_result, parsed, command_result: self._post_finalize_pipeline(
                 run_result=run_result,
@@ -80,6 +90,7 @@ class OpenHandsAgent(CodingAgent):
         command_result: Any,
         *,
         has_error_event: Dict[str, bool],
+        conversations_root: Path,
     ) -> RunParseResult:
         match = self._CONVERSATION_ID_RE.search(output)
         if match:
@@ -87,7 +98,10 @@ class OpenHandsAgent(CodingAgent):
             conversation_id = normalized_conversation if len(normalized_conversation) == 32 else None
         else:
             conversation_id = None
-        conversation_dir, base_state, events = self._load_conversation_artifacts(conversation_id)
+        conversation_dir, base_state, events = self._load_conversation_artifacts(
+            conversation_id,
+            conversations_root=conversations_root,
+        )
 
         parsed_stats = self._extract_stats(base_state=base_state, events=events)
         snapshot = build_single_model_stats_snapshot(
@@ -120,7 +134,7 @@ class OpenHandsAgent(CodingAgent):
         else:
             trajectory_content = runtime_trajectory.build_trajectory_content(
                 output=output,
-                source=str(self._conversations_root()),
+                source=str(conversations_root),
             )
         return RunParseResult(
             response=parsed_stats.response,
@@ -174,12 +188,15 @@ class OpenHandsAgent(CodingAgent):
         return env
 
     def _load_conversation_artifacts(
-        self, conversation_id: Optional[str]
+        self,
+        conversation_id: Optional[str],
+        *,
+        conversations_root: Optional[Path] = None,
     ) -> tuple[Optional[Path], Optional[Dict[str, Any]], Optional[list[Dict[str, Any]]]]:
         if not conversation_id:
             return None, None, None
 
-        conversation_root = self._conversations_root() / conversation_id
+        conversation_root = (conversations_root or self._conversations_root()) / conversation_id
         if not conversation_root.is_dir():
             return None, None, None
 
@@ -230,11 +247,10 @@ class OpenHandsAgent(CodingAgent):
             total_cost = opt_float(base_state, "$.stats.usage_to_metrics.agent.accumulated_cost")
 
         action_tool_names = select_values(events, '$[?(@.kind == "ActionEvent")].tool_name')
-        tool_calls = (
-            sum(1 for value in action_tool_names if isinstance(value, str) and value.strip())
-            if action_tool_names is not None
-            else None
-        )
+        if isinstance(events, list):
+            tool_calls = sum(1 for value in (action_tool_names or []) if isinstance(value, str) and value.strip())
+        else:
+            tool_calls = None
 
         finish_texts = runtime_parsing.extract_content_texts(
             events,

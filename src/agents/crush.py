@@ -26,11 +26,19 @@ class CrushAgent(CodingAgent):
         regex=r"(?i)^(?:crush version )?([A-Za-z0-9._-]+)$",
     )
 
+    def _config_path(self) -> Path:
+        config_dir = self._resolve_writable_dir(
+            Path.home() / ".config" / "crush",
+            Path("/tmp") / "cakit" / "crush-config",
+            purpose="Crush config",
+        )
+        return config_dir / "crush.json"
+
     def configure(self) -> Optional[str]:
         settings, error = self._resolve_api_settings(model_override=None)
         if error is not None or settings is None:
             return None
-        config_path = Path.home() / ".config" / "crush" / "crush.json"
+        config_path = self._config_path()
         payload = self._build_api_config_payload(model=settings["model"])
         self._write_text(config_path, json.dumps(payload, ensure_ascii=True, indent=2))
         return str(config_path)
@@ -99,8 +107,12 @@ class CrushAgent(CodingAgent):
             output=output,
             source=str(db_path),
         )
-        response = runtime_parsing.last_stdout_line(output) or runtime_parsing.normalize_text(output)
-        return self.finalize_run(
+        response = (
+            self._extract_response_from_trace(trace_payload)
+            or runtime_parsing.last_stdout_line(output)
+            or runtime_parsing.normalize_text(output)
+        )
+        run_result = self.finalize_run(
             command_result=result,
             response=response,
             models_usage=models_usage,
@@ -109,6 +121,7 @@ class CrushAgent(CodingAgent):
             telemetry_log=str(telemetry_path),
             trajectory_content=trajectory_content,
         )
+        return run_result
 
     def _resolve_api_settings(self, *, model_override: Optional[str]) -> tuple[Optional[Dict[str, str]], Optional[str]]:
         api_key = runtime_env.resolve_openai_api_key("CRUSH_OPENAI_API_KEY")
@@ -140,6 +153,7 @@ class CrushAgent(CodingAgent):
         return {
             "$schema": "https://charm.land/crush.json",
             "options": {
+                "disable_auto_summarize": True,
                 "disable_provider_auto_update": True,
                 "disable_default_providers": True,
             },
@@ -295,3 +309,12 @@ class CrushAgent(CodingAgent):
                     item["parts"] = parsed_parts
             messages.append(item)
         return messages
+
+    def _extract_response_from_trace(self, trace_payload: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not isinstance(trace_payload, dict):
+            return None
+        text_values = select_values(
+            trace_payload,
+            '$.messages[?(@.is_non_summary_assistant == 1)].parts[?(@.type == "text")].data.text',
+        )
+        return runtime_parsing.last_nonempty_text(text_values)

@@ -38,6 +38,10 @@ cakit 使用的环境变量：
 | `CAKIT_OPENCLAW_BASE_URL` | OpenAI 兼容 base URL（回退：`OPENAI_BASE_URL`） | 是 |
 | `CAKIT_OPENCLAW_MODEL` | 模型引用（`provider/model` 或裸 `model`，回退：`OPENAI_DEFAULT_MODEL`） | 是 |
 | `CAKIT_OPENCLAW_PROVIDER_ID` | 可选 custom provider id | 否 |
+| `CAKIT_OPENCLAW_CONTEXT_WINDOW` | 可选：写入 custom-provider model 的最小 `contextWindow`；必须为正整数 | 否 |
+| `CAKIT_OPENCLAW_MAX_TOKENS` | 可选：写入 custom-provider model 的最小 `maxTokens`；必须为正整数 | 否 |
+
+若这两个 cakit 专用 limit override 中任一值不是正整数，`cakit configure openclaw` / `cakit run openclaw` 会明确报错，而不是静默回退。
 
 ## 运行
 

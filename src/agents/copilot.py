@@ -115,11 +115,12 @@ class CopilotAgent(CodingAgent):
                 break
         if response is None:
             response = runtime_parsing.normalize_text(runtime_parsing.stdout_only(output))
+        tool_calls = stats.tool_calls if stats.tool_calls is not None else (0 if stats.llm_calls is not None else None)
         return RunParseResult(
             response=response,
             models_usage=stats.models_usage,
             llm_calls=stats.llm_calls,
-            tool_calls=stats.tool_calls,
+            tool_calls=tool_calls,
             total_cost=stats.total_cost,
             telemetry_log=str(log_dir),
         )

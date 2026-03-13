@@ -30,7 +30,7 @@
 **图像与视频输入**
 - cakit 会把本地媒体文件映射为重复的 `opencode run --file <path>` 参数。
 - 图像输入在所选模型/provider 支持图片附件时可用。
-- OpenCode `1.2.6` 下本地视频文件当前无法作为多模态附件透传（上游 Read 逻辑会把二进制视频文件拒绝）。
+- OpenCode `1.2.24` 下本地视频文件当前无法作为多模态附件透传（上游 Read 逻辑会把二进制视频文件拒绝）。
 
 **统计提取（严格模式）**
 - cakit 先从 OpenCode `--format json` 输出中读取本次运行的 `sessionID`。

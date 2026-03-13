@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import shutil
 import sys
+import tempfile
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 from ..io_helpers import file_lock
 
@@ -191,13 +193,53 @@ def pip_install(
     *,
     packages: list[str],
     no_cache_dir: bool,
-    run: Callable[[Iterable[str]], Any],
+    run: Callable[..., Any],
 ):
     cmd = ["python", "-m", "pip", "install"]
     if no_cache_dir:
         cmd.append("--no-cache-dir")
     cmd.extend(packages)
     return run(cmd)
+
+
+def _probe_writable_dir(directory: Path) -> bool:
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=directory, delete=True):
+            pass
+    except OSError:
+        return False
+    return True
+
+
+def _uv_runtime_env() -> Optional[Dict[str, str]]:
+    env: Dict[str, str] = {}
+
+    cache_root = Path(os.environ["XDG_CACHE_HOME"]).expanduser() if os.environ.get("XDG_CACHE_HOME") else None
+    data_root = Path(os.environ["XDG_DATA_HOME"]).expanduser() if os.environ.get("XDG_DATA_HOME") else None
+    defaults = {
+        "UV_CACHE_DIR": (cache_root / "uv") if cache_root is not None else Path.home() / ".cache" / "uv",
+        "UV_TOOL_DIR": (data_root / "uv" / "tools") if data_root is not None else Path.home() / ".local" / "share" / "uv" / "tools",
+        "UV_TOOL_BIN_DIR": Path(os.environ["XDG_BIN_HOME"]).expanduser() if os.environ.get("XDG_BIN_HOME") else Path.home() / ".local" / "bin",
+        "UV_PYTHON_INSTALL_DIR": (data_root / "uv" / "python") if data_root is not None else Path.home() / ".local" / "share" / "uv" / "python",
+    }
+    fallbacks = {
+        "UV_CACHE_DIR": Path("/tmp") / "cakit" / "uv-cache",
+        "UV_TOOL_DIR": Path("/tmp") / "cakit" / "uv-tools",
+        "UV_TOOL_BIN_DIR": Path("/tmp") / "cakit" / "bin",
+        "UV_PYTHON_INSTALL_DIR": Path("/tmp") / "cakit" / "uv-python",
+    }
+
+    for key, default_dir in defaults.items():
+        if os.environ.get(key):
+            continue
+        if _probe_writable_dir(default_dir):
+            continue
+        fallback_dir = fallbacks[key]
+        if _probe_writable_dir(fallback_dir):
+            env[key] = str(fallback_dir)
+
+    return env or None
 
 
 def uv_tool_install(
@@ -207,7 +249,7 @@ def uv_tool_install(
     force: bool,
     with_packages: Optional[list[str]],
     fallback_no_cache_dir: bool,
-    run: Callable[[Iterable[str]], Any],
+    run: Callable[..., Any],
     ensure_uv_fn: Callable[[], bool],
     pip_install_fn: Callable[[list[str], bool], Any],
 ):
@@ -221,7 +263,7 @@ def uv_tool_install(
         for pkg in extras:
             cmd.extend(["--with", pkg])
         cmd.append(package_spec)
-        return run(cmd)
+        return run(cmd, env=_uv_runtime_env())
     return pip_install_fn([package_spec, *extras], fallback_no_cache_dir)
 
 
@@ -229,7 +271,7 @@ def uv_pip_install(
     *,
     packages: list[str],
     no_cache_dir: bool,
-    run: Callable[[Iterable[str]], Any],
+    run: Callable[..., Any],
     ensure_uv_fn: Callable[[], bool],
     pip_install_fn: Callable[[list[str], bool], Any],
 ):
@@ -238,5 +280,5 @@ def uv_pip_install(
         if no_cache_dir:
             cmd.append("--no-cache-dir")
         cmd.extend(packages)
-        return run(cmd)
+        return run(cmd, env=_uv_runtime_env())
     return pip_install_fn(packages, no_cache_dir)

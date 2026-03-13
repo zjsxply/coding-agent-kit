@@ -25,6 +25,7 @@ This document explains how cakit runs Qwen Code and extracts run metadata.
 - `cakit run qwen --image/--video` is supported through prompt injection.
 - cakit copies each media file into `<run_cwd>/.cakit-media/` and prepends `@{.cakit-media/<file>}`.
 - Actual media understanding depends on selected model capabilities; text-only models may not produce correct image/video descriptions.
+- Upstream Qwen OAuth / DashScope-compatible setups handle vision and web tooling more reliably than generic OpenAI-compatible API mode. In API mode, actual tool execution and media understanding remain provider-dependent even when the prompt includes `@{path}` references.
 - The copy mechanism applies only to `--image`/`--video`.
 - If you only put local file paths in prompt text (without `--image`/`--video`), cakit does not copy files, and Qwen may reject paths outside the current run workspace.
 

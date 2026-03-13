@@ -36,7 +36,7 @@ Use `--version` to install a specific version or reference:
 - `factory`: Factory CLI release version (for example `0.57.15`).
 - `trae-cn`: TRAE CLI version (for example `0.111.5`).
 - `openhands`: `openhands` package version (for example `1.12.1`).
-- `swe-agent`: upstream release tag (for example `v1.0.0`).
+- `swe-agent`: upstream git ref / release tag (for example `v1.1.0`).
 - `trae-oss`: git ref (tag / branch / commit).
 
 #### Supported Agents
@@ -64,7 +64,7 @@ Use `--version` to install a specific version or reference:
 | qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) | — |
 | qoder | [Qoder](https://qoder.com) | [Qoder CLI Quick Start](https://docs.qoder.com/cli/quick-start) | — | cakit runs `qodercli` in non-interactive print mode and parses stream JSON strictly |
 | openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | — |
-| swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) | — |
+| swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) | cakit installs upstream git tags via `uv tool` and reads `.traj` outputs when `--output_dir` is supported |
 | trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | [bytedance/trae-agent](https://github.com/bytedance/trae-agent) | OSS Trae Agent to distinguish from other Trae products |
 
 #### Login
@@ -90,7 +90,7 @@ Model priority for those agents is: `--model` > agent-specific model env var > `
 - auggie: OAuth via `auggie login`, or API via `AUGMENT_API_TOKEN` + `AUGMENT_API_URL` (optional `AUGMENT_SESSION_AUTH`)
 - continue: OAuth via `cn login`, or API via `CAKIT_CONTINUE_OPENAI_API_KEY` + `CAKIT_CONTINUE_OPENAI_MODEL` + `cakit configure continue`
 - goose: API via `CAKIT_GOOSE_PROVIDER` + `CAKIT_GOOSE_MODEL` + `CAKIT_GOOSE_OPENAI_API_KEY` (+ `CAKIT_GOOSE_OPENAI_BASE_URL` for OpenAI-compatible endpoints)
-- kilocode: API via `KILO_OPENAI_API_KEY` + `KILO_OPENAI_MODEL_ID` + `cakit configure kilocode`
+- kilocode: API via `KILO_OPENAI_API_KEY` + `KILO_OPENAI_MODEL_ID` (+ optional `KILO_OPENAI_BASE_URL`; `cakit configure kilocode` only persists legacy-compatible local config)
 - openclaw: API via `CAKIT_OPENCLAW_API_KEY` + `CAKIT_OPENCLAW_BASE_URL` + `CAKIT_OPENCLAW_MODEL` + `cakit configure openclaw`
 - deepagents: API only via `DEEPAGENTS_OPENAI_API_KEY` + `DEEPAGENTS_OPENAI_MODEL`
 - kimi: OAuth via `kimi` then `/login`, or API via `KIMI_API_KEY` + `cakit configure kimi`
@@ -179,7 +179,7 @@ Image and video input support:
 | copilot | ✓ | ✗ | `--image` uses natural-language file-path injection |
 | gemini | ✓ | ✓ | symbolic local-path injection (`@{path}`); verified with `--model gemini-2.5-pro` (model-dependent) |
 | crush | ✗ | ✗ | `crush run` has no `--image` / `--video` flags |
-| opencode | ✓ | ✗ | native `--file` mapping works for `--image`; local `--video` is currently rejected as binary by upstream Read handling (opencode 1.2.6) |
+| opencode | ✓ | ✗ | native `--file` mapping works for `--image`; local `--video` is currently rejected as binary by upstream Read handling (opencode 1.2.24) |
 | factory | ✓ | ✗ | `--image` uses natural-language local-path injection + `Read` tool; no documented generic `--video` flag |
 | auggie | ✓ | ✗ | native `--image`; no documented `--video` flag |
 | continue | ✗ | ✗ | `cn` has no documented `--image` / `--video` flags in headless mode |
@@ -187,9 +187,9 @@ Image and video input support:
 | kilocode | ✓ | ✗ | native `--attach`; no documented `--video` flag |
 | openclaw | ✗ | ✗ | `openclaw agent` has no documented `--image` / `--video` flags |
 | deepagents | ✗ | ✗ | `deepagents` non-interactive CLI has no documented `--image` / `--video` flags |
-| kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`) |
+| kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`); when provider metadata is incomplete, set `KIMI_MODEL_CAPABILITIES` explicitly |
 | trae-cn | ✗ | ✗ | `traecli` has no `--image` / `--video` flags |
-| qwen | ✓ | ✓ | `@{path}` injection; depends on model capabilities |
+| qwen | ✓ |  | `@{path}` injection; best verified with Qwen OAuth / DashScope-compatible vision setup, while generic OpenAI-compatible API mode remains provider-dependent |
 | qoder | ✓ | ✗ | native `--attachment` mapping for `--image`; no `--video` support in cakit |
 | openhands | ✗ | ✗ | headless CLI has no documented `--image` / `--video` flags |
 | swe-agent | ✗ | ✗ | upstream multimodal path supports issue-image URLs (`swe_bench_multimodal`), but `sweagent run` has no generic `--image` / `--video` flags |
@@ -234,6 +234,7 @@ cakit tools
 ```
 
 Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, `git-lfs`, `git-delta`, `gh`, and Playwright Chromium (including runtime deps).
+Successful steps stay quiet; if a tool install fails, cakit continues with the remaining tools and reports `installed` / `skipped` / `failed` in the final JSON output.
 
 ## Environment Variables
 
@@ -245,25 +246,25 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 
 | Agent | OAuth | API | Image Input | Video Input | MCP | Skills | Telemetry | Web Access | Test Version |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.44 |
-| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.101.0 |
-| codebuddy |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.50.5 |
+| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.72 |
+| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.114.0 |
+| codebuddy |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.58.0 |
 | aider | ✗ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.86.2 |
 | cursor |  |  | ✗ | ✗ |  |  |  |  |  |
-| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 0.0.410 |
-| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.28.2 |
-| crush |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.43.0 |
-| opencode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.2.6 |
+| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 1.0.4 |
+| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.33.0 |
+| crush |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.47.2 |
+| opencode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.2.24 |
 | factory |  |  |  | ✗ |  |  |  |  | 0.57.17 |
 | auggie |  |  |  | ✗ |  |  | ✓ |  | 0.16.1 |
-| continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.43 |
-| goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.25.0 |
-| kilocode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.0.22 |
-| openclaw |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 2026.2.15 |
-| deepagents | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.0.21 |
-| kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.12.0 |
+| continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.45 |
+| goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.27.2 |
+| kilocode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 7.0.44 |
+| openclaw |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 2026.3.8 |
+| deepagents | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.0.31 |
+| kimi |  | ✓ | ✓ |  |  |  |  | ✓ | 1.12.0 |
 | trae-cn | ✗ |  | ✗ | ✗ |  |  |  |  | 0.111.5 |
-| qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.3 |
+| qwen |  | ✓ | ✓ |  |  |  |  | ✓ | 0.12.3 |
 | qoder |  | ✗ |  | ✗ |  |  |  |  | 0.1.28 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
 | swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  | 1.1.0 |
@@ -272,15 +273,18 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 ## Todo
 
 - [ ] Add `cakit run` flag: disable web search vs fully disable network
-- [ ] Support network on/off toggle
+- [ ] Write an install script `.sh`, then add test points that start Docker containers (including Ubuntu, Debian, etc.) to ensure the install script can install cakit successfully in arbitrary Docker image environments
+- [ ] Support multiagent
+- [ ] Support additional setup scripts
+- [ ] Add an API mock server to simplify testing
 - [ ] Support `--timeout` in `cakit run` and return partial run artifacts on timeout
-- [x] Support skills
 - [ ] Support `AGENTS.md`
-- [ ] For all agents, create an isolated run-specific `HOME` under `/tmp` and write run-specific config on every `cakit run`, to avoid cross-run session conflicts and guarantee stats match current run artifacts; remove the need for `cakit configure` (configuration should be fully managed by `cakit run`)
+- [ ] For all agents, create an isolated run-specific `HOME` under `/tmp` and write run-specific config on every `cakit run`, to avoid cross-run session conflicts and guarantee stats match current run artifacts
 - [ ] Add a command to build a Docker image containing cakit, with selectable base image
-- [ ] Namespace agent config/cache paths (e.g. `KIMI_SHARE_DIR`) to avoid conflicts with host agents
+- [ ] `cakit` should no longer need the `configure` command (configuration should be fully managed automatically by `cakit run`)
 - [ ] Support MCP
 - [ ] Support balanced mode
+- [x] Support skills
 - [x] Support installing specific versions
 - [x] Validate Kimi token accounting semantics (including subagent aggregation)
 

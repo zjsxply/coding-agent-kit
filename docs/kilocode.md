@@ -15,7 +15,7 @@ cakit install kilocode --version <npm_version_or_tag>
 
 ## Configure
 
-`cakit configure kilocode` writes:
+`cakit configure kilocode` writes legacy-compatible local config to:
 
 - `~/.kilocode/cli/config.json`
 
@@ -28,6 +28,7 @@ Environment variable mapping:
 | `KILO_OPENAI_BASE_URL` | OpenAI-compatible base URL (fallback: `OPENAI_BASE_URL`) | optional |
 
 If required key/model values are missing, cakit does not write config and run returns non-zero.
+For KiloCode 1.x, cakit run does not rely on this file alone; it also passes runtime OpenAI-compatible env vars directly.
 
 ## Run Behavior
 
@@ -45,6 +46,8 @@ kilocode run --auto --format json [--file <image>] [--model openai/<name>] "<pro
 - This avoids cross-run/session conflicts and keeps artifact matching exact per run.
 - `cakit run kilocode --model <name>` takes priority for that run.
 - If `--model` is omitted, cakit resolves model from `KILO_OPENAI_MODEL_ID`, then `OPENAI_DEFAULT_MODEL`.
+- For 1.x, cakit also passes `OPENAI_API_KEY` and optional `OPENAI_BASE_URL` to the child process and sends `--model provider/model`.
+- If the resolved model name is bare (for example `gpt-4o-mini`), cakit formats it as `openai/gpt-4o-mini` for the 1.x CLI.
 - Video input is unsupported in cakit (`--video` returns unsupported).
 
 ## Image Input

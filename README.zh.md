@@ -36,7 +36,7 @@ cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 - `factory`：Factory CLI release 版本（例如 `0.57.15`）。
 - `trae-cn`：TRAE CLI 版本（例如 `0.111.5`）。
 - `openhands`：`openhands` 包版本（例如 `1.12.1`）。
-- `swe-agent`：上游 release tag（例如 `v1.0.0`）。
+- `swe-agent`：上游 git 引用 / release tag（例如 `v1.1.0`）。
 - `trae-oss`：git 引用（tag / branch / commit）。
 
 #### 支持的 Agent
@@ -64,7 +64,7 @@ cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 | qwen | [Qwen Code](https://qwenlm.github.io/qwen-code-docs/) | [Auth](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/) | [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code) | — |
 | qoder | [Qoder](https://qoder.com) | [Qoder CLI Quick Start](https://docs.qoder.com/cli/quick-start) | — | cakit 以非交互 print 模式运行 `qodercli`，并严格解析 stream JSON |
 | openhands | [OpenHands](https://openhands.dev) | [Headless Mode](https://docs.openhands.dev/openhands/usage/cli/headless) | [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) | — |
-| swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) | — |
+| swe-agent | [SWE-agent](https://swe-agent.com) | [CLI](https://swe-agent.com/latest/usage/cli/) | [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) | cakit 通过 `uv tool` 安装上游 git tag，并在支持 `--output_dir` 时读取 `.traj` 输出 |
 | trae-oss | [Trae Agent](https://github.com/bytedance/trae-agent) | [README](https://github.com/bytedance/trae-agent#readme) | [bytedance/trae-agent](https://github.com/bytedance/trae-agent) | OSS 版 Trae Agent，用于与其他 Trae 产品区分 |
 
 #### 登录方式
@@ -90,7 +90,7 @@ OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.templat
 - auggie：OAuth 方式使用 `auggie login`；API 方式为 `AUGMENT_API_TOKEN` + `AUGMENT_API_URL`（可选 `AUGMENT_SESSION_AUTH`）
 - continue：OAuth 方式使用 `cn login`；API 方式为 `CAKIT_CONTINUE_OPENAI_API_KEY` + `CAKIT_CONTINUE_OPENAI_MODEL` + `cakit configure continue`
 - goose：API 方式为 `CAKIT_GOOSE_PROVIDER` + `CAKIT_GOOSE_MODEL` + `CAKIT_GOOSE_OPENAI_API_KEY`（OpenAI 兼容端点可再配 `CAKIT_GOOSE_OPENAI_BASE_URL`）
-- kilocode：API 方式为 `KILO_OPENAI_API_KEY` + `KILO_OPENAI_MODEL_ID` + `cakit configure kilocode`
+- kilocode：API 方式为 `KILO_OPENAI_API_KEY` + `KILO_OPENAI_MODEL_ID`（可选 `KILO_OPENAI_BASE_URL`；`cakit configure kilocode` 仅用于持久化兼容旧版的本地配置）
 - openclaw：API 方式为 `CAKIT_OPENCLAW_API_KEY` + `CAKIT_OPENCLAW_BASE_URL` + `CAKIT_OPENCLAW_MODEL` + `cakit configure openclaw`
 - deepagents：仅 API，使用 `DEEPAGENTS_OPENAI_API_KEY` + `DEEPAGENTS_OPENAI_MODEL`
 - kimi：OAuth 方式为运行 `kimi` 后输入 `/login`；API 方式为设置 `KIMI_API_KEY` 并执行 `cakit configure kimi`
@@ -179,7 +179,7 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 | copilot | ✓ | ✗ | `--image` 通过自然语言路径注入实现 |
 | gemini | ✓ | ✓ | 通过符号化本地路径注入（`@{path}`）；已用 `--model gemini-2.5-pro` 验证（能力依赖模型） |
 | crush | ✗ | ✗ | `crush run` 无 `--image` / `--video` 参数 |
-| opencode | ✓ | ✗ | 原生 `--file` 映射可用于 `--image`；本地 `--video` 当前会被上游 Read 逻辑按二进制拒绝（opencode 1.2.6） |
+| opencode | ✓ | ✗ | 原生 `--file` 映射可用于 `--image`；本地 `--video` 当前会被上游 Read 逻辑按二进制拒绝（opencode 1.2.24） |
 | factory | ✓ | ✗ | `--image` 通过自然语言本地路径注入 + `Read` 工具；无已文档化通用 `--video` 参数 |
 | auggie | ✓ | ✗ | 原生 `--image`；未文档化 `--video` 参数 |
 | continue | ✗ | ✗ | `cn` 的 headless 模式无已文档化 `--image` / `--video` 参数 |
@@ -187,9 +187,9 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 | kilocode | ✓ | ✗ | 原生 `--attach`；无已文档化 `--video` 参数 |
 | openclaw | ✗ | ✗ | `openclaw agent` 无已文档化 `--image` / `--video` 参数 |
 | deepagents | ✗ | ✗ | `deepagents` 非交互 CLI 无已文档化 `--image` / `--video` 参数 |
-| kimi | ✓ | ✓ | `ReadMediaFile` + 模型能力（`image_in`/`video_in`） |
+| kimi | ✓ | ✓ | `ReadMediaFile` + 模型能力（`image_in`/`video_in`）；若 provider 元数据不完整，需要显式设置 `KIMI_MODEL_CAPABILITIES` |
 | trae-cn | ✗ | ✗ | `traecli` 无 `--image` / `--video` 参数 |
-| qwen | ✓ | ✓ | `@{path}` 注入；是否有效取决于模型能力 |
+| qwen | ✓ |  | `@{path}` 注入；在 Qwen OAuth / DashScope 兼容视觉配置下最稳定，通用 OpenAI 兼容 API 模式仍依赖具体 provider 能力 |
 | qoder | ✓ | ✗ | `--image` 通过原生 `--attachment` 映射；cakit 中无 `--video` 支持 |
 | openhands | ✗ | ✗ | headless CLI 未提供已文档化的 `--image` / `--video` 参数 |
 | swe-agent | ✗ | ✗ | 上游多模态仅支持 `swe_bench_multimodal` 的 issue 图片 URL；`sweagent run` 无通用 `--image` / `--video` 参数 |
@@ -234,6 +234,7 @@ cakit tools
 ```
 
 安装以下常用工具（仅 Linux）：`rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, `git-lfs`, `git-delta`, `gh`，以及 Playwright Chromium（含运行依赖）。
+成功步骤默认保持安静；如果某个工具安装失败，cakit 会继续尝试剩余工具，并在最终 JSON 里分别汇总 `installed` / `skipped` / `failed`。
 
 ## 环境变量
 
@@ -245,25 +246,25 @@ cakit tools
 
 | Agent | OAuth | API | 图像输入 | 视频输入 | MCP | Skills | 遥测 | 联网 | 测试版本 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.44 |
-| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.101.0 |
-| codebuddy |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.50.5 |
+| claude |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.1.72 |
+| codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.114.0 |
+| codebuddy |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.58.0 |
 | aider | ✗ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.86.2 |
 | cursor |  |  | ✗ | ✗ |  |  |  |  |  |
-| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 0.0.410 |
-| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.28.2 |
-| crush |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.43.0 |
-| opencode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.2.6 |
+| copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 1.0.4 |
+| gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.33.0 |
+| crush |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.47.2 |
+| opencode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.2.24 |
 | factory |  |  |  | ✗ |  |  |  |  | 0.57.17 |
 | auggie |  |  |  | ✗ |  |  | ✓ |  | 0.16.1 |
-| continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.43 |
-| goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.25.0 |
-| kilocode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.0.22 |
-| openclaw |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 2026.2.15 |
-| deepagents | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.0.21 |
+| continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.45 |
+| goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.27.2 |
+| kilocode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 7.0.44 |
+| openclaw |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 2026.3.8 |
+| deepagents | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.0.31 |
 | kimi |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.12.0 |
 | trae-cn | ✗ |  | ✗ | ✗ |  |  |  |  | 0.111.5 |
-| qwen |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.10.3 |
+| qwen |  | ✓ | ✓ |  |  |  |  | ✓ | 0.12.3 |
 | qoder |  | ✗ |  | ✗ |  |  |  |  | 0.1.28 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
 | swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  | 1.1.0 |
@@ -272,15 +273,18 @@ cakit tools
 ## 待办（Todo）
 
 - [ ] `cakit run` 增加参数：禁用联网搜索 / 完全禁用联网
-- [ ] 支持开关联网
+- [ ] 写一个安装脚本 `.sh`，并构建测试点：启动 Docker 容器（包括 Ubuntu、Debian 等系统），保证这个安装脚本能在任意 Docker 镜像环境内把 cakit 安装成功
+- [ ] 支持 multiagent
+- [ ] 支持 额外的设置脚本
+- [ ] 新增API的Mock Server以便利化测试
 - [ ] `cakit run` 支持 `--timeout`，并在超时时返回半成品运行产物
-- [x] 支持 skills
 - [ ] 支持 `AGENTS.md`
-- [ ] 对所有 agent，每次 `cakit run` 都在 `/tmp` 创建独立的本次运行 `HOME` 并写入该次运行专用配置，避免跨 run 会话冲突并保证统计匹配到本次运行产物；`cakit` 不再需要 `configure` 命令（默认由 `run` 自动配置并完全托管）
+- [ ] 对所有 agent，每次 `cakit run` 都在 `/tmp` 创建独立的本次运行 `HOME` 并写入该次运行专用配置，避免跨 run 会话冲突并保证统计匹配到本次运行产物；
 - [ ] 新增构建 Docker 镜像指令：构建包含 cakit 的镜像，并可指定 base image
-- [ ] 调整所有 agent 配置/数据路径（如 `KIMI_SHARE_DIR`），避免与主机其他 agent 冲突
+- [ ] `cakit` 不再需要 `configure` 命令（默认由 `run` 自动配置并完全托管）
 - [ ] 支持 MCP
 - [ ] 支持 balanced 模式
+- [x] 支持 skills
 - [x] 支持安装指定版本
 - [x] 校验 Kimi token 统计口径（含 subagent 聚合）
 

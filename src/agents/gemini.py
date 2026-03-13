@@ -113,5 +113,9 @@ class GeminiAgent(CodingAgent):
         )
 
     def _settings_paths(self) -> tuple[Path, Path]:
-        settings_dir = Path.home() / ".gemini"
+        settings_dir = self._resolve_writable_dir(
+            Path.home() / ".gemini",
+            Path("/tmp") / "cakit" / "gemini",
+            purpose="Gemini settings",
+        )
         return settings_dir / "settings.json", settings_dir / "telemetry.log"

@@ -38,6 +38,10 @@ Environment variables used by cakit:
 | `CAKIT_OPENCLAW_BASE_URL` | OpenAI-compatible base URL (fallback: `OPENAI_BASE_URL`) | yes |
 | `CAKIT_OPENCLAW_MODEL` | Model ref (`provider/model` or bare `model`, fallback: `OPENAI_DEFAULT_MODEL`) | yes |
 | `CAKIT_OPENCLAW_PROVIDER_ID` | Optional custom provider id | no |
+| `CAKIT_OPENCLAW_CONTEXT_WINDOW` | Optional minimum `contextWindow` patched into custom-provider models; must be a positive integer | no |
+| `CAKIT_OPENCLAW_MAX_TOKENS` | Optional minimum `maxTokens` patched into custom-provider models; must be a positive integer | no |
+
+If either cakit-only limit override is set to a non-positive or non-integer value, `cakit configure openclaw` / `cakit run openclaw` fails clearly instead of silently falling back.
 
 ## Run
 

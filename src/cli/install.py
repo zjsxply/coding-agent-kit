@@ -189,7 +189,8 @@ def with_sudo(cmd: list[str], *, use_sudo: bool, preserve_env: bool = False) -> 
 def ensure_node_tools(*, quiet_success: bool = False, output_stream: Optional[TextIO] = None) -> bool:
     stream = output_stream or sys.stderr
     if shutil.which("node") is None or shutil.which("npm") is None:
-        print("[deps] nodejs/npm not found, attempting auto-install (Linux + apt-get required).", file=stream)
+        if not quiet_success:
+            print("[deps] nodejs/npm not found, attempting auto-install (Linux + apt-get required).", file=stream)
         return install_node_linux(quiet_success=quiet_success, output_stream=stream)
     return True
 

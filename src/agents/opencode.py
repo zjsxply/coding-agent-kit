@@ -22,7 +22,7 @@ class OpenCodeAgent(CodingAgent):
     display_name = "OpenCode"
     binary = "opencode"
     supports_images = True
-    supports_videos = True
+    supports_videos = False
     install_strategy = InstallStrategy(kind="npm", package="opencode-ai")
     run_template = RunCommandTemplate(
         base_args=("run", "--format", "json"),
@@ -80,7 +80,7 @@ class OpenCodeAgent(CodingAgent):
         output = result.output
         payloads = runtime_parsing.load_output_json_payloads(output)
         response = runtime_parsing.last_nonempty_text(
-            select_values(payloads, '$[?(@.type == "text")].part[?(@.type == "text")].text')
+            select_values(payloads, '$[?(@.type == "text")].part.text')
         )
 
         session_ids = select_values(payloads, "$[*].sessionID")

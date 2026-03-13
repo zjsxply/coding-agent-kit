@@ -12,8 +12,9 @@
 
 ## 安装
 
-- `cakit install swe-agent` 默认安装执行时可获得的上游最新 release tag。
-- `cakit install swe-agent --version <tag>` 安装上游 release tarball。
+- `cakit install swe-agent` 会先解析上游最新 release tag，再用 `uv tool install` 安装该 git ref。
+- 若本机没有 `uv`，cakit 会回退为对同一 git ref 执行 `pip install`。
+- `cakit install swe-agent --version <tag>` 也走同样流程，只是固定安装指定上游 git tag。
 - cakit 会额外准备运行资源到 `~/.cache/cakit/swe-agent-assets/<tag>`（`config/`、`tools/`、`trajectories/`），并传递：
   - `SWE_AGENT_CONFIG_DIR`
   - `SWE_AGENT_TOOLS_DIR`
@@ -25,13 +26,14 @@
   - `--env.deployment.type=local`
   - `--env.repo.type=local`
   - `--problem_statement.text <prompt>`
+- 如果当前安装的 `sweagent run` 支持 `--output_dir`，cakit 会传入每次运行独立的输出目录，并从其中读取 `.traj` 文件。
 - 模型优先级为：`--model` > `SWE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`。
 - 若 `--cwd` 不是 git 仓库，cakit 会在 `/tmp` 创建临时 git 仓库后再运行。
 - cakit 会写入 `~/.config/sweagent/config.yaml` 并通过 `--config` 显式使用。
 
 ## 统计提取
 
-- 严格来源：run 输出目录中最新的 `.traj` 文件。
+- 严格来源：当已安装 CLI 支持该参数时，读取 run `--output_dir` 中写出的 `.traj` 文件。
 - `models_usage`：
   - `prompt_tokens = info.model_stats.tokens_sent`
   - `completion_tokens = info.model_stats.tokens_received`

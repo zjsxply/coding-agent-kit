@@ -5,11 +5,16 @@ import argparse
 import concurrent.futures
 import json
 import os
+import signal
+import shutil
 import subprocess
 import sys
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from src.agents import create_agent
 
 
 DEFAULT_WEB_URL = "https://github.com/algorithmicsuperintelligence/openevolve"
@@ -25,9 +30,14 @@ DEFAULT_WEB_KEYWORDS = [
     "2-3x speedups",
     "open-source implementation",
     "autonomous code optimizer",
+    "biological evolution",
+    "improves code",
+    "code optimization",
 ]
 DEFAULT_WEB_KEYWORD_GROUPS = [
-    ["alphaevolve", "evolutionary coding agent", "autonomous code optimizer", "automated code optimizer"],
+    ["alphaevolve", "evolutionary coding agent", "autonomous code optimizer", "automated code optimizer", "autonomous discovery"],
+    ["evolutionary", "biological evolution", "evolve code", "evolves code", "evolves"],
+    ["improves code", "improves computer code", "code optimization", "optimize code", "improve and discover new computer code"],
     ["map-elites", "map elites", "evolutionary search", "variants", "population"],
     ["circle packing", "benchmark", "speedup", "2-3x", "2x", "3x"],
     ["open-source implementation", "open source implementation", "open-source", "open source"],
@@ -44,9 +54,16 @@ CASE_ORDER = {
     "web": 5,
 }
 TASK_CHOICES = ("basic", "image", "image-prompt-path", "video", "video-prompt-path", "web")
+OPTIONAL_CASE_TIMEOUT_SECONDS = 60
 
 def _build_agent_env(_agent: str) -> Dict[str, str]:
     return dict(os.environ)
+
+
+@lru_cache(maxsize=None)
+def _agent_capabilities(agent: str) -> Tuple[bool, bool]:
+    instance = create_agent(agent)
+    return bool(instance.supports_images), bool(instance.supports_videos)
 
 
 def _parse_stdout_json_object(text: str) -> Dict[str, Any]:
@@ -79,19 +96,37 @@ def _run_cakit(
     *,
     env: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, Dict[str, Any], str, str, Optional[str]]:
+    popen_kwargs: Dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "env": env,
+    }
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(args, **popen_kwargs)
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout_seconds, env=env)
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
+        stdout, stderr = proc.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                proc.kill()
+        else:
+            proc.kill()
+        stdout, stderr = proc.communicate()
         return 124, _empty_payload(), stdout, stderr, "timeout"
+    return_code = proc.returncode
     parse_error: Optional[str] = None
     try:
-        payload = _parse_stdout_json_object(proc.stdout)
+        payload = _parse_stdout_json_object(stdout)
     except Exception as exc:
         payload = _empty_payload()
         parse_error = str(exc)
-    return proc.returncode, payload, proc.stdout, proc.stderr, parse_error
+    return return_code, payload, stdout, stderr, parse_error
 
 
 def _build_prompt_path_prompt(*, media_kind: str, media_path: Path) -> str:
@@ -107,6 +142,14 @@ def _build_prompt_path_prompt(*, media_kind: str, media_path: Path) -> str:
         "Open that local file directly from the path in this prompt. "
         "What happens in the video? List any visible text."
     )
+
+
+def _stage_prompt_path_media(*, source_path: Path, case_workdir: Path) -> Path:
+    target_dir = case_workdir / ".prompt-media"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / source_path.name
+    shutil.copy2(source_path, target_path)
+    return target_path
 
 
 def _is_int(value: Any) -> bool:
@@ -252,6 +295,7 @@ def _build_case_specs(
     run_root: Path,
 ) -> List[Dict[str, Any]]:
     specs: List[Dict[str, Any]] = []
+    supports_images, supports_videos = _agent_capabilities(agent)
     if "basic" in tasks:
         specs.append(
             {
@@ -264,7 +308,7 @@ def _build_case_specs(
                 "required": True,
             }
         )
-    if "image" in tasks:
+    if "image" in tasks and supports_images:
         image_keywords = ["unminimize", "ubuntu", "verteen/ubuntu-unminimize"]
         specs.append(
             {
@@ -282,14 +326,16 @@ def _build_case_specs(
             {
                 "agent": agent,
                 "label": "image-prompt-path",
-                "prompt": _build_prompt_path_prompt(media_kind="image", media_path=image_path),
+                "prompt": None,
                 "image": None,
                 "video": None,
                 "expected_keywords": ["unminimize", "ubuntu", "verteen/ubuntu-unminimize"],
                 "required": False,
+                "prompt_media_kind": "image",
+                "prompt_media_source": image_path,
             }
         )
-    if "video" in tasks:
+    if "video" in tasks and supports_videos:
         specs.append(
             {
                 "agent": agent,
@@ -306,11 +352,13 @@ def _build_case_specs(
             {
                 "agent": agent,
                 "label": "video-prompt-path",
-                "prompt": _build_prompt_path_prompt(media_kind="video", media_path=video_path),
+                "prompt": None,
                 "image": None,
                 "video": None,
                 "expected_keywords": [DEFAULT_VIDEO_EXPECTED],
                 "required": False,
+                "prompt_media_kind": "video",
+                "prompt_media_source": video_path,
             }
         )
     if "web" in tasks:
@@ -329,10 +377,26 @@ def _build_case_specs(
         case_workdir = run_root / agent / str(spec["label"])
         case_workdir.mkdir(parents=True, exist_ok=True)
         spec["workdir"] = case_workdir
+        prompt_media_kind = spec.get("prompt_media_kind")
+        prompt_media_source = spec.get("prompt_media_source")
+        if isinstance(prompt_media_kind, str) and isinstance(prompt_media_source, Path):
+            staged_media_path = _stage_prompt_path_media(
+                source_path=prompt_media_source,
+                case_workdir=case_workdir,
+            )
+            spec["prompt"] = _build_prompt_path_prompt(
+                media_kind=prompt_media_kind,
+                media_path=staged_media_path,
+            )
     return specs
 
 
 def _run_case_spec(spec: Dict[str, Any], timeout_seconds: int) -> Dict[str, Any]:
+    case_timeout_seconds = (
+        min(timeout_seconds, OPTIONAL_CASE_TIMEOUT_SECONDS)
+        if not bool(spec.get("required", True))
+        else timeout_seconds
+    )
     result = _run_case(
         agent=str(spec["agent"]),
         label=str(spec["label"]),
@@ -341,7 +405,7 @@ def _run_case_spec(spec: Dict[str, Any], timeout_seconds: int) -> Dict[str, Any]
         video=spec["video"],
         expected_keywords=spec["expected_keywords"],
         required=bool(spec.get("required", True)),
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=case_timeout_seconds,
         workdir=Path(spec["workdir"]),
     )
     result["agent"] = spec["agent"]
@@ -385,12 +449,27 @@ def _run_all_cases(
             cases_by_agent.setdefault(str(result["agent"]), []).append(result)
         return cases_by_agent
 
-    workers = min(max_workers, len(ordered_specs))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_run_case_spec, spec, timeout_seconds) for spec in ordered_specs]
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
+    specs_by_agent: Dict[str, List[Dict[str, Any]]] = {}
+    for spec in ordered_specs:
+        specs_by_agent.setdefault(str(spec["agent"]), []).append(spec)
+    if len(specs_by_agent) <= 1:
+        for spec in ordered_specs:
+            result = _run_case_spec(spec, timeout_seconds)
             cases_by_agent.setdefault(str(result["agent"]), []).append(result)
+        return cases_by_agent
+
+    def _run_agent_cases(agent_specs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [_run_case_spec(spec, timeout_seconds) for spec in agent_specs]
+
+    workers = min(max_workers, len(specs_by_agent))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(_run_agent_cases, agent_specs)
+            for _, agent_specs in sorted(specs_by_agent.items())
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            for result in future.result():
+                cases_by_agent.setdefault(str(result["agent"]), []).append(result)
     return cases_by_agent
 
 

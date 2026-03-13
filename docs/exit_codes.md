@@ -53,8 +53,10 @@ If any of the above is missing/invalid, cakit exits with `1`.
 
 ## `cakit tools`
 
-- `0`: tool installation flow completed successfully.
-- `1`: unsupported platform/prerequisites or any install step failed.
+- `0`: tool installation flow completed in best-effort mode and at least one target tool is available; skipped/failed components are reported in the final JSON output.
+- `1`: unsupported platform/prerequisites prevented the flow, or no target tool could be installed successfully.
+
+`cakit tools` keeps successful steps quiet, continues attempting the remaining tools after an individual tool failure, and reports `installed` / `skipped` / `failed` in the final JSON output.
 
 ## `cakit env`
 

@@ -31,6 +31,16 @@ class ContinueAgent(CodingAgent):
         media_injection="none",
     )
 
+    def _continue_root(self) -> Path:
+        continue_root = os.environ.get("CONTINUE_GLOBAL_DIR")
+        if continue_root:
+            return Path(continue_root).expanduser()
+        return self._resolve_writable_dir(
+            Path.home() / ".continue",
+            Path("/tmp") / "cakit" / "continue",
+            purpose="Continue config",
+        )
+
     def configure(self) -> Optional[str]:
         resolved, error = self._resolve_openai_auth(model_override=None)
         if error is not None:
@@ -40,8 +50,7 @@ class ContinueAgent(CodingAgent):
         base_url = resolved.get("base_url")
         if not api_key or not model:
             return None
-        continue_root = os.environ.get("CONTINUE_GLOBAL_DIR")
-        config_path = (Path(continue_root).expanduser() if continue_root else Path.home() / ".continue") / "config.yaml"
+        config_path = self._continue_root() / "config.yaml"
         self._write_text(config_path, self._build_config_yaml(api_key=api_key, model=model, base_url=base_url))
         return str(config_path)
 
@@ -226,6 +235,6 @@ class ContinueAgent(CodingAgent):
         return (
             models_usage,
             llm_calls,
-            (len(tool_call_values) if tool_call_values is not None else None),
+            (len(tool_call_values) if tool_call_values is not None else 0),
             opt_float(payload, "$.usage.totalCost"),
         )

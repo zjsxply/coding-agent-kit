@@ -113,7 +113,7 @@ class OpenClawAgent(CodingAgent):
         if session_path.exists():
             raw_records = self._read_text_lossy(session_path) or ""
             if raw_records:
-                loaded_records = runtime_parsing.load_output_json_payloads(raw_records, stdout_only=False)
+                loaded_records = runtime_parsing.load_output_json_payloads(raw_records, stdout_only_output=False)
                 if loaded_records:
                     records = loaded_records
         models_usage, llm_calls, tool_calls = self._extract_run_stats(

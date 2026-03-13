@@ -5,6 +5,7 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 from .base import (
     CodingAgent,
@@ -48,6 +49,14 @@ class TraeOssAgent(CodingAgent):
         media_injection="none",
     )
 
+    def _config_path(self) -> Path:
+        config_dir = self._resolve_writable_dir(
+            Path.home() / ".config" / "trae",
+            Path("/tmp") / "cakit" / "trae-oss-config",
+            purpose="Trae OSS config",
+        )
+        return config_dir / "config.yaml"
+
     def is_installed(self) -> bool:
         if not super().is_installed():
             return False
@@ -58,6 +67,7 @@ class TraeOssAgent(CodingAgent):
         api_key, api_base, model = self._resolve_runtime_settings()
         if not api_key or not api_base or not model:
             return None
+        provider = self._resolve_model_provider(api_base)
 
         config = {
             "agents": {
@@ -76,7 +86,7 @@ class TraeOssAgent(CodingAgent):
             "model_providers": {
                 "custom": {
                     "api_key": api_key,
-                    "provider": "openai",
+                    "provider": provider,
                     "base_url": api_base,
                 }
             },
@@ -84,10 +94,16 @@ class TraeOssAgent(CodingAgent):
                 "trae_agent_model": {
                     "model_provider": "custom",
                     "model": model,
+                    "max_tokens": 4096,
+                    "temperature": 0.5,
+                    "top_p": 1.0,
+                    "top_k": 0,
+                    "parallel_tool_calls": False,
+                    "max_retries": 10,
                 }
             },
         }
-        path = Path.home() / ".config" / "trae" / "config.yaml"
+        path = self._config_path()
         self._write_text(path, dump_yaml(config))
         return str(path)
 
@@ -101,6 +117,10 @@ class TraeOssAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
     ) -> Optional[RunPlan]:
         api_key, api_base, model = self._resolve_runtime_settings(model_override=model_override)
+        if api_key and api_base and model:
+            config_path = Path(self.configure() or self._config_path())
+        else:
+            config_path = self._config_path()
         env = {
             "TRAE_AGENT_API_KEY": api_key,
             "TRAE_AGENT_API_BASE": api_base,
@@ -108,6 +128,13 @@ class TraeOssAgent(CodingAgent):
             "OPENAI_API_BASE": api_base,
             "OPENAI_BASE_URL": api_base,
         }
+        provider = self._resolve_model_provider(api_base)
+        if provider == "doubao":
+            env["DOUBAO_API_KEY"] = api_key
+            env["DOUBAO_BASE_URL"] = api_base
+        elif provider == "openrouter":
+            env["OPENROUTER_API_KEY"] = api_key
+            env["OPENROUTER_BASE_URL"] = api_base
         traj_env = os.environ.get("CAKIT_TRAE_TRAJECTORY")
         if traj_env:
             trajectory_file = Path(traj_env).expanduser()
@@ -121,7 +148,6 @@ class TraeOssAgent(CodingAgent):
             "--trajectory-file",
             str(trajectory_file),
         ]
-        config_path = Path.home() / ".config" / "trae" / "config.yaml"
         if config_path.exists():
             extra_args.extend(["--config-file", str(config_path)])
         return self._build_templated_run_plan(
@@ -160,7 +186,7 @@ class TraeOssAgent(CodingAgent):
             source=str(trajectory_file),
         )
         return RunParseResult(
-            response=parsed_stats.response or runtime_parsing.last_stdout_line(output),
+            response=parsed_stats.response or "",
             models_usage=snapshot.models_usage if snapshot is not None else {},
             llm_calls=snapshot.llm_calls if snapshot is not None else None,
             tool_calls=snapshot.tool_calls if snapshot is not None else None,
@@ -188,8 +214,11 @@ class TraeOssAgent(CodingAgent):
         ]
         usage = sum_usage_entries(parsed_usages)
 
-        tool_call_values = select_values(payload, "$.agent_steps[*].tool_calls[*]")
-        tool_calls = len(tool_call_values) if tool_call_values is not None else None
+        tool_call_entries = select_values(payload, "$.agent_steps[*].tool_calls")
+        if tool_call_entries is None:
+            tool_calls = None
+        else:
+            tool_calls = sum(len(entry) for entry in tool_call_entries if isinstance(entry, list))
 
         response = next(
             (
@@ -198,6 +227,7 @@ class TraeOssAgent(CodingAgent):
                     runtime_parsing.last_nonempty_text(select_values(payload, path))
                     for path in (
                         "$.final_result",
+                        "$.agent_steps[*].llm_response.content",
                         "$.llm_interactions[*].response.content",
                     )
                 )
@@ -223,3 +253,16 @@ class TraeOssAgent(CodingAgent):
             runtime_env.resolve_openai_base_url("TRAE_AGENT_API_BASE"),
             runtime_env.resolve_openai_model("TRAE_AGENT_MODEL", model_override=model_override),
         )
+
+    def _resolve_model_provider(self, api_base: Optional[str]) -> str:
+        configured = runtime_parsing.normalize_text(os.environ.get("CAKIT_TRAE_AGENT_PROVIDER"))
+        if configured is not None:
+            return configured
+        if not api_base:
+            return "openai"
+        host = urlparse(api_base).netloc.lower()
+        if host.endswith("openrouter.ai"):
+            return "openrouter"
+        if host.endswith("api.openai.com"):
+            return "openai"
+        return "doubao"

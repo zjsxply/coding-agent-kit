@@ -237,7 +237,11 @@ class TraeCnAgent(CodingAgent):
         return latest, result.output
 
     def _config_root(self) -> Path:
-        return Path.home() / ".config" / "cakit" / "trae-cn"
+        return self._resolve_writable_dir(
+            Path.home() / ".config" / "cakit" / "trae-cn",
+            Path("/tmp") / "cakit" / "trae-cn-config",
+            purpose="TRAE CLI (trae.cn) config",
+        )
 
     def _resolve_runtime_config_text(self, model_override: Optional[str]) -> Optional[str]:
         api_key = runtime_env.resolve_openai_api_key("CAKIT_TRAE_CN_API_KEY")

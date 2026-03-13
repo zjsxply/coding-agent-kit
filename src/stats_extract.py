@@ -804,8 +804,9 @@ def extract_opencode_session_export_stats(
             merge_model_usage(models_usage, f"{provider_id}/{model_id}", usage)
 
         selected_tool_parts = select_values(message, tool_parts_path)
-        if selected_tool_parts is not None:
-            tool_calls += len(selected_tool_parts)
+        message_parts = last_value(message, "$.parts")
+        if isinstance(message_parts, list):
+            tool_calls += len(selected_tool_parts or [])
             has_tool_calls = True
 
         message_cost = opt_float(message, "$.info.cost")

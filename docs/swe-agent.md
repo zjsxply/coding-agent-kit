@@ -12,8 +12,9 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
 
 ## Install
 
-- `cakit install swe-agent` installs latest upstream release tag at install time.
-- `cakit install swe-agent --version <tag>` installs upstream release tarball.
+- `cakit install swe-agent` resolves the latest upstream release tag, then installs that git ref with `uv tool install`.
+- If `uv` is unavailable, cakit falls back to `pip install` for the same git ref.
+- `cakit install swe-agent --version <tag>` installs the specified upstream git tag with the same flow.
 - cakit also prepares runtime assets (`config/`, `tools/`, `trajectories/`) under `~/.cache/cakit/swe-agent-assets/<tag>` and passes:
   - `SWE_AGENT_CONFIG_DIR`
   - `SWE_AGENT_TOOLS_DIR`
@@ -25,13 +26,14 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
   - `--env.deployment.type=local`
   - `--env.repo.type=local`
   - `--problem_statement.text <prompt>`
+- If the installed `sweagent run` supports `--output_dir`, cakit passes a run-local output directory and reads `.traj` files from there.
 - Model priority is: `--model` > `SWE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`.
 - If current `--cwd` is not a git repo, cakit creates a temporary git repo under `/tmp` and uses that path.
 - cakit writes a cakit-managed config to `~/.config/sweagent/config.yaml` and passes it with `--config`.
 
 ## Stats extraction
 
-- Source of truth: latest `.traj` file in run `--output_dir`.
+- Source of truth: `.traj` files written to the run `--output_dir` when the installed CLI supports that flag.
 - `models_usage`:
   - `prompt_tokens = info.model_stats.tokens_sent`
   - `completion_tokens = info.model_stats.tokens_received`

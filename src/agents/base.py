@@ -739,14 +739,30 @@ class CodingAgent(abc.ABC):
         videos: Optional[list[Path]],
         tool_name: str,
     ) -> tuple[str, list[Path], list[Path]]:
-        resolved_images = [path.expanduser().resolve() for path in (images or [])]
-        resolved_videos = [path.expanduser().resolve() for path in (videos or [])]
-        if not resolved_images and not resolved_videos:
+        image_paths = images or []
+        video_paths = videos or []
+        all_media_paths = [*image_paths, *video_paths]
+        if not all_media_paths:
             return prompt, [], []
+        try:
+            staged_paths = runtime_media.stage_media_files(
+                all_media_paths,
+                staged_media_dirs=self._staged_media_dirs,
+                stage_root=self.workdir / ".cakit-media",
+            )
+        except runtime_media.MediaStageError as exc:
+            self._raise_config_error(str(exc))
+        split_index = len(image_paths)
+        resolved_images = staged_paths[:split_index]
+        resolved_videos = staged_paths[split_index:]
 
         lines: list[str] = [
             "You are provided with these local media files.",
-            f"Use the {tool_name} tool to open each file before answering.",
+            (
+                f"Use the {tool_name} tool to inspect each file before answering when that tool is available. "
+                "If it is unavailable, or if its output is insufficient, use the appropriate available tools to "
+                "inspect the files directly, extract any visible text, and continue without asking for more setup."
+            ),
         ]
         if resolved_images:
             lines.append("")
@@ -772,7 +788,11 @@ class CodingAgent(abc.ABC):
             return prompt, []
 
         try:
-            staged_paths = runtime_media.stage_media_files(media_paths, staged_media_dirs=self._staged_media_dirs)
+            staged_paths = runtime_media.stage_media_files(
+                media_paths,
+                staged_media_dirs=self._staged_media_dirs,
+                stage_root=self.workdir / ".cakit-media",
+            )
         except runtime_media.MediaStageError as exc:
             self._raise_config_error(str(exc))
         refs: list[str] = []
@@ -803,11 +823,25 @@ class CodingAgent(abc.ABC):
             return None
         return path.read_text(encoding="utf-8", errors="ignore")
 
+    def _resolve_writable_dir(self, *candidates: Path, purpose: str) -> Path:
+        for directory in candidates:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                probe = directory / f".write-test-{os.getpid()}-{time.time_ns()}"
+                probe.write_text("", encoding="utf-8")
+                try:
+                    probe.unlink()
+                except FileNotFoundError:
+                    pass
+                return directory
+            except OSError:
+                continue
+        raise AgentError(f"unable to create writable {purpose} directory")
+
     def _output_dir(self) -> Path:
         root = os.environ.get("CAKIT_OUTPUT_DIR")
-        output_dir = Path(root) if root else Path.home() / ".cache" / "cakit"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir
+        candidates = [Path(root)] if root else [Path.home() / ".cache" / "cakit", Path("/tmp") / "cakit"]
+        return self._resolve_writable_dir(*candidates, purpose="cakit output")
 
     def _write_output_artifact(self, agent: str, content: str, *, suffix: str) -> Path:
         stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"

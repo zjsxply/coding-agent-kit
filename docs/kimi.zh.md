@@ -31,6 +31,7 @@ cakit install kimi --version <kimi_cli_version>
 | `KIMI_API_KEY` | Provider API Key（回退：`OPENAI_API_KEY`） | 必填 |
 | `KIMI_BASE_URL` | Provider base URL（回退：`OPENAI_BASE_URL`） | 必填 |
 | `KIMI_MODEL_NAME` | 上游模型名（`model`），用于运行时 `--model`（回退：`OPENAI_DEFAULT_MODEL`） | 可选 |
+| `KIMI_MODEL_CAPABILITIES` | 上游模型能力，逗号分隔（例如 `image_in,video_in`） | 可选 |
 | `CAKIT_KIMI_PROVIDER_TYPE` | Kimi 配置中的 provider `type` | 必填（`kimi`、`openai_legacy`、`openai_responses`） |
 
 若上表中的必填变量有任意缺失，或 `CAKIT_KIMI_PROVIDER_TYPE` 不在允许集合中，`cakit configure kimi` 会返回 `config_path: null`，并且不会写配置文件。
@@ -47,7 +48,8 @@ cakit 仅写 provider 配置：
 `cakit run kimi --image <path>` 已支持。
 
 - cakit 使用 print mode 的 `--prompt` 输入，并在 prompt 中注入图片绝对路径，供 Kimi 读取文件。
-- cakit 会在提示中要求 Kimi 使用 `ReadMediaFile` 打开图片路径后再回答。
+- cakit 会在提示中要求 Kimi 在有 `ReadMediaFile` 工具时优先使用它；若该工具不可用，则改用当前可用的其他工具继续读取媒体。
+- 如果当前 provider/model 不会自动声明媒体能力，可设置 `KIMI_MODEL_CAPABILITIES=image_in`（或 `image_in,video_in`），让 Kimi CLI 暴露媒体读取路径。
 - 是否能真正读图仍取决于所选模型能力。若模型不支持图像输入，Kimi 可能失败或直接返回不支持读图。
 
 ## 视频输入
@@ -55,7 +57,8 @@ cakit 仅写 provider 配置：
 `cakit run kimi --video <path>` 已支持。
 
 - 有视频场景：cakit 使用 print mode 的 `--prompt` 输入，并在 prompt 中注入视频绝对路径。
-- cakit 会在提示中要求 Kimi 使用 `ReadMediaFile` 打开视频路径后再回答。
+- cakit 会在提示中要求 Kimi 在有 `ReadMediaFile` 工具时优先使用它；若该工具不可用，则改用当前可用的其他工具继续读取媒体。
+- 如果当前 provider/model 不会自动声明媒体能力，可设置 `KIMI_MODEL_CAPABILITIES=image_in,video_in`，让 Kimi CLI 暴露媒体读取路径。
 - 是否能真正读视频仍取决于所选模型能力。若模型不支持视频输入，Kimi 可能失败或直接返回不支持读视频。
 
 ## Agent Swarm
@@ -69,6 +72,7 @@ Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：
 - cakit 会把解析后的模型同时通过两种方式传给 Kimi CLI：
   - 命令行参数：`kimi ... --model <resolved_model>`
   - 环境变量：`KIMI_MODEL_NAME=<resolved_model>`
+- 若设置了 `KIMI_MODEL_CAPABILITIES`，cakit 会原样透传给子进程中的 Kimi CLI。
 - `cakit run kimi --model <name>` 在该次运行中优先。
 - 若未传 `--model`，cakit 会先读取 `KIMI_MODEL_NAME`，再回退到 `OPENAI_DEFAULT_MODEL`。
 - cakit 在运行 Kimi 时始终设置 `KIMI_CLI_NO_AUTO_UPDATE=1`。

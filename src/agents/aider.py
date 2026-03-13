@@ -110,7 +110,10 @@ class AiderAgent(CodingAgent):
         if analytics_log.exists():
             analytics_text = self._read_text(analytics_log)
             if analytics_text:
-                loaded_payloads = runtime_parsing.load_output_json_payloads(analytics_text, stdout_only=False)
+                loaded_payloads = runtime_parsing.load_output_json_payloads(
+                    analytics_text,
+                    stdout_only_output=False,
+                )
                 if loaded_payloads:
                     analytics_payloads = loaded_payloads
         models_usage, llm_calls, tool_calls, total_cost = self._extract_analytics_stats(

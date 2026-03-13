@@ -105,7 +105,7 @@ class KimiAgent(CodingAgent):
                 }
             }
         }
-        path = Path.home() / ".kimi" / "config.toml"
+        path = self._kimi_root(create_if_missing=True) / "config.toml"
         self._write_text(path, dump_toml(config))
         return str(path)
 
@@ -123,11 +123,16 @@ class KimiAgent(CodingAgent):
         settings = self._resolve_runtime_settings(model_override=model_override)
         requested_model_name = settings["model_name"]
         session_id = str(uuid.uuid4())
+        run_home = self._make_temp_dir(prefix="cakit-kimi-home-")
+        kimi_root = Path(run_home) / ".kimi"
         env: Dict[str, Optional[str]] = {
+            "HOME": str(run_home),
             "KIMI_API_KEY": settings["api_key"],
             "KIMI_BASE_URL": settings["base_url"],
             "KIMI_CLI_NO_AUTO_UPDATE": "1",
         }
+        if settings["model_capabilities"]:
+            env["KIMI_MODEL_CAPABILITIES"] = settings["model_capabilities"]
         if requested_model_name:
             # Kimi CLI can require env-based model resolution in some flows.
             # Keep --model for explicit run control and also set env for compatibility.
@@ -153,11 +158,12 @@ class KimiAgent(CodingAgent):
         )
         result = self._run(cmd, env, base_env=base_env)
         output = result.output
-        payloads = runtime_parsing.load_output_json_payloads(output, stdout_only=False)
+        payloads = runtime_parsing.load_output_json_payloads(output, stdout_only_output=False)
         usage, tool_calls, llm_calls, model_name = self._resolve_run_stats(
             payloads=payloads,
             session_id=session_id,
             prompt=run_prompt,
+            kimi_root=kimi_root,
         )
         snapshot = build_single_model_stats_snapshot(
             model_name=model_name,
@@ -204,6 +210,7 @@ class KimiAgent(CodingAgent):
             "api_key": runtime_env.resolve_openai_api_key("KIMI_API_KEY"),
             "base_url": runtime_env.resolve_openai_base_url("KIMI_BASE_URL"),
             "model_name": runtime_env.resolve_openai_model("KIMI_MODEL_NAME", model_override=model_override),
+            "model_capabilities": runtime_parsing.normalize_text(os.environ.get("KIMI_MODEL_CAPABILITIES")),
             "provider_type": provider_type,
         }
 
@@ -213,12 +220,17 @@ class KimiAgent(CodingAgent):
         payloads: List[Dict[str, Any]],
         session_id: str,
         prompt: str,
+        kimi_root: Path,
     ) -> Tuple[Optional[Dict[str, int]], Optional[int], Optional[int], Optional[str]]:
         usage: Optional[Dict[str, int]] = None
         tool_calls: Optional[int] = None
         llm_calls: Optional[int] = None
         model_name: Optional[str] = None
-        session_usage, session_tool_calls, session_llm_calls, session_model_name = self._extract_session_stats(session_id, prompt)
+        session_usage, session_tool_calls, session_llm_calls, session_model_name = self._extract_session_stats(
+            session_id,
+            prompt,
+            kimi_root=kimi_root,
+        )
         if session_usage is not None:
             usage = session_usage
         if session_tool_calls is not None:
@@ -232,15 +244,19 @@ class KimiAgent(CodingAgent):
             usage = parse_usage_by_model(raw_usage, "prompt_completion") if isinstance(raw_usage, dict) else None
         if tool_calls is None:
             tool_call_values = select_values(payloads, "$[*].tool_calls[*]")
-            tool_calls = len(tool_call_values) if tool_call_values is not None else None
+            tool_calls = len(tool_call_values) if tool_call_values is not None else 0
         if model_name is None:
-            model_name = self._extract_model_name_from_log(session_id, prompt)
+            model_name = self._extract_model_name_from_log(session_id, prompt, kimi_root=kimi_root)
         return usage, tool_calls, llm_calls, model_name
 
     def _extract_session_stats(
-        self, session_id: Optional[str], prompt: str
+        self,
+        session_id: Optional[str],
+        prompt: str,
+        *,
+        kimi_root: Path,
     ) -> Tuple[Optional[Dict[str, int]], Optional[int], Optional[int], Optional[str]]:
-        wire_path = self._find_session_wire_path(session_id)
+        wire_path = self._find_session_wire_path(session_id, kimi_root=kimi_root)
         if not wire_path:
             return None, None, None, None
         wire_text = self._read_text_lossy(wire_path)
@@ -345,13 +361,13 @@ class KimiAgent(CodingAgent):
         usage = sum_usage_entries(usage_values)
         return usage, tool_calls, llm_calls, model_name
 
-    def _find_session_wire_path(self, session_id: Optional[str]) -> Optional[Path]:
+    def _find_session_wire_path(self, session_id: Optional[str], *, kimi_root: Path) -> Optional[Path]:
         if not session_id:
             return None
         workdir = str(self.workdir)
         workdir_md5 = hashlib.md5(workdir.encode("utf-8")).hexdigest()
         kaos_name = "local"
-        meta_text = self._read_text(Path.home() / ".kimi" / "kimi.json")
+        meta_text = self._read_text(kimi_root / "kimi.json")
         if meta_text:
             meta = runtime_parsing.parse_json(meta_text)
             if isinstance(meta, dict):
@@ -365,15 +381,15 @@ class KimiAgent(CodingAgent):
                             kaos_name = candidate
                         break
         dir_basename = workdir_md5 if kaos_name == "local" else f"{kaos_name}_{workdir_md5}"
-        wire_path = Path.home() / ".kimi" / "sessions" / dir_basename / session_id / "wire.jsonl"
+        wire_path = kimi_root / "sessions" / dir_basename / session_id / "wire.jsonl"
         if wire_path.exists():
             return wire_path
         return None
 
-    def _extract_model_name_from_log(self, session_id: Optional[str], prompt: str) -> Optional[str]:
+    def _extract_model_name_from_log(self, session_id: Optional[str], prompt: str, *, kimi_root: Path) -> Optional[str]:
         if not session_id:
             return None
-        log_path = Path.home() / ".kimi" / "logs" / "kimi.log"
+        log_path = kimi_root / "logs" / "kimi.log"
         lines = self._tail_lines(log_path, max_bytes=4 * 1024 * 1024)
         if not lines:
             return None
@@ -419,6 +435,24 @@ class KimiAgent(CodingAgent):
                 continue
             return remain[:end_pos] or None
         return None
+
+    def _kimi_root(
+        self,
+        *,
+        env_source: Optional[Dict[str, str]] = None,
+        create_if_missing: bool = False,
+    ) -> Path:
+        source = env_source or os.environ
+        home_dir = runtime_parsing.normalize_text(source.get("HOME"))
+        if home_dir is not None:
+            return Path(home_dir).expanduser() / ".kimi"
+        if create_if_missing:
+            return self._resolve_writable_dir(
+                Path.home() / ".kimi",
+                Path("/tmp") / "cakit" / "kimi",
+                purpose="Kimi config",
+            )
+        return Path.home() / ".kimi"
 
     @staticmethod
     def _tail_lines(path: Path, *, max_bytes: int) -> List[str]:

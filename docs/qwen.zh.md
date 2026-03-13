@@ -25,6 +25,7 @@
 - 支持 `cakit run qwen --image/--video`，实现方式为 prompt 注入。
 - cakit 会先把媒体文件复制到 `<run_cwd>/.cakit-media/`，再在 prompt 开头注入：`@{.cakit-media/<file>}`。
 - 是否能正确理解媒体内容取决于所选基础模型能力；文本模型可能无法给出正确图像/视频描述。
+- 上游在 Qwen OAuth / DashScope 兼容配置下，对视觉输入和联网工具的支持通常比通用 OpenAI 兼容 API 模式更稳定。API 模式下，即使 prompt 中已有 `@{path}`，真正的工具执行和媒体理解仍取决于 provider。
 - 复制机制仅在使用 `--image`/`--video` 时生效。
 - 若仅在 prompt 中写本地路径（不使用 `--image`/`--video`），cakit 不会复制文件；当路径在当前 run workspace 之外时，Qwen 可能因 workspace 路径限制拒绝读取。
 

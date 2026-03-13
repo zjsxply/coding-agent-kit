@@ -30,7 +30,7 @@ This document explains how cakit runs OpenCode and extracts run metadata.
 **Image and Video Input**
 - cakit maps local media files to repeated `opencode run --file <path>` arguments.
 - Image input works when the selected model/provider supports image attachments.
-- Local video files are currently not passed through as multimodal attachments in OpenCode `1.2.6` (upstream Read handling rejects binary video files).
+- Local video files are currently not passed through as multimodal attachments in OpenCode `1.2.24` (upstream Read handling rejects binary video files).
 
 **Stats Extraction (strict)**
 - cakit first reads `sessionID` from OpenCode JSON events (`--format json`) for the current run.

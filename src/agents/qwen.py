@@ -55,10 +55,17 @@ class QwenAgent(CodingAgent):
         media_injection="symbolic",
     )
 
+    def _qwen_root(self) -> Path:
+        return self._resolve_writable_dir(
+            Path.home() / ".qwen",
+            Path("/tmp") / "cakit" / "qwen",
+            purpose="Qwen config",
+        )
+
     def configure(self) -> Optional[str]:
         settings = self._resolve_runtime_settings(model_override=None)
         updates = self._build_settings_updates(settings)
-        path = Path.home() / ".qwen" / "settings.json"
+        path = self._qwen_root() / "settings.json"
         current_settings = runtime_parsing.load_json_dict(path) or {}
         merged_settings = self._merge_dict(current_settings, updates)
         self._write_text(path, json.dumps(merged_settings, ensure_ascii=True, indent=2))
@@ -169,7 +176,7 @@ class QwenAgent(CodingAgent):
         return merged
 
     def _build_run_telemetry_path(self) -> Path:
-        directory = Path.home() / ".qwen" / "telemetry"
+        directory = self._qwen_root() / "telemetry"
         directory.mkdir(parents=True, exist_ok=True)
         stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
         return directory / f"cakit-{stamp}.log"
@@ -212,6 +219,6 @@ class QwenAgent(CodingAgent):
                 "target": "local",
                 "otlpEndpoint": "",
                 "logPrompts": True,
-                "outfile": str(Path.home() / ".qwen" / "telemetry.log"),
+                "outfile": str(self._qwen_root() / "telemetry.log"),
             },
         }

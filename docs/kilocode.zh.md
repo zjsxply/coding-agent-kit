@@ -15,7 +15,7 @@ cakit install kilocode --version <npm_version_or_tag>
 
 ## 配置
 
-`cakit configure kilocode` 会写入：
+`cakit configure kilocode` 会写入兼容旧版的本地配置：
 
 - `~/.kilocode/cli/config.json`
 
@@ -28,6 +28,7 @@ cakit install kilocode --version <npm_version_or_tag>
 | `KILO_OPENAI_BASE_URL` | OpenAI 兼容 base URL（回退：`OPENAI_BASE_URL`） | 可选 |
 
 若必填的 key/model 缺失，cakit 不会写配置，且运行返回非零。
+对于 KiloCode 1.x，`cakit run` 不仅依赖这个文件，还会直接向子进程传入运行时 OpenAI 兼容环境变量。
 
 ## 运行行为
 
@@ -45,6 +46,8 @@ kilocode run --auto --format json [--file <image>] [--model openai/<name>] "<pro
 - 这样可避免跨 run 的会话冲突，并保证统计匹配到本次运行产物。
 - `cakit run kilocode --model <name>` 在该次运行优先。
 - 若未传 `--model`，cakit 会先读取 `KILO_OPENAI_MODEL_ID`，再回退到 `OPENAI_DEFAULT_MODEL`。
+- 对于 1.x，cakit 还会向子进程传入 `OPENAI_API_KEY` 以及可选的 `OPENAI_BASE_URL`，并显式发送 `--model provider/model`。
+- 若解析出的模型名不带 provider 前缀（例如 `gpt-4o-mini`），cakit 会在 1.x CLI 中格式化为 `openai/gpt-4o-mini`。
 - cakit 不支持视频输入（`--video` 会返回不支持）。
 
 ## 图像输入

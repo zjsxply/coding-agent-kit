@@ -40,7 +40,7 @@ class DeepAgentsAgent(CodingAgent):
     version_template = VersionCommandTemplate(
         args=("deepagents", "--version"),
         parse_mode="regex_first_line",
-        regex=r"^(?:deepagents\s+)?([A-Za-z0-9._-]+)$",
+        regex=r"^(?:deepagents(?:-cli)?\s+)?([A-Za-z0-9._-]+)$",
     )
     _THREAD_ID_RE = re.compile(r"Thread:\s*([0-9a-fA-F]{8})")
 
@@ -134,6 +134,8 @@ class DeepAgentsAgent(CodingAgent):
             if nested_tool_calls is None and scalar_tool_calls is None
             else (nested_tool_calls or 0) + (scalar_tool_calls or 0)
         )
+        if tool_calls is None and assistant_messages:
+            tool_calls = 0
 
         response = next(
             (

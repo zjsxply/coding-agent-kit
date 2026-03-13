@@ -11,9 +11,13 @@ from typing import Dict, Iterable, Optional
 
 def build_runtime_path_prefixes(cache_key: str) -> tuple[str, ...]:
     npm_prefix = Path(cache_key).expanduser() if cache_key else Path.home() / ".npm-global"
+    uv_tool_bin = os.environ.get("UV_TOOL_BIN_DIR")
+    xdg_bin_home = os.environ.get("XDG_BIN_HOME")
     return tuple(
         dict.fromkeys(
             (
+                str(Path(uv_tool_bin).expanduser()) if uv_tool_bin else str(Path("/tmp") / "cakit" / "bin"),
+                str(Path(xdg_bin_home).expanduser()) if xdg_bin_home else str(Path.home() / ".local" / "bin"),
                 str(npm_prefix / "bin"),
                 str(Path.home() / ".npm" / "bin"),
                 str(Path.home() / ".local" / "bin"),
@@ -97,7 +101,21 @@ def resolve_binary(
     if path:
         return path
 
-    for folder in (npm_prefix / "bin", Path.home() / ".npm" / "bin", Path.home() / ".local" / "bin"):
+    extra_bin_candidates = []
+    xdg_bin_home = env_source.get("XDG_BIN_HOME")
+    if xdg_bin_home:
+        extra_bin_candidates.append(Path(xdg_bin_home).expanduser())
+    uv_tool_bin = env_source.get("UV_TOOL_BIN_DIR")
+    if uv_tool_bin:
+        extra_bin_candidates.append(Path(uv_tool_bin).expanduser())
+    extra_bin_candidates.append(Path("/tmp") / "cakit" / "bin")
+
+    for folder in (
+        *extra_bin_candidates,
+        npm_prefix / "bin",
+        Path.home() / ".npm" / "bin",
+        Path.home() / ".local" / "bin",
+    ):
         candidate = folder / binary
         if candidate.exists():
             return str(candidate)

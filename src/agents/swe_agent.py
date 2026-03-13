@@ -3,14 +3,16 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
+import shutil
 import tarfile
 import urllib.request
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import CodingAgent, CommandResult, InstallStrategy, ParsedStats, VersionCommandTemplate
-from ..models import RunResult
+from .base import CodingAgent, InstallStrategy, ParsedStats, VersionCommandTemplate
+from ..models import InstallResult, RunResult
 from ..stats_extract import (
     build_single_model_stats_snapshot,
     last_value,
@@ -20,7 +22,6 @@ from ..stats_extract import (
     sum_usage_entries,
 )
 from ..agent_runtime import env as runtime_env
-from ..agent_runtime import install_version as runtime_install
 from ..agent_runtime import parsing as runtime_parsing
 from ..agent_runtime import trajectory as runtime_trajectory
 from ..io_helpers import dump_yaml
@@ -31,96 +32,53 @@ class SweAgent(CodingAgent):
     display_name = "SWE-agent"
     binary = "sweagent"
     required_runtimes = ("uv",)
-    install_strategy = InstallStrategy(kind="custom")
+    install_strategy = InstallStrategy(
+        kind="uv_tool",
+        package="git+https://github.com/SWE-agent/SWE-agent",
+        version_style="git_ref",
+    )
+    _install_runtime_asset_version: Optional[str] = None
     version_template = VersionCommandTemplate(
-        args=("sweagent", "--version"),
-        parse_mode="text",
+        args=("sweagent", "-h"),
+        parse_mode="regex_first_line",
+        regex=r"\bversion\s+([A-Za-z0-9._-]+)\b",
         env_mode="runtime_assets",
     )
+
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        resolved_version = self._resolve_version(version)
+        normalized_version = self._normalize_release_tag(resolved_version)
+        self._install_runtime_asset_version = normalized_version
+        try:
+            result = super().install(scope=scope, version=resolved_version)
+        finally:
+            self._install_runtime_asset_version = None
+        if result.ok:
+            self._write_runtime_assets_version_marker(normalized_version)
+        return result
 
     def is_installed(self) -> bool:
         if not super().is_installed():
             return False
-        result = self._run(["sweagent", "--version"], env=self._runtime_asset_env(create_if_missing=True))
+        result = self._run(["sweagent", "-h"], env=self._runtime_asset_env(create_if_missing=False))
         return result.exit_code == 0 and bool(result.output.strip())
-
-    def _install_with_custom_strategy(
-        self,
-        *,
-        strategy: InstallStrategy,
-        scope: str,
-        version: Optional[str],
-    ) -> CommandResult:
-        try:
-            resolved_version = self._resolve_version(version)
-        except Exception as exc:
-            return CommandResult(
-                exit_code=1,
-                stdout="",
-                stderr=str(exc),
-                duration_seconds=0.0,
-            )
-        url = f"https://github.com/SWE-agent/SWE-agent/archive/refs/tags/{resolved_version}.tar.gz"
-        result = runtime_install.uv_pip_install(
-            packages=[url],
-            no_cache_dir=True,
-            run=self._run,
-            ensure_uv_fn=lambda: runtime_install.ensure_uv(self._run),
-            pip_install_fn=lambda packages, no_cache: runtime_install.pip_install(
-                packages=packages,
-                no_cache_dir=no_cache,
-                run=self._run,
-            ),
-        )
-        if not isinstance(result, CommandResult):
-            result = CommandResult(
-                exit_code=getattr(result, "exit_code", 1),
-                stdout=getattr(result, "stdout", ""),
-                stderr=getattr(result, "stderr", ""),
-                duration_seconds=getattr(result, "duration_seconds", 0.0),
-            )
-        assets_ok = self._prepare_runtime_assets(resolved_version)
-        details = result.output
-        exit_code = result.exit_code
-        if result.exit_code == 0 and not assets_ok:
-            details = f"{details}\n[install] failed to prepare SWE-agent runtime assets."
-            exit_code = 1
-        return CommandResult(
-            exit_code=exit_code,
-            stdout=details,
-            stderr="",
-            duration_seconds=result.duration_seconds,
-        )
 
     def configure(self) -> Optional[str]:
         runtime_env = self._runtime_asset_env(create_if_missing=True)
         tools_dir = runtime_env.get("SWE_AGENT_TOOLS_DIR")
         if not tools_dir:
             return None
-
-        config = {
-            "agent": {
-                "templates": {
-                    "system_template": "You are a helpful assistant that can interact with a computer to solve tasks.",
-                    "instance_template": "{{problem_statement}}",
-                },
-                "tools": {
-                    "bundles": [
-                        {"path": str(Path(tools_dir) / "registry")},
-                        {"path": str(Path(tools_dir) / "submit")},
-                    ],
-                    "enable_bash_tool": True,
-                    "parse_function": {"type": "thought_action"},
-                },
-                "history_processors": [
-                    {
-                        "type": "cache_control",
-                        "last_n_messages": 2,
-                    }
-                ],
-            }
-        }
-        path = Path.home() / ".config" / "sweagent" / "config.yaml"
+        config = self._build_config_payload(
+            registry_bundle=Path(tools_dir) / "registry",
+            submit_bundle=Path(tools_dir) / "submit",
+            model_name=None,
+        )
+        config_dir = self._resolve_writable_dir(
+            Path.home() / ".config" / "sweagent",
+            Path("/tmp") / "cakit" / "sweagent-config",
+            purpose="SWE-agent config",
+        )
+        path = config_dir / "config.yaml"
         self._write_text(path, dump_yaml(config))
         return str(path)
 
@@ -143,8 +101,14 @@ class SweAgent(CodingAgent):
             "OPENAI_BASE_URL": api_base,
         }
         env.update(self._runtime_asset_env(create_if_missing=True))
-        model = runtime_env.resolve_openai_model("SWE_AGENT_MODEL", model_override=model_override)
+        run_home = self._make_temp_dir(prefix="cakit-sweagent-home-")
+        env["HOME"] = str(run_home)
+        model = runtime_env.normalize_litellm_model(
+            runtime_env.resolve_openai_model("SWE_AGENT_MODEL", model_override=model_override),
+            output_format="slash",
+        )
         repo_path = self._resolve_repo_path(base_env=base_env)
+        registry_bundle, submit_bundle = self._prepare_run_tool_bundles(Path(env["SWE_AGENT_TOOLS_DIR"]))
         output_dir = self._make_temp_dir(prefix="cakit-sweagent-")
         supports_output_dir = self._supports_output_dir(env=env, base_env=base_env)
         cmd = [
@@ -158,11 +122,28 @@ class SweAgent(CodingAgent):
         ]
         if supports_output_dir:
             cmd.append(f"--output_dir={output_dir}")
-        config_path = Path.home() / ".config" / "sweagent" / "config.yaml"
+        config_dir = self._resolve_writable_dir(
+            Path.home() / ".config" / "sweagent",
+            Path("/tmp") / "cakit" / "sweagent-config",
+            purpose="SWE-agent config",
+        )
+        config_path = config_dir / "config.yaml"
+        if model:
+            config = self._build_config_payload(
+                registry_bundle=registry_bundle,
+                submit_bundle=submit_bundle,
+                model_name=model,
+            )
+            self._write_text(config_path, dump_yaml(config))
+        elif not config_path.exists():
+            config = self._build_config_payload(
+                registry_bundle=registry_bundle,
+                submit_bundle=submit_bundle,
+                model_name=runtime_env.resolve_openai_model("SWE_AGENT_MODEL"),
+            )
+            self._write_text(config_path, dump_yaml(config))
         if config_path.exists():
             cmd.extend(["--config", str(config_path)])
-        if model:
-            cmd.extend(["--agent.model.name", model])
         result = self._run_sweagent_command(cmd, env=env, base_env=base_env)
         output = result.output
 
@@ -238,12 +219,80 @@ class SweAgent(CodingAgent):
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    def _runtime_asset_env(self, *, create_if_missing: bool) -> Dict[str, str]:
-        versions: list[str] = []
+    def _build_config_payload(
+        self,
+        *,
+        registry_bundle: Path,
+        submit_bundle: Path,
+        model_name: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "agent": {
+                "model": {
+                    "name": model_name or "swe-agent-required-model",
+                    "per_instance_cost_limit": 0.0,
+                    "total_cost_limit": 0.0,
+                },
+                "templates": {
+                    "system_template": "You are a helpful assistant that can interact with a computer to solve tasks.",
+                    "instance_template": "{{problem_statement}}",
+                },
+                "tools": {
+                    "bundles": [
+                        {"path": str(registry_bundle)},
+                        {"path": str(submit_bundle)},
+                    ],
+                    "enable_bash_tool": True,
+                    "parse_function": {"type": "thought_action"},
+                },
+                "history_processors": [
+                    {
+                        "type": "cache_control",
+                        "last_n_messages": 2,
+                    }
+                ],
+            }
+        }
+
+    def _prepare_run_tool_bundles(self, tools_dir: Path) -> tuple[Path, Path]:
+        run_bundle_root = self._make_temp_dir(prefix="cakit-sweagent-bundles-")
+        suffix = run_bundle_root.name.rsplit("-", 1)[-1]
+        registry_source = tools_dir / "registry"
+        submit_source = tools_dir / "submit"
+        registry_target = run_bundle_root / f"registry-{suffix}"
+        submit_target = run_bundle_root / f"submit-{suffix}"
+        shutil.copytree(registry_source, registry_target)
+        shutil.copytree(submit_source, submit_target)
+        return registry_target, submit_target
+
+    def _installed_version(self) -> Optional[str]:
         try:
             installed = metadata.version("sweagent")
         except Exception:
             installed = None
+        normalized = runtime_parsing.normalize_text(installed)
+        if normalized is not None:
+            return normalized
+        marker_version = self._read_runtime_assets_version_marker()
+        if marker_version is not None:
+            return marker_version
+        result = self._run(["sweagent", "-h"], env=self._runtime_asset_env(create_if_missing=False))
+        if result.exit_code != 0:
+            return None
+        text = runtime_parsing.first_nonempty_line(result.output)
+        if text is None:
+            return None
+        match = re.search(r"\bv?\d+\.\d+\.\d+(?:[A-Za-z0-9.+-]*)?\b", text)
+        if match:
+            return match.group(0)
+        return runtime_parsing.normalize_text(text)
+
+    def _runtime_asset_env(self, *, create_if_missing: bool) -> Dict[str, str]:
+        versions: list[str] = []
+        install_version = self._install_runtime_asset_version
+        if install_version and install_version not in versions:
+            versions.append(install_version)
+        installed = self._installed_version()
         if installed and installed not in versions:
             versions.append(installed)
 
@@ -253,7 +302,12 @@ class SweAgent(CodingAgent):
             ready = self._runtime_assets_ready(paths)
             if not ready and create_if_missing:
                 ready = self._prepare_runtime_assets(normalized)
-            if ready:
+                if ready:
+                    self._write_runtime_assets_version_marker(normalized)
+            if ready or not create_if_missing:
+                paths["config"].mkdir(parents=True, exist_ok=True)
+                paths["tools"].mkdir(parents=True, exist_ok=True)
+                paths["trajectories"].mkdir(parents=True, exist_ok=True)
                 return {
                     "SWE_AGENT_CONFIG_DIR": str(paths["config"]),
                     "SWE_AGENT_TOOLS_DIR": str(paths["tools"]),
@@ -265,6 +319,7 @@ class SweAgent(CodingAgent):
             normalized = self._normalize_release_tag(resolved_version)
             paths = self._runtime_asset_paths(normalized)
             if self._prepare_runtime_assets(normalized):
+                self._write_runtime_assets_version_marker(normalized)
                 return {
                     "SWE_AGENT_CONFIG_DIR": str(paths["config"]),
                     "SWE_AGENT_TOOLS_DIR": str(paths["tools"]),
@@ -280,14 +335,43 @@ class SweAgent(CodingAgent):
             return normalized
         return f"v{normalized}"
 
+    def _runtime_assets_cache_root(self) -> Path:
+        candidates = [
+            Path.home() / ".cache" / "cakit" / "swe-agent-assets",
+            Path("/tmp") / "cakit" / "swe-agent-assets",
+        ]
+        for directory in candidates:
+            if (directory / ".current-version").is_file():
+                return directory
+        for directory in candidates:
+            if directory.is_dir():
+                for child in directory.iterdir():
+                    if child.is_dir():
+                        return directory
+        return self._resolve_writable_dir(*candidates, purpose="SWE-agent runtime assets")
+
+    def _runtime_assets_version_marker(self) -> Path:
+        return self._runtime_assets_cache_root() / ".current-version"
+
     def _runtime_asset_paths(self, version: str) -> Dict[str, Path]:
-        root = Path.home() / ".cache" / "cakit" / "swe-agent-assets" / version
+        root = self._runtime_assets_cache_root() / version
         return {
             "root": root,
             "config": root / "config",
             "tools": root / "tools",
             "trajectories": root / "trajectories",
         }
+
+    def _read_runtime_assets_version_marker(self) -> Optional[str]:
+        marker_text = runtime_parsing.normalize_text(self._read_text(self._runtime_assets_version_marker()))
+        if marker_text is None:
+            return None
+        return self._normalize_release_tag(marker_text)
+
+    def _write_runtime_assets_version_marker(self, version: str) -> None:
+        marker_path = self._runtime_assets_version_marker()
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(f"{self._normalize_release_tag(version)}\n", encoding="utf-8")
 
     def _runtime_assets_ready(self, paths: Dict[str, Path]) -> bool:
         config_default = paths["config"] / "default.yaml"
@@ -396,7 +480,7 @@ class SweAgent(CodingAgent):
         help_result = self._run_sweagent_command(["sweagent", "run", "--help"], env=env, base_env=base_env)
         if help_result.exit_code != 0:
             return False
-        return "--output_dir" in help_result.output
+        return "--output_dir" in help_result.output or "output_dir:" in help_result.output
 
     def _extract_single_trajectory_stats(
         self,

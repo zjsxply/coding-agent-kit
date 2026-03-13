@@ -5,16 +5,23 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from typing import Optional
 
 
 class MediaStageError(RuntimeError):
     pass
 
 
-def stage_media_files(media_paths: list[Path], *, staged_media_dirs: set[Path]) -> list[Path]:
+def stage_media_files(
+    media_paths: list[Path],
+    *,
+    staged_media_dirs: set[Path],
+    stage_root: Optional[Path] = None,
+) -> list[Path]:
     staged: list[Path] = []
     run_stage = f"{os.getpid()}-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
-    stage_dir = Path("/tmp") / "cakit-media" / run_stage
+    stage_parent = stage_root if stage_root is not None else Path("/tmp") / "cakit-media"
+    stage_dir = stage_parent / run_stage
     stage_dir.mkdir(parents=True, exist_ok=True)
     staged_media_dirs.add(stage_dir)
 

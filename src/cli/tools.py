@@ -35,16 +35,6 @@ def run_skills(passthrough_args: list[str]) -> int:
     return result.returncode
 
 
-BASE_SHELL_TOOL_STEPS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("apt-get", "update"), "apt-get update"),
-    (("apt-get", "install", "-y", "curl", "ca-certificates", "gnupg", "lsb-release", "unzip"), "apt-get install base tools"),
-    (
-        ("apt-get", "install", "-y", "ripgrep", "fd-find", "fzf", "jq", "yq", "bat", "git", "git-lfs", "git-delta"),
-        "apt-get install shell tools",
-    ),
-    (("git", "lfs", "install", "--system"), "git lfs install --system"),
-)
-
 ARCH_SPECIFIC_TOOL_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("ast-grep", "_install_ast_grep"),
     ("playwright-chromium (deps+browser)", "_install_playwright_chromium"),
@@ -55,140 +45,227 @@ TOOL_ALIAS_RULES: tuple[tuple[str, str, str, str], ...] = (
     ("bat", "batcat", "/usr/bin/batcat", "/usr/local/bin/bat"),
 )
 
-BASE_SHELL_COMPONENTS: tuple[str, ...] = (
-    "rg",
-    "fd",
-    "fzf",
-    "jq",
-    "yq",
-    "bat",
-    "git",
-    "git-lfs",
-    "git-delta",
-)
+COMPONENT_BINARIES: dict[str, tuple[str, ...]] = {
+    "rg": ("rg",),
+    "fd": ("fd", "fdfind"),
+    "fzf": ("fzf",),
+    "jq": ("jq",),
+    "yq": ("yq",),
+    "bat": ("bat", "batcat"),
+    "git": ("git",),
+    "git-lfs": ("git-lfs",),
+    "git-delta": ("delta",),
+    "gh": ("gh",),
+    "ast-grep": ("sg",),
+}
+
+def _append_unique(items: list[str], value: str) -> None:
+    if value not in items:
+        items.append(value)
 
 
-def install_fast_tools_linux() -> tuple[bool, str]:
+def _format_tools_details(*, installed: list[str], skipped: list[str], failed: list[str]) -> str:
+    parts: list[str] = []
+    if installed:
+        parts.append(f"installed: {', '.join(installed)}")
+    if skipped:
+        parts.append(f"skipped: {', '.join(skipped)}")
+    if failed:
+        parts.append(f"failed: {', '.join(failed)}")
+    return "; ".join(parts) if parts else "no tool changes were applied"
+
+
+def _has_component_binary(component: str) -> bool:
+    binaries = COMPONENT_BINARIES.get(component, ())
+    return any(shutil.which(binary) is not None for binary in binaries)
+
+
+def install_fast_tools_linux() -> dict[str, object]:
     if not sys.platform.startswith("linux"):
-        return False, "unsupported OS; only Linux is supported"
+        return {
+            "ok": False,
+            "details": "unsupported OS; only Linux is supported",
+            "installed": [],
+            "skipped": [],
+            "failed": [],
+        }
     if shutil.which("apt-get") is None:
-        return False, "apt-get not found; please install tools manually"
+        return {
+            "ok": False,
+            "details": "apt-get not found; please install tools manually",
+            "installed": [],
+            "skipped": [],
+            "failed": [],
+        }
     arch = platform.machine().lower()
     arch_supported = arch in {"x86_64", "amd64"}
-    if not arch_supported:
-        print(
-            f"[tools] unsupported arch {arch}; only linux amd64 is supported. "
-            "Skipping ast-grep and Playwright Chromium install."
-        )
     use_sudo = os.geteuid() != 0
     if use_sudo and shutil.which("sudo") is None:
-        return False, "sudo not found; run as root to install tools"
-    installed_components: list[str] = list(BASE_SHELL_COMPONENTS)
+        return {
+            "ok": False,
+            "details": "sudo not found; run as root to install tools",
+            "installed": [],
+            "skipped": [],
+            "failed": [],
+        }
+    installed_components: list[str] = []
+    skipped_components: list[str] = []
+    failed_components: list[str] = []
 
     def run_tool_cmd(cmd: list[str]) -> bool:
         return run_logged_command("[tools]", with_sudo(cmd, use_sudo=use_sudo), quiet_success=True)
 
-    for command, description in BASE_SHELL_TOOL_STEPS:
-        if run_tool_cmd(list(command)):
+    if not run_tool_cmd(["apt-get", "update"]):
+        _append_unique(failed_components, "apt-get update")
+
+    bootstrap_apt_packages: tuple[str, ...] = (
+        "curl",
+        "ca-certificates",
+        "gnupg",
+        "lsb-release",
+        "unzip",
+    )
+    for package_name in bootstrap_apt_packages:
+        run_tool_cmd(["apt-get", "install", "-y", package_name])
+
+    base_apt_packages: tuple[tuple[str, str], ...] = (
+        ("ripgrep", "rg"),
+        ("fd-find", "fd"),
+        ("fzf", "fzf"),
+        ("jq", "jq"),
+        ("yq", "yq"),
+        ("bat", "bat"),
+        ("git", "git"),
+        ("git-lfs", "git-lfs"),
+        ("git-delta", "git-delta"),
+    )
+    for package_name, component_name in base_apt_packages:
+        if _has_component_binary(component_name):
+            _append_unique(skipped_components, f"{component_name} (already available)")
             continue
-        return False, f"command failed: {description}"
+        if run_tool_cmd(["apt-get", "install", "-y", package_name]):
+            _append_unique(installed_components, component_name)
+        else:
+            _append_unique(failed_components, component_name)
 
-    if shutil.which("gh") is None:
-        print("[tools] installing GitHub CLI (gh)")
+    if shutil.which("git-lfs") is not None:
+        if run_tool_cmd(["git", "lfs", "install", "--system"]):
+            _append_unique(installed_components, "git-lfs")
+        else:
+            _append_unique(failed_components, "git-lfs")
+
+    if shutil.which("gh") is not None:
+        _append_unique(skipped_components, "gh (already available)")
+    else:
         if not run_tool_cmd(["mkdir", "-p", "/etc/apt/keyrings"]):
-            return False, "command failed: mkdir -p /etc/apt/keyrings"
+            _append_unique(failed_components, "gh")
+        else:
+            gh_ok = True
+            with tempfile.TemporaryDirectory(prefix="cakit-gh-key-") as key_tmp_dir:
+                gh_key_tmp = Path(key_tmp_dir) / "githubcli-archive-keyring.gpg"
+                if not run_logged_command(
+                    "[tools]",
+                    [
+                        "curl",
+                        "-fsSL",
+                        "https://cli.github.com/packages/githubcli-archive-keyring.gpg",
+                        "-o",
+                        str(gh_key_tmp),
+                    ],
+                    quiet_success=True,
+                ):
+                    gh_ok = False
+                elif not run_logged_command(
+                    "[tools]",
+                    with_sudo(
+                        ["cp", str(gh_key_tmp), "/etc/apt/keyrings/githubcli-archive-keyring.gpg"],
+                        use_sudo=use_sudo,
+                    ),
+                    quiet_success=True,
+                ):
+                    gh_ok = False
+            if gh_ok and not run_tool_cmd(["chmod", "go+r", "/etc/apt/keyrings/githubcli-archive-keyring.gpg"]):
+                gh_ok = False
 
-        with tempfile.TemporaryDirectory(prefix="cakit-gh-key-") as key_tmp_dir:
-            gh_key_tmp = Path(key_tmp_dir) / "githubcli-archive-keyring.gpg"
-            if not run_logged_command(
-                "[tools]",
-                [
-                    "curl",
-                    "-fsSL",
-                    "https://cli.github.com/packages/githubcli-archive-keyring.gpg",
-                    "-o",
-                    str(gh_key_tmp),
-                ],
-                quiet_success=True,
-            ):
-                return False, "command failed: download gh keyring"
-            if not run_logged_command(
-                "[tools]",
-                with_sudo(
-                    ["cp", str(gh_key_tmp), "/etc/apt/keyrings/githubcli-archive-keyring.gpg"],
-                    use_sudo=use_sudo,
-                ),
-                quiet_success=True,
-            ):
-                return False, "command failed: install gh keyring"
-        if not run_tool_cmd(["chmod", "go+r", "/etc/apt/keyrings/githubcli-archive-keyring.gpg"]):
-            return False, "command failed: chmod gh keyring"
+            if gh_ok:
+                arch_result = subprocess.run(
+                    ["dpkg", "--print-architecture"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                dpkg_arch = arch_result.stdout.strip() if arch_result.returncode == 0 else ""
+                if not dpkg_arch:
+                    gh_ok = False
+            else:
+                dpkg_arch = ""
 
-        arch_result = subprocess.run(
-            ["dpkg", "--print-architecture"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if arch_result.returncode != 0:
-            return False, "command failed: dpkg --print-architecture"
-        dpkg_arch = arch_result.stdout.strip()
-        if not dpkg_arch:
-            return False, "command failed: dpkg --print-architecture"
-
-        with tempfile.TemporaryDirectory(prefix="cakit-gh-list-") as list_tmp_dir:
-            gh_list_tmp = Path(list_tmp_dir) / "github-cli.list"
-            gh_list_content = (
-                f"deb [arch={dpkg_arch} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] "
-                "https://cli.github.com/packages stable main\n"
-            )
-            gh_list_tmp.write_text(gh_list_content, encoding="utf-8")
-            if not run_logged_command(
-                "[tools]",
-                with_sudo(["cp", str(gh_list_tmp), "/etc/apt/sources.list.d/github-cli.list"], use_sudo=use_sudo),
-                quiet_success=True,
-            ):
-                return False, "command failed: install gh apt source"
-        if not run_tool_cmd(["apt-get", "update"]):
-            return False, "command failed: apt-get update (gh)"
-        if not run_tool_cmd(["apt-get", "install", "-y", "gh"]):
-            return False, "command failed: apt-get install gh"
-    installed_components.append("gh")
+            if gh_ok:
+                with tempfile.TemporaryDirectory(prefix="cakit-gh-list-") as list_tmp_dir:
+                    gh_list_tmp = Path(list_tmp_dir) / "github-cli.list"
+                    gh_list_content = (
+                        f"deb [arch={dpkg_arch} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] "
+                        "https://cli.github.com/packages stable main\n"
+                    )
+                    gh_list_tmp.write_text(gh_list_content, encoding="utf-8")
+                    if not run_logged_command(
+                        "[tools]",
+                        with_sudo(
+                            ["cp", str(gh_list_tmp), "/etc/apt/sources.list.d/github-cli.list"],
+                            use_sudo=use_sudo,
+                        ),
+                        quiet_success=True,
+                    ):
+                        gh_ok = False
+            if gh_ok and not run_tool_cmd(["apt-get", "update"]):
+                gh_ok = False
+            if gh_ok and not run_tool_cmd(["apt-get", "install", "-y", "gh"]):
+                gh_ok = False
+            if gh_ok:
+                _append_unique(installed_components, "gh")
+            else:
+                _append_unique(failed_components, "gh")
 
     if arch_supported:
         for component_name, installer_key in ARCH_SPECIFIC_TOOL_COMPONENTS:
             if installer_key == "_install_ast_grep":
-                if shutil.which("sg") is None:
-                    print("[tools] installing ast-grep (sg)")
-                    with tempfile.TemporaryDirectory(prefix="cakit-ast-grep-") as sg_tmp_dir:
-                        sg_tmp = Path(sg_tmp_dir) / "ast-grep-linux-x86_64.tar.gz"
-                        if not run_logged_command(
-                            "[tools]",
-                            [
-                                "curl",
-                                "-fsSL",
-                                "https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-linux-x86_64.tar.gz",
-                                "-o",
-                                str(sg_tmp),
-                            ],
-                            quiet_success=True,
-                        ):
-                            return False, "command failed: download ast-grep"
-                        if not run_logged_command(
-                            "[tools]",
-                            with_sudo(
-                                ["tar", "-xzf", str(sg_tmp), "-C", "/usr/local/bin", "sg"],
-                                use_sudo=use_sudo,
-                            ),
-                            quiet_success=True,
-                        ):
-                            return False, "command failed: install ast-grep"
-                installed_components.append(component_name)
+                if shutil.which("sg") is not None:
+                    _append_unique(skipped_components, f"{component_name} (already available)")
+                    continue
+                sg_ok = True
+                with tempfile.TemporaryDirectory(prefix="cakit-ast-grep-") as sg_tmp_dir:
+                    sg_tmp = Path(sg_tmp_dir) / "ast-grep-linux-x86_64.tar.gz"
+                    if not run_logged_command(
+                        "[tools]",
+                        [
+                            "curl",
+                            "-fsSL",
+                            "https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-linux-x86_64.tar.gz",
+                            "-o",
+                            str(sg_tmp),
+                        ],
+                        quiet_success=True,
+                    ):
+                        sg_ok = False
+                    elif not run_logged_command(
+                        "[tools]",
+                        with_sudo(
+                            ["tar", "-xzf", str(sg_tmp), "-C", "/usr/local/bin", "sg"],
+                            use_sudo=use_sudo,
+                        ),
+                        quiet_success=True,
+                    ):
+                        sg_ok = False
+                if sg_ok:
+                    _append_unique(installed_components, component_name)
+                else:
+                    _append_unique(failed_components, component_name)
                 continue
 
             if installer_key == "_install_playwright_chromium":
                 if not ensure_node_tools(quiet_success=True):
-                    return False, "command failed: install nodejs/npm for Playwright"
+                    _append_unique(failed_components, component_name)
+                    continue
 
                 playwright_cmd: Optional[list[str]] = None
                 if shutil.which("npx") is not None:
@@ -196,36 +273,74 @@ def install_fast_tools_linux() -> tuple[bool, str]:
                 elif shutil.which("npm") is not None:
                     playwright_cmd = ["npm", "exec", "--yes", "playwright@latest", "--"]
                 if playwright_cmd is None:
-                    return False, "command failed: npx/npm not found for Playwright"
+                    _append_unique(failed_components, component_name)
+                    continue
 
-                if not run_logged_command(
+                deps_ok = run_logged_command(
                     "[tools]",
                     with_sudo([*playwright_cmd, "install-deps", "chromium"], use_sudo=use_sudo),
                     quiet_success=True,
-                ):
-                    return False, "command failed: playwright install-deps chromium"
-                if not run_logged_command("[tools]", [*playwright_cmd, "install", "chromium"], quiet_success=True):
-                    return False, "command failed: playwright install chromium"
-                installed_components.append(component_name)
+                )
+                browser_ok = False
+                if deps_ok:
+                    browser_ok = run_logged_command(
+                        "[tools]",
+                        [*playwright_cmd, "install", "chromium"],
+                        quiet_success=True,
+                    )
+                if deps_ok and browser_ok:
+                    _append_unique(installed_components, component_name)
+                else:
+                    _append_unique(failed_components, component_name)
                 continue
 
-            return False, f"command failed: unknown installer {installer_key}"
+            _append_unique(failed_components, component_name)
+    else:
+        _append_unique(skipped_components, f"ast-grep (unsupported arch: {arch})")
+        _append_unique(skipped_components, f"playwright-chromium (unsupported arch: {arch})")
 
     for expected_binary, fallback_binary, source_path, target_path in TOOL_ALIAS_RULES:
         if shutil.which(expected_binary) is not None or shutil.which(fallback_binary) is None:
             continue
-        run_logged_command(
+        if run_logged_command(
             "[tools]",
             with_sudo(["ln", "-sf", source_path, target_path], use_sudo=use_sudo),
             quiet_success=True,
-        )
+        ):
+            _append_unique(installed_components, expected_binary)
+        else:
+            _append_unique(failed_components, expected_binary)
+            if expected_binary in installed_components:
+                installed_components.remove(expected_binary)
 
-    if not arch_supported:
-        return True, f"installed: {', '.join(installed_components)}; skipped: ast-grep, playwright-chromium"
-    return True, f"installed: {', '.join(installed_components)}"
+    for component_name in list(installed_components):
+        if component_name == "playwright-chromium (deps+browser)":
+            continue
+        if _has_component_binary(component_name):
+            continue
+        installed_components.remove(component_name)
+        _append_unique(failed_components, component_name)
+
+    available_components = [
+        component_name
+        for component_name in COMPONENT_BINARIES
+        if _has_component_binary(component_name)
+    ]
+    ok = bool(available_components or "playwright-chromium (deps+browser)" in installed_components)
+    return {
+        "ok": ok,
+        "details": _format_tools_details(
+            installed=installed_components,
+            skipped=skipped_components,
+            failed=failed_components,
+        ),
+        "installed": installed_components,
+        "skipped": skipped_components,
+        "failed": failed_components,
+    }
 
 
 def run_tools_command() -> int:
-    ok, details = install_fast_tools_linux()
-    emit_json({"ok": ok, "details": details})
-    return 0 if ok else 1
+    result = install_fast_tools_linux()
+    emit_json(result)
+    return 0 if bool(result.get("ok")) else 1

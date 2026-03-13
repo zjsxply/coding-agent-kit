@@ -116,7 +116,7 @@ class CodexAgent(CodingAgent):
             unset_env = ["OPENAI_API_KEY", "CODEX_API_KEY"]
         result = self._run(cmd, env, input_text=prompt, unset_env=unset_env, base_env=base_env)
         output = result.output
-        payloads = runtime_parsing.load_output_json_payloads(output, stdout_only=False)
+        payloads = runtime_parsing.load_output_json_payloads(output, stdout_only_output=False)
         usage, llm_calls = self._extract_turn_completed_metrics(payloads)
         model_name = self._extract_model_name(payloads)
         models_usage: Dict[str, Dict[str, int]] = {}
@@ -292,7 +292,7 @@ class CodexAgent(CodingAgent):
             if records_text is None:
                 time.sleep(0.1)
                 continue
-            records = runtime_parsing.load_output_json_payloads(records_text, stdout_only=False)
+            records = runtime_parsing.load_output_json_payloads(records_text, stdout_only_output=False)
             model_name = last_value(records, '$[?(@.type=="turn_context")].payload.model')
             if isinstance(model_name, str):
                 normalized = model_name.strip()

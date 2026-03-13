@@ -61,8 +61,10 @@ class GooseAgent(CodingAgent):
             self._raise_config_error(env_error)
 
         session_name = f"cakit-goose-{uuid.uuid4().hex}"
+        run_home = self._make_temp_dir(prefix="cakit-goose-home-")
         provider = env.get("GOOSE_PROVIDER")
         model = env.get("GOOSE_MODEL")
+        env.update(self._build_runtime_state_env(run_home))
         if provider:
             extra_args = ["--name", session_name, "--provider", provider]
         else:
@@ -230,6 +232,7 @@ class GooseAgent(CodingAgent):
             }
 
         tool_calls = None
+        has_tool_calls = False
         for path in (
             '$.conversation[?(@.role == "assistant")].content[?(@.type == "toolRequest")]',
             '$.conversation[?(@.role == "assistant")].content[?(@.type == "frontendToolRequest")]',
@@ -238,8 +241,32 @@ class GooseAgent(CodingAgent):
             if values is None:
                 continue
             tool_calls = (tool_calls or 0) + len(values)
+            has_tool_calls = True
+        if assistant_message_values is not None and not has_tool_calls:
+            tool_calls = 0
         return (
             models_usage,
             assistant_message_count,
             tool_calls,
         )
+
+    def get_version(self) -> Optional[str]:
+        run_home = self._make_temp_dir(prefix="cakit-goose-version-")
+        result = self._run(["goose", "--version"], env=self._build_runtime_state_env(run_home))
+        if result.exit_code != 0:
+            return None
+        line = runtime_parsing.first_nonempty_line(result.output)
+        if line is None:
+            return None
+        match = re.match(r"^(?:goose\s+)?([A-Za-z0-9._-]+)$", line)
+        return match.group(1) if match else line
+
+    @staticmethod
+    def _build_runtime_state_env(run_home: Path) -> Dict[str, str]:
+        return {
+            "HOME": str(run_home),
+            "XDG_CONFIG_HOME": str(run_home / "config"),
+            "XDG_CACHE_HOME": str(run_home / "cache"),
+            "XDG_DATA_HOME": str(run_home / "data"),
+            "XDG_STATE_HOME": str(run_home / "state"),
+        }
