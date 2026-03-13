@@ -8,7 +8,11 @@ Coding Agent Kit is a lightweight CLI for academic experiments. It installs and 
 pip install git+https://github.com/zjsxply/coding-agent-kit
 # or
 uv tool install git+https://github.com/zjsxply/coding-agent-kit
+# or use the installer
+curl -fsSL https://raw.githubusercontent.com/zjsxply/coding-agent-kit/main/install.sh | sh
 ```
+
+`install.sh` bootstraps `uv` when needed and installs `cakit` into a stable tool/bin location (`/usr/local/bin` for root, otherwise a user-local bin dir). In fresh container environments, this is the recommended path.
 
 ## Commands
 
@@ -285,7 +289,6 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 ## Todo
 
 - [ ] Add `cakit run` flag: disable web search vs fully disable network
-- [ ] Write an install script `.sh`, then add test points that start Docker containers (including Ubuntu, Debian, etc.) to ensure the install script can install cakit successfully in arbitrary Docker image environments
 - [ ] Support multiagent
 - [ ] Add an API mock server to simplify testing
 - [ ] Support `--timeout` in `cakit run` and return partial run artifacts on timeout
@@ -295,6 +298,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 - [ ] `cakit` should no longer need the `configure` command (configuration should be fully managed automatically by `cakit run`)
 - [ ] Support MCP
 - [ ] Support balanced mode
+- [x] Write an install script `.sh`, then add test points that start Docker containers (including Ubuntu, Debian, etc.) to ensure the install script can install cakit successfully in arbitrary Docker image environments
 - [x] Support additional setup scripts
 - [x] Support skills
 - [x] Support installing specific versions

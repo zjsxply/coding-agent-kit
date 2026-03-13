@@ -12,7 +12,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cakit", description="Coding Agent Kit CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    install = subparsers.add_parser("install", help="Install a coding agent")
+    install = subparsers.add_parser(
+        "install",
+        help="Install a coding agent",
+        description="Install a coding agent",
+    )
     install.add_argument(
         "agent",
         nargs="?",
@@ -34,7 +38,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     install.set_defaults(handler=lambda args: run_install_command(args.agent, args.scope, args.version))
 
-    configure = subparsers.add_parser("configure", help="Configure a coding agent")
+    configure = subparsers.add_parser(
+        "configure",
+        help="Configure a coding agent",
+        description="Configure a coding agent",
+    )
     configure.add_argument(
         "agent",
         nargs="?",
@@ -43,7 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     configure.set_defaults(handler=lambda args: run_configure_command(args.agent))
 
-    run = subparsers.add_parser("run", help="Run a coding agent")
+    run = subparsers.add_parser(
+        "run",
+        help="Run a coding agent",
+        description="Run a coding agent",
+    )
     run.add_argument("agent", choices=list_agents())
     run.add_argument("prompt", nargs="+")
     run.add_argument("--cwd", default=".", help="Working directory for the agent run (optional)")
@@ -93,10 +105,18 @@ def _build_parser() -> argparse.ArgumentParser:
         )
     )
 
-    tools = subparsers.add_parser("tools", help="Install fast shell power tools (Linux only)")
+    tools = subparsers.add_parser(
+        "tools",
+        help="Install fast shell power tools (Linux only)",
+        description="Install fast shell power tools (Linux only)",
+    )
     tools.set_defaults(handler=lambda args: run_tools_command())
 
-    env_cmd = subparsers.add_parser("env", help="Write an env template to a file")
+    env_cmd = subparsers.add_parser(
+        "env",
+        help="Write an env template to a file",
+        description="Write an env template to a file",
+    )
     env_cmd.add_argument("--output", default=".env", help="Output path for the template file")
     env_cmd.add_argument(
         "--lang",
@@ -106,7 +126,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     env_cmd.set_defaults(handler=lambda args: write_env_template(args.output, args.lang))
 
-    skills = subparsers.add_parser("skills", help="Manage Skills (delegates to `npx skills`)")
+    skills = subparsers.add_parser(
+        "skills",
+        help="Manage Skills (delegates to `npx skills`)",
+        description="Manage Skills (delegates to `npx skills`)",
+    )
     skills.add_argument(
         "args",
         nargs=argparse.REMAINDER,
