@@ -190,7 +190,7 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 | claude | ✓ | ✗ | `--image` + `Read` 工具 |
 | codex | ✓ | ✗ | `--image`（支持多图） |
 | codebuddy | ✓ | ✗ | `--image` 映射到 headless `stream-json` 图片块（`type: image` + base64）；无已文档化 `--video` 输入 |
-| aider | ✓ | ✗ | `--image` 映射为 Aider 位置参数图片文件（`aider <image-file> ...`）；能力依赖模型/提供方 |
+| aider | ✓ | ✗ | `--image` 映射为 Aider 位置参数图片文件（`aider <image-file> ...`）；对未知的 OpenAI 兼容 `kimi-*` 模型，cakit 会额外写入运行期 vision metadata |
 | cursor | ✗ | ✗ |  |
 | copilot | ✓ | ✗ | `--image` 通过自然语言路径注入实现 |
 | gemini | ✓ | ✓ | 通过符号化本地路径注入（`@{path}`）；已用 `--model gemini-2.5-pro` 验证（能力依赖模型） |

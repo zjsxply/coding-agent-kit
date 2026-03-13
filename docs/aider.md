@@ -44,6 +44,7 @@ Model resolution:
 Implementation detail:
 - cakit maps each `--image` file to Aider positional file args (same behavior as launching `aider <image-file> ...`), which adds image files into chat context.
 - Image support is model-dependent. The selected model must support vision.
+- For unknown OpenAI-compatible `kimi-*` models, cakit writes a run-local `--model-metadata-file` entry with `supports_vision: true` so Aider emits image blocks instead of treating the model as text-only.
 
 ## Web Access
 

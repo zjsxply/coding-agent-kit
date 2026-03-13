@@ -190,7 +190,7 @@ Image and video input support:
 | claude | ✓ | ✗ | `--image` + `Read` tool |
 | codex | ✓ | ✗ | `--image` (multi-image) |
 | codebuddy | ✓ | ✗ | `--image` is mapped to headless `stream-json` image blocks (`type: image`, base64); no documented `--video` input |
-| aider | ✓ | ✗ | `--image` is mapped to Aider positional image files (`aider <image-file> ...`); model/provider dependent |
+| aider | ✓ | ✗ | `--image` is mapped to Aider positional image files (`aider <image-file> ...`); cakit also writes run-local vision metadata for unknown OpenAI-compatible `kimi-*` models |
 | cursor | ✗ | ✗ |  |
 | copilot | ✓ | ✗ | `--image` uses natural-language file-path injection |
 | gemini | ✓ | ✓ | symbolic local-path injection (`@{path}`); verified with `--model gemini-2.5-pro` (model-dependent) |

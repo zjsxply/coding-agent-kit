@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -66,6 +67,11 @@ class AiderAgent(CodingAgent):
         input_history = run_dir / "input.history"
         chat_history = run_dir / "chat.history.md"
         llm_history = run_dir / "llm.history.log"
+        model_metadata_path = self._write_run_model_metadata(
+            run_dir=run_dir,
+            model=settings["model"],
+            images=images,
+        )
 
         cmd = [
             "aider",
@@ -94,6 +100,8 @@ class AiderAgent(CodingAgent):
             "--llm-history-file",
             str(llm_history),
         ]
+        if model_metadata_path is not None:
+            cmd.extend(["--model-metadata-file", str(model_metadata_path)])
         if reasoning_effort:
             cmd.extend(["--reasoning-effort", reasoning_effort])
         cmd.extend(str(image) for image in images)
@@ -169,6 +177,38 @@ class AiderAgent(CodingAgent):
             "api_base": str(resolved.get("base_url") or ""),
             "model": model,
         }, None
+
+    def _write_run_model_metadata(
+        self,
+        *,
+        run_dir: Path,
+        model: str,
+        images: list[Path],
+    ) -> Optional[Path]:
+        metadata = self._build_model_metadata(model=model, images=images)
+        if metadata is None:
+            return None
+        path = run_dir / "model.metadata.json"
+        self._write_text(path, json.dumps(metadata, ensure_ascii=True, indent=2))
+        return path
+
+    def _build_model_metadata(
+        self,
+        *,
+        model: str,
+        images: list[Path],
+    ) -> Optional[Dict[str, Dict[str, Any]]]:
+        if not images:
+            return None
+        if not model.startswith("openai/kimi-"):
+            return None
+        return {
+            model: {
+                "litellm_provider": "openai",
+                "mode": "chat",
+                "supports_vision": True,
+            }
+        }
 
     def _extract_analytics_stats(
         self,
