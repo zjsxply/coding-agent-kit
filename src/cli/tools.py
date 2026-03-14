@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Optional
 
 from ..io_helpers import emit_json
-from .install import ensure_node_tools, run_logged_command, with_sudo
+from .install import apt_get_command, ensure_node_tools, run_logged_command, with_sudo
 
 
 def run_skills(passthrough_args: list[str]) -> int:
-    if not ensure_node_tools():
+    if not ensure_node_tools(quiet_success=True):
         return 1
 
     args = [arg for arg in passthrough_args if arg]
@@ -115,7 +115,7 @@ def install_fast_tools_linux() -> dict[str, object]:
     def run_tool_cmd(cmd: list[str]) -> bool:
         return run_logged_command("[tools]", with_sudo(cmd, use_sudo=use_sudo), quiet_success=True)
 
-    if not run_tool_cmd(["apt-get", "update"]):
+    if not run_tool_cmd(apt_get_command("update")):
         _append_unique(failed_components, "apt-get update")
 
     bootstrap_apt_packages: tuple[str, ...] = (
@@ -126,7 +126,7 @@ def install_fast_tools_linux() -> dict[str, object]:
         "unzip",
     )
     for package_name in bootstrap_apt_packages:
-        run_tool_cmd(["apt-get", "install", "-y", package_name])
+        run_tool_cmd(apt_get_command("install", "-y", package_name))
 
     base_apt_packages: tuple[tuple[str, str], ...] = (
         ("ripgrep", "rg"),
@@ -143,7 +143,7 @@ def install_fast_tools_linux() -> dict[str, object]:
         if _has_component_binary(component_name):
             _append_unique(skipped_components, f"{component_name} (already available)")
             continue
-        if run_tool_cmd(["apt-get", "install", "-y", package_name]):
+        if run_tool_cmd(apt_get_command("install", "-y", package_name)):
             _append_unique(installed_components, component_name)
         else:
             _append_unique(failed_components, component_name)
@@ -217,9 +217,9 @@ def install_fast_tools_linux() -> dict[str, object]:
                         quiet_success=True,
                     ):
                         gh_ok = False
-            if gh_ok and not run_tool_cmd(["apt-get", "update"]):
+            if gh_ok and not run_tool_cmd(apt_get_command("update")):
                 gh_ok = False
-            if gh_ok and not run_tool_cmd(["apt-get", "install", "-y", "gh"]):
+            if gh_ok and not run_tool_cmd(apt_get_command("install", "-y", "gh")):
                 gh_ok = False
             if gh_ok:
                 _append_unique(installed_components, "gh")

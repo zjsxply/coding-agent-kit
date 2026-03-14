@@ -203,6 +203,14 @@ def run_logged_command(
     output_stream: Optional[TextIO] = None,
 ) -> bool:
     stream = output_stream or sys.stderr
+
+    def print_captured_output(output: str) -> None:
+        print(f"{prefix} {' '.join(cmd)}", file=stream)
+        if output:
+            stream.write(output)
+            if not output.endswith("\n"):
+                stream.write("\n")
+
     if not quiet_success:
         print(f"{prefix} {' '.join(cmd)}", file=stream)
         result = subprocess.run(
@@ -224,11 +232,7 @@ def run_logged_command(
         stderr=subprocess.STDOUT,
     )
     if result.returncode != 0:
-        print(f"{prefix} {' '.join(cmd)}", file=stream)
-        if result.stdout:
-            stream.write(result.stdout)
-            if not result.stdout.endswith("\n"):
-                stream.write("\n")
+        print_captured_output(result.stdout or "")
     return result.returncode == 0
 
 
@@ -238,6 +242,10 @@ def with_sudo(cmd: list[str], *, use_sudo: bool, preserve_env: bool = False) -> 
     if preserve_env:
         return ["sudo", "-E", *cmd]
     return ["sudo", *cmd]
+
+
+def apt_get_command(*args: str) -> list[str]:
+    return ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "-qq", *args]
 
 
 def ensure_node_tools(*, quiet_success: bool = False, output_stream: Optional[TextIO] = None) -> bool:
@@ -256,14 +264,13 @@ def ensure_dependencies(agent_name: str, *, output_stream: Optional[TextIO] = No
     for runtime_name in required_runtimes:
         if runtime_name == "node":
             with file_lock("deps-node"):
-                if not ensure_node_tools(output_stream=stream):
+                if not ensure_node_tools(quiet_success=True, output_stream=stream):
                     ok = False
             continue
         if runtime_name == "uv":
             with file_lock("deps-uv"):
                 if shutil.which("uv") is None:
-                    print("[deps] uv not found, attempting auto-install.", file=stream)
-                    ok = install_uv_linux(output_stream=stream) and ok
+                    ok = install_uv_linux(quiet_success=True, output_stream=stream) and ok
             continue
         print(f"[deps] unsupported runtime dependency for {agent_name}: {runtime_name}", file=stream)
         ok = False
@@ -341,26 +348,33 @@ def install_node_linux(*, quiet_success: bool = False, output_stream: Optional[T
     if shutil.which("curl") is None:
         if not run_logged_command(
             "[deps]",
-            with_sudo(["apt-get", "update"], use_sudo=use_sudo),
+            with_sudo(apt_get_command("update"), use_sudo=use_sudo),
             quiet_success=quiet_success,
             output_stream=stream,
         ):
             return False
         if not run_logged_command(
             "[deps]",
-            with_sudo(["apt-get", "install", "-y", "curl", "ca-certificates"], use_sudo=use_sudo),
+            with_sudo(apt_get_command("install", "-y", "curl", "ca-certificates"), use_sudo=use_sudo),
             quiet_success=quiet_success,
             output_stream=stream,
         ):
             return False
 
+    setup_cmd = ["curl", "-fsSL", "https://deb.nodesource.com/setup_22.x"]
     setup_script = subprocess.run(
-        ["curl", "-fsSL", "https://deb.nodesource.com/setup_22.x"],
+        setup_cmd,
         capture_output=True,
         text=True,
         check=False,
     )
     if setup_script.returncode != 0:
+        print(f"[deps] {' '.join(setup_cmd)}", file=stream)
+        error_output = setup_script.stderr or setup_script.stdout
+        if error_output:
+            stream.write(error_output)
+            if not error_output.endswith("\n"):
+                stream.write("\n")
         return False
     if not run_logged_command(
         "[deps]",
@@ -372,7 +386,7 @@ def install_node_linux(*, quiet_success: bool = False, output_stream: Optional[T
         return False
     if not run_logged_command(
         "[deps]",
-        with_sudo(["apt-get", "install", "-y", "nodejs"], use_sudo=use_sudo),
+        with_sudo(apt_get_command("install", "-y", "nodejs"), use_sudo=use_sudo),
         quiet_success=quiet_success,
         output_stream=stream,
     ):
@@ -380,7 +394,7 @@ def install_node_linux(*, quiet_success: bool = False, output_stream: Optional[T
     return True
 
 
-def install_uv_linux(*, output_stream: Optional[TextIO] = None) -> bool:
+def install_uv_linux(*, quiet_success: bool = False, output_stream: Optional[TextIO] = None) -> bool:
     stream = output_stream or sys.stderr
     if not sys.platform.startswith("linux"):
         print("[deps] unsupported OS for auto-install; please install uv manually.", file=stream)
@@ -390,25 +404,45 @@ def install_uv_linux(*, output_stream: Optional[TextIO] = None) -> bool:
         print("[deps] sudo not found; run as root to auto-install uv prerequisites.", file=stream)
         return False
     if shutil.which("curl") is None and shutil.which("apt-get") is not None:
-        if not run_logged_command("[deps]", with_sudo(["apt-get", "update"], use_sudo=use_sudo), output_stream=stream):
+        if not run_logged_command(
+            "[deps]",
+            with_sudo(apt_get_command("update"), use_sudo=use_sudo),
+            quiet_success=quiet_success,
+            output_stream=stream,
+        ):
             return False
         if not run_logged_command(
             "[deps]",
-            with_sudo(["apt-get", "install", "-y", "curl"], use_sudo=use_sudo),
+            with_sudo(apt_get_command("install", "-y", "curl"), use_sudo=use_sudo),
+            quiet_success=quiet_success,
             output_stream=stream,
         ):
             return False
 
+    install_cmd = ["curl", "-LsSf", "https://astral.sh/uv/install.sh"]
     install_script = subprocess.run(
-        ["curl", "-LsSf", "https://astral.sh/uv/install.sh"],
+        install_cmd,
         capture_output=True,
         text=True,
         check=False,
     )
     if install_script.returncode != 0:
+        print(f"[deps] {' '.join(install_cmd)}", file=stream)
+        error_output = install_script.stderr or install_script.stdout
+        if error_output:
+            stream.write(error_output)
+            if not error_output.endswith("\n"):
+                stream.write("\n")
         return False
-    if run_logged_command("[deps]", ["sh"], input_text=install_script.stdout, output_stream=stream):
-        print("[deps] uv installed; restart your shell if it is not on PATH.", file=stream)
+    if run_logged_command(
+        "[deps]",
+        ["sh"],
+        input_text=install_script.stdout,
+        quiet_success=quiet_success,
+        output_stream=stream,
+    ):
+        if not quiet_success:
+            print("[deps] uv installed; restart your shell if it is not on PATH.", file=stream)
         return True
     return False
 

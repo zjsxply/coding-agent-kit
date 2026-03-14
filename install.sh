@@ -17,6 +17,21 @@ have_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
+run_quiet() {
+    quiet_log=$(mktemp "${TMPDIR:-/tmp}/cakit-install.XXXXXX")
+    if "$@" >"$quiet_log" 2>&1; then
+        rm -f "$quiet_log"
+        return 0
+    fi
+    quiet_status=$?
+    log "command failed: $*"
+    if [ -s "$quiet_log" ]; then
+        cat "$quiet_log" >&2
+    fi
+    rm -f "$quiet_log"
+    return "$quiet_status"
+}
+
 run_as_root() {
     if [ "$(id -u)" -eq 0 ]; then
         "$@"
@@ -47,26 +62,26 @@ install_bootstrap_tools() {
     package_manager=$(detect_package_manager)
     case "$package_manager" in
         apt-get)
-            run_as_root apt-get update
-            run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl tar gzip
+            run_quiet run_as_root env DEBIAN_FRONTEND=noninteractive apt-get -qq update
+            run_quiet run_as_root env DEBIAN_FRONTEND=noninteractive apt-get -qq install -y ca-certificates curl tar gzip
             ;;
         apk)
-            run_as_root apk add --no-cache ca-certificates curl tar gzip
+            run_quiet run_as_root apk add --no-cache ca-certificates curl tar gzip
             ;;
         dnf)
-            run_as_root dnf install -y ca-certificates curl tar gzip
+            run_quiet run_as_root dnf install -y ca-certificates curl tar gzip
             ;;
         microdnf)
-            run_as_root microdnf install -y ca-certificates curl tar gzip
+            run_quiet run_as_root microdnf install -y ca-certificates curl tar gzip
             ;;
         yum)
-            run_as_root yum install -y ca-certificates curl tar gzip
+            run_quiet run_as_root yum install -y ca-certificates curl tar gzip
             ;;
         zypper)
-            run_as_root zypper --non-interactive install ca-certificates curl tar gzip
+            run_quiet run_as_root zypper --non-interactive install ca-certificates curl tar gzip
             ;;
         pacman)
-            run_as_root pacman -Sy --noconfirm ca-certificates curl tar gzip
+            run_quiet run_as_root pacman -Sy --noconfirm ca-certificates curl tar gzip
             ;;
         *)
             fail "curl, tar, and gzip are required, and no supported package manager was detected"
@@ -152,7 +167,7 @@ install_uv_if_needed() {
     mkdir -p "$uv_root"
 
     log "uv not found; installing uv"
-    curl -LsSf "$UV_INSTALLER_URL" | env UV_UNMANAGED_INSTALL="$uv_root" sh >&2
+    run_quiet env UV_UNMANAGED_INSTALL="$uv_root" sh -c "curl -LsSf '$UV_INSTALLER_URL' | sh"
 
     uv_bin="$uv_root/uv"
     [ -x "$uv_bin" ] || fail "uv installation completed but the uv binary was not found"
@@ -173,7 +188,7 @@ ensure_cakit_installed() {
     export UV_CACHE_DIR=${CAKIT_INSTALL_CACHE_DIR:-$install_home/cache}
 
     log "installing coding-agent-kit from $source"
-    "$uv_bin" tool install --force --from "$source" coding-agent-kit
+    run_quiet "$uv_bin" tool install --force --from "$source" coding-agent-kit
 
     cakit_bin="$UV_TOOL_BIN_DIR/cakit"
     [ -x "$cakit_bin" ] || fail "cakit executable was not created at $cakit_bin"

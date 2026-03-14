@@ -245,11 +245,12 @@ class CodingAgent(abc.ABC):
 
         config_path = self.configure()
         ok = result.exit_code == 0
-        details = result.output
+        details = None if ok else result.output
         if ok and strategy.require_config and config_path is None:
             ok = False
             message = strategy.configure_failure_message or f"{self.name} configure failed"
-            details = f"{details}\n{message}" if details else message
+            output = result.output
+            details = f"{output}\n{message}" if output else message
         return InstallResult(
             agent=self.name,
             version=self.get_version() if ok else None,
@@ -543,11 +544,12 @@ class CodingAgent(abc.ABC):
             result = self._run(["npm", "install", "-g", "--prefix", str(prefix), package_spec])
         config_path = self.configure()
         ok = result.exit_code == 0
-        details = result.output
+        details = None if ok else result.output
         if ok and require_config and config_path is None:
             ok = False
             message = configure_failure_message or f"{self.name} configure failed"
-            details = f"{details}\n{message}" if details else message
+            output = result.output
+            details = f"{output}\n{message}" if output else message
         return InstallResult(
             agent=self.name,
             version=self.get_version() if ok else None,
