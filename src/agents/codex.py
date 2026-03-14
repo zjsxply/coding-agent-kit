@@ -81,7 +81,7 @@ class CodexAgent(CodingAgent):
             return self._build_error_run_result(message=message, cakit_exit_code=2)
         use_oauth, api_key, api_base, model = self._resolve_runtime_auth(model_override=model_override)
         env = {
-            "OPENAI_API_BASE": api_base,
+            "OPENAI_BASE_URL": api_base,
         }
         if api_key:
             env["CODEX_API_KEY"] = api_key
@@ -163,7 +163,7 @@ class CodexAgent(CodingAgent):
     ) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
         use_oauth = self._use_oauth()
         api_key = None if use_oauth else runtime_env.resolve_openai_api_key("CODEX_API_KEY")
-        api_base = runtime_env.resolve_openai_base_url("CODEX_API_BASE")
+        api_base = runtime_env.resolve_openai_base_url("CODEX_BASE_URL")
         model = runtime_env.resolve_openai_model("CODEX_MODEL", model_override=model_override)
         return use_oauth, api_key, api_base, model
 

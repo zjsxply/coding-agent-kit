@@ -27,7 +27,7 @@ Environment variable mapping for `cakit run aider`:
 | Environment variable | Meaning | Requirement |
 | --- | --- | --- |
 | `AIDER_OPENAI_API_KEY` | API key for OpenAI-compatible endpoint (fallback: `OPENAI_API_KEY`) | required |
-| `AIDER_OPENAI_API_BASE` | OpenAI-compatible base URL (fallback: `OPENAI_BASE_URL`) | optional |
+| `AIDER_OPENAI_BASE_URL` | OpenAI-compatible base URL (fallback: `OPENAI_BASE_URL`) | optional |
 | `AIDER_MODEL` | Base model (fallback: `OPENAI_DEFAULT_MODEL`) | required |
 
 Model resolution:

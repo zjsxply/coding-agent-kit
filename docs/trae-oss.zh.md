@@ -7,7 +7,7 @@
 - 仅 API 模式。
 - 必需环境变量：
   - `TRAE_AGENT_API_KEY`（回退：`OPENAI_API_KEY`）
-  - `TRAE_AGENT_API_BASE`（回退：`OPENAI_BASE_URL`）
+  - `TRAE_AGENT_BASE_URL`（回退：`OPENAI_BASE_URL`）
   - `TRAE_AGENT_MODEL`（回退：`OPENAI_DEFAULT_MODEL`）
 
 ## 安装
@@ -32,6 +32,7 @@
   - 设置了 `CAKIT_TRAE_TRAJECTORY` 时使用该值（支持 `~` 展开）
   - 未设置时回退为 run 唯一路径 `/tmp/cakit-trae-<uuid>.json`
 - 模型优先级为：`--model` > `TRAE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`。
+- cakit 会把解析后的共享 OpenAI 兼容 base URL 通过 `OPENAI_BASE_URL` 传给子进程。
 
 ## 统计提取
 

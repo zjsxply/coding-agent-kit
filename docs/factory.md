@@ -29,7 +29,7 @@ Environment variable mapping for `cakit run factory`:
 | Environment variable | Meaning | Requirement |
 | --- | --- | --- |
 | `FACTORY_API_KEY` | Factory API key for API auth | optional (required if not using OAuth login) |
-| `FACTORY_API_BASE_URL` | Optional upstream API base URL override | optional |
+| `FACTORY_BASE_URL` | Optional cakit-managed override mapped to Droid's internal `FACTORY_API_BASE_URL` | optional |
 | `FACTORY_TOKEN` | Optional alternate token env name used in some CI workflows | optional |
 | `CAKIT_FACTORY_MODEL` | cakit default model for `droid exec --model` (fallback for BYOK: `OPENAI_DEFAULT_MODEL`) | optional |
 | `CAKIT_FACTORY_BYOK_API_KEY` | cakit BYOK upstream API key (`customModels[].apiKey`, fallback: `OPENAI_API_KEY`) | optional |
@@ -39,6 +39,11 @@ Environment variable mapping for `cakit run factory`:
 | `FACTORY_DISABLE_KEYRING` | Optional keyring-disable switch for headless envs | optional |
 
 When `CAKIT_FACTORY_BYOK_API_KEY` + `CAKIT_FACTORY_BYOK_BASE_URL` + `CAKIT_FACTORY_MODEL` are set, cakit writes/updates `~/.factory/settings.json` `customModels` and runs Droid with the generated `custom:...` model reference.
+
+Upstream naming details:
+- For BYOK custom models, Factory's documented endpoint key is `customModels[].baseUrl` in `~/.factory/settings.json`.
+- Legacy `~/.factory/config.json` uses snake_case `custom_models[].base_url`.
+- cakit therefore keeps user-facing env names in `*_BASE_URL`, but maps them to the upstream shape that Factory actually uses in each path.
 
 When BYOK mode is active, cakit also supports shared fallback:
 - `OPENAI_API_KEY` -> `CAKIT_FACTORY_BYOK_API_KEY`

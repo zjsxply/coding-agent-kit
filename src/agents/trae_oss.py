@@ -123,9 +123,8 @@ class TraeOssAgent(CodingAgent):
             config_path = self._config_path()
         env = {
             "TRAE_AGENT_API_KEY": api_key,
-            "TRAE_AGENT_API_BASE": api_base,
+            "TRAE_AGENT_BASE_URL": api_base,
             "OPENAI_API_KEY": api_key,
-            "OPENAI_API_BASE": api_base,
             "OPENAI_BASE_URL": api_base,
         }
         provider = self._resolve_model_provider(api_base)
@@ -250,7 +249,7 @@ class TraeOssAgent(CodingAgent):
     ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         return (
             runtime_env.resolve_openai_api_key("TRAE_AGENT_API_KEY"),
-            runtime_env.resolve_openai_base_url("TRAE_AGENT_API_BASE"),
+            runtime_env.resolve_openai_base_url("TRAE_AGENT_BASE_URL"),
             runtime_env.resolve_openai_model("TRAE_AGENT_MODEL", model_override=model_override),
         )
 

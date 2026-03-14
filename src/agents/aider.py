@@ -154,7 +154,7 @@ class AiderAgent(CodingAgent):
         resolved, error = runtime_env.resolve_openai_env(
             api_key_env="AIDER_OPENAI_API_KEY",
             model_env="AIDER_MODEL",
-            base_url_env="AIDER_OPENAI_API_BASE",
+            base_url_env="AIDER_OPENAI_BASE_URL",
             model_override=model_override,
             normalize_text=runtime_parsing.normalize_text,
         )

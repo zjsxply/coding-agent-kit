@@ -151,9 +151,15 @@ def resolve_openai_base_url(
     *,
     normalize_text: Callable[[Optional[str]], Optional[str]] = default_normalize_text,
     source_env: Optional[Dict[str, str]] = None,
+    allow_shared_fallback: bool = True,
 ) -> Optional[str]:
     env_source = source_env if source_env is not None else os.environ
-    return normalize_text(env_source.get(env_key)) or normalize_text(env_source.get("OPENAI_BASE_URL"))
+    resolved = normalize_text(env_source.get(env_key))
+    if resolved is not None:
+        return resolved
+    if allow_shared_fallback:
+        return normalize_text(env_source.get("OPENAI_BASE_URL"))
+    return None
 
 
 def resolve_openai_model(
@@ -205,6 +211,7 @@ def resolve_openai_env(
     require_api_key: bool = True,
     require_model: bool = True,
     normalize_text: Callable[[Optional[str]], Optional[str]] = default_normalize_text,
+    allow_shared_base_url_fallback: bool = True,
 ) -> tuple[Dict[str, Optional[str]], Optional[str]]:
     api_key = resolve_openai_api_key(api_key_env, normalize_text=normalize_text, source_env=source_env)
     model = resolve_openai_model(
@@ -214,7 +221,12 @@ def resolve_openai_env(
         source_env=source_env,
     )
     base_url = (
-        resolve_openai_base_url(base_url_env, normalize_text=normalize_text, source_env=source_env)
+        resolve_openai_base_url(
+            base_url_env,
+            normalize_text=normalize_text,
+            source_env=source_env,
+            allow_shared_fallback=allow_shared_base_url_fallback,
+        )
         if base_url_env
         else None
     )

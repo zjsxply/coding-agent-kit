@@ -7,7 +7,7 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
 - API only.
 - Required env vars:
   - `SWE_AGENT_API_KEY` (fallback: `OPENAI_API_KEY`)
-  - `SWE_AGENT_API_BASE` (fallback: `OPENAI_BASE_URL`)
+  - `SWE_AGENT_BASE_URL` (fallback: `OPENAI_BASE_URL`)
   - `SWE_AGENT_MODEL` (fallback: `OPENAI_DEFAULT_MODEL`)
 
 ## Install
@@ -30,6 +30,7 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
 - Model priority is: `--model` > `SWE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`.
 - If current `--cwd` is not a git repo, cakit creates a temporary git repo under `/tmp` and uses that path.
 - cakit writes a cakit-managed config to `~/.config/sweagent/config.yaml` and passes it with `--config`.
+- When a base URL is configured, cakit writes it to `agent.model.api_base` and also forwards `OPENAI_BASE_URL` to the child process.
 
 ## Stats extraction
 

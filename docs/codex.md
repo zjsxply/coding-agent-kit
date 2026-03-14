@@ -10,10 +10,10 @@ This document explains how cakit collects Codex CLI metadata.
 - Response file from `codex exec --output-last-message <path>` (written under `CAKIT_OUTPUT_DIR`, defaulting to `~/.cache/cakit`).
 - Session rollout JSONL files under `$CODEX_HOME/sessions/**/rollout-*.jsonl`.
   cakit builds the exact thread family from `session_meta.payload.id` plus `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`, so spawned subagents are included in the same run stats.
-- Environment variables such as `CODEX_MODEL`, `CODEX_API_BASE`, `CAKIT_CODEX_USE_OAUTH`, `CODEX_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
-- Shared OpenAI fallback is supported when agent-specific vars are unset:
+- Environment variables such as `CODEX_MODEL`, `CODEX_BASE_URL`, `OPENAI_BASE_URL`, `CAKIT_CODEX_USE_OAUTH`, `CODEX_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- Shared OpenAI fallback is supported when agent-specific API key/model/base-URL vars are unset:
   - `OPENAI_API_KEY` -> `CODEX_API_KEY`
-  - `OPENAI_BASE_URL` -> `CODEX_API_BASE`
+  - `OPENAI_BASE_URL` -> `CODEX_BASE_URL`
   - `OPENAI_DEFAULT_MODEL` -> `CODEX_MODEL`
 
 **Image Input**
@@ -48,7 +48,7 @@ This document explains how cakit collects Codex CLI metadata.
 
 **Notes**
 - If `CAKIT_CODEX_USE_OAUTH` is set, cakit expects a login file at `${CODEX_HOME}/auth.json` created by `codex login`.
-- For API-key mode, set `CODEX_API_KEY` and `CODEX_API_BASE` if you need a non-default base URL.
+- For API-key mode, set `CODEX_API_KEY` and `CODEX_BASE_URL` if you need a non-default base URL; cakit forwards the resolved value to Codex via `OPENAI_BASE_URL` at runtime.
 - If you need unsupported custom Codex settings after `cakit configure codex`, set `CAKIT_CONFIGURE_POST_COMMAND`; the hook receives `CAKIT_CONFIG_PATH` for post-processing `config.toml`.
 - To enable upstream multi-agent via that hook in a simple fresh-config setup:
 

@@ -64,13 +64,14 @@ class SweAgent(CodingAgent):
         return result.exit_code == 0 and bool(result.output.strip())
 
     def configure(self) -> Optional[str]:
-        runtime_env = self._runtime_asset_env(create_if_missing=True)
-        tools_dir = runtime_env.get("SWE_AGENT_TOOLS_DIR")
+        runtime_assets_env = self._runtime_asset_env(create_if_missing=True)
+        tools_dir = runtime_assets_env.get("SWE_AGENT_TOOLS_DIR")
         if not tools_dir:
             return None
         config = self._build_config_payload(
             registry_bundle=Path(tools_dir) / "registry",
             submit_bundle=Path(tools_dir) / "submit",
+            api_base=runtime_env.resolve_openai_base_url("SWE_AGENT_BASE_URL"),
             model_name=None,
         )
         config_dir = self._resolve_writable_dir(
@@ -92,12 +93,11 @@ class SweAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
     ) -> RunResult:
         api_key = runtime_env.resolve_openai_api_key("SWE_AGENT_API_KEY")
-        api_base = runtime_env.resolve_openai_base_url("SWE_AGENT_API_BASE")
+        api_base = runtime_env.resolve_openai_base_url("SWE_AGENT_BASE_URL")
         env = {
             "SWE_AGENT_API_KEY": api_key,
-            "SWE_AGENT_API_BASE": api_base,
+            "SWE_AGENT_BASE_URL": api_base,
             "OPENAI_API_KEY": api_key,
-            "OPENAI_API_BASE": api_base,
             "OPENAI_BASE_URL": api_base,
         }
         env.update(self._runtime_asset_env(create_if_missing=True))
@@ -132,6 +132,7 @@ class SweAgent(CodingAgent):
             config = self._build_config_payload(
                 registry_bundle=registry_bundle,
                 submit_bundle=submit_bundle,
+                api_base=api_base,
                 model_name=model,
             )
             self._write_text(config_path, dump_yaml(config))
@@ -139,6 +140,7 @@ class SweAgent(CodingAgent):
             config = self._build_config_payload(
                 registry_bundle=registry_bundle,
                 submit_bundle=submit_bundle,
+                api_base=api_base,
                 model_name=runtime_env.resolve_openai_model("SWE_AGENT_MODEL"),
             )
             self._write_text(config_path, dump_yaml(config))
@@ -224,15 +226,19 @@ class SweAgent(CodingAgent):
         *,
         registry_bundle: Path,
         submit_bundle: Path,
+        api_base: Optional[str],
         model_name: Optional[str],
     ) -> Dict[str, Any]:
+        model_config: Dict[str, Any] = {
+            "name": model_name or "swe-agent-required-model",
+            "per_instance_cost_limit": 0.0,
+            "total_cost_limit": 0.0,
+        }
+        if api_base:
+            model_config["api_base"] = api_base
         return {
             "agent": {
-                "model": {
-                    "name": model_name or "swe-agent-required-model",
-                    "per_instance_cost_limit": 0.0,
-                    "total_cost_limit": 0.0,
-                },
+                "model": model_config,
                 "templates": {
                     "system_template": "You are a helpful assistant that can interact with a computer to solve tasks.",
                     "instance_template": "{{problem_statement}}",

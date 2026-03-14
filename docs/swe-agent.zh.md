@@ -7,7 +7,7 @@
 - 仅 API 模式。
 - 必需环境变量：
   - `SWE_AGENT_API_KEY`（回退：`OPENAI_API_KEY`）
-  - `SWE_AGENT_API_BASE`（回退：`OPENAI_BASE_URL`）
+  - `SWE_AGENT_BASE_URL`（回退：`OPENAI_BASE_URL`）
   - `SWE_AGENT_MODEL`（回退：`OPENAI_DEFAULT_MODEL`）
 
 ## 安装
@@ -30,6 +30,7 @@
 - 模型优先级为：`--model` > `SWE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`。
 - 若 `--cwd` 不是 git 仓库，cakit 会在 `/tmp` 创建临时 git 仓库后再运行。
 - cakit 会写入 `~/.config/sweagent/config.yaml` 并通过 `--config` 显式使用。
+- 若配置了 base URL，cakit 会把它写入 `agent.model.api_base`，并同时通过 `OPENAI_BASE_URL` 传给子进程。
 
 ## 统计提取
 

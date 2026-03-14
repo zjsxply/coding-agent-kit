@@ -74,23 +74,23 @@ cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 #### 登录方式
 
 OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.template` 写 `.env`，然后在当前 shell 执行 `set -a; source .env; set +a`（修改 `.env` 后也需要重新执行一次）。
-对于支持 OpenAI 兼容 API 模式的 coding agent，也支持以下共享回退变量：
+部分支持 OpenAI 兼容 API 模式的 coding agent 也支持以下共享回退变量：
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `OPENAI_DEFAULT_MODEL`
-当该 agent 的专属 API/base/model 变量未设置时，cakit 会把这三个共享变量映射到该 agent 对应变量。
+是否支持取决于具体 agent。对于文档中列出的 cakit 自管 `*_BASE_URL` 变量，应优先使用这些名字；若某个 agent 文档明确说明支持共享 `OPENAI_BASE_URL` 回退，cakit 也会保留该回退。
 这些 agent 的模型优先级为：`--model` > agent 专属模型环境变量 > `OPENAI_DEFAULT_MODEL`。
 
 - claude：运行 `claude`，在交互界面输入 `/login`，也支持 `ANTHROPIC_AUTH_TOKEN` 环境变量
-- codex：`codex login`
+- codex：`codex login`，或通过 `CODEX_API_KEY` 走 API（可选 `CODEX_BASE_URL`；也支持共享 `OPENAI_*` 回退）
 - codebuddy：OAuth 方式使用 `codebuddy login`；API 方式为 `CODEBUDDY_API_KEY`（按需补充 `CODEBUDDY_BASE_URL` / `CODEBUDDY_MODEL` / `CODEBUDDY_INTERNET_ENVIRONMENT`）
-- aider：仅 API，使用 `AIDER_OPENAI_API_KEY` + `AIDER_MODEL`
-- cursor：`cursor-agent login`
+- aider：仅 API，使用 `AIDER_OPENAI_API_KEY` + `AIDER_MODEL`（可选 `AIDER_OPENAI_BASE_URL`；也支持共享 `OPENAI_*` 回退）
+- cursor：可使用 `cursor-agent login`，或通过 `CURSOR_API_KEY` 走 API（可选 `CURSOR_BASE_URL`；也支持共享 `OPENAI_*` 回退，cakit 会把解析后的值映射到 Cursor 的 `--endpoint`）
 - copilot：运行 `copilot`，输入 `/login`；也支持 `GH_TOKEN`/`GITHUB_TOKEN`
 - gemini：运行 `gemini`，按提示选择 Login with Google
 - crush：OAuth 方式使用 `crush login`（例如 `crush login hyper`）；API 方式为 `CRUSH_OPENAI_API_KEY` + `CRUSH_OPENAI_BASE_URL` + `CAKIT_CRUSH_MODEL`
 - opencode：OAuth 方式使用 `opencode auth login`；API 方式为 `CAKIT_OPENCODE_OPENAI_API_KEY` + `CAKIT_OPENCODE_MODEL`（可选 `CAKIT_OPENCODE_OPENAI_BASE_URL`；若模型名不含 provider，请额外设置 `CAKIT_OPENCODE_PROVIDER`；对于自定义 API 模型可通过 `CAKIT_OPENCODE_MODEL_CAPABILITIES=image,video` 声明输入多模态能力；provider 列表可用 `opencode models` 查看）
-- factory：OAuth 方式为运行 `droid` 后 `/login`；API 方式为 `FACTORY_API_KEY`。支持 BYOK 自定义模型：`CAKIT_FACTORY_BYOK_API_KEY` + `CAKIT_FACTORY_BYOK_BASE_URL` + `CAKIT_FACTORY_MODEL`（可选 `CAKIT_FACTORY_BYOK_PROVIDER`，也支持 `OPENAI_*` 回退）
+- factory：OAuth 方式为运行 `droid` 后 `/login`；API 方式为 `FACTORY_API_KEY`（可选 `FACTORY_BASE_URL`；设置后 cakit 会映射到 Droid 内部 `FACTORY_API_BASE_URL`）。支持 BYOK 自定义模型：`CAKIT_FACTORY_BYOK_API_KEY` + `CAKIT_FACTORY_BYOK_BASE_URL` + `CAKIT_FACTORY_MODEL`（可选 `CAKIT_FACTORY_BYOK_PROVIDER`；`OPENAI_*` 回退仅适用于 BYOK）
 - auggie：OAuth 方式使用 `auggie login`；API 方式为 `AUGMENT_API_TOKEN` + `AUGMENT_API_URL`（可选 `AUGMENT_SESSION_AUTH`）
 - continue：OAuth 方式使用 `cn login`；API 方式为 `CAKIT_CONTINUE_OPENAI_API_KEY` + `CAKIT_CONTINUE_OPENAI_MODEL` + `cakit configure continue`
 - goose：API 方式为 `CAKIT_GOOSE_PROVIDER` + `CAKIT_GOOSE_MODEL` + `CAKIT_GOOSE_OPENAI_API_KEY`（OpenAI 兼容端点可再配 `CAKIT_GOOSE_OPENAI_BASE_URL`）
@@ -99,7 +99,7 @@ OAuth 登录请使用对应 CLI 的登录命令。API 登录请按 `.env.templat
 - deepagents：仅 API，使用 `DEEPAGENTS_OPENAI_API_KEY` + `DEEPAGENTS_OPENAI_MODEL`
 - kimi：OAuth 方式为运行 `kimi` 后输入 `/login`；API 方式为设置 `KIMI_API_KEY` 并执行 `cakit configure kimi`
 - trae-cn：OAuth 方式为运行 `traecli` 后输入 `/login`；API 方式为设置 `CAKIT_TRAE_CN_API_KEY` 并执行 `cakit configure trae-cn`
-- qwen：运行 `qwen`，按提示完成浏览器登录
+- qwen：可运行 `qwen` 按提示完成浏览器登录，或通过 `QWEN_OPENAI_API_KEY` 走 API（可选 `QWEN_OPENAI_BASE_URL` / `QWEN_OPENAI_MODEL`；也支持共享 `OPENAI_*` 回退）
 - qoder：OAuth 方式使用 `qodercli /login`；Qoder token 方式使用 `QODER_PERSONAL_ACCESS_TOKEN`（不支持自定义 OpenAI 兼容 API 鉴权）
 - openhands：仅 API（`LLM_API_KEY` + `LLM_MODEL`，或 `OPENAI_API_KEY` + `OPENAI_DEFAULT_MODEL` 回退；见 `.env.template`）
 - swe-agent：仅 API（见 `.env.template`）
@@ -263,12 +263,12 @@ cakit tools
 | codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.114.0 |
 | codebuddy |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.58.0 |
 | aider | ✗ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.86.2 |
-| cursor |  |  | ✗ | ✗ |  |  |  |  |  |
+| cursor |  |  | ✗ | ✗ |  |  |  |  | 2026.02.27-e7d2ef6 |
 | copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 1.0.4 |
 | gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.33.0 |
 | crush |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.47.2 |
 | opencode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.2.24 |
-| factory |  |  |  | ✗ |  |  |  |  | 0.57.17 |
+| factory |  |  |  | ✗ |  |  |  |  | 0.72.0 |
 | auggie |  |  |  | ✗ |  |  | ✓ |  | 0.16.1 |
 | continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.45 |
 | goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.27.2 |

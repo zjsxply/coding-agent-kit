@@ -11,10 +11,10 @@
 - 会话 rollout JSONL：`$CODEX_HOME/sessions/**/rollout-*.jsonl`。
   cakit 会根据 `session_meta.payload.id` 与 `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`
   构建精确 thread family，因此会把运行时 spawn 的子 agent 一起计入同一次 run 的统计。
-- 环境变量，例如 `CODEX_MODEL`、`CODEX_API_BASE`、`CAKIT_CODEX_USE_OAUTH`、`CODEX_OTEL_ENDPOINT`、`OTEL_EXPORTER_OTLP_ENDPOINT`。
-- 当 agent 专属变量未设置时，支持共享回退：
+- 环境变量，例如 `CODEX_MODEL`、`CODEX_BASE_URL`、`OPENAI_BASE_URL`、`CAKIT_CODEX_USE_OAUTH`、`CODEX_OTEL_ENDPOINT`、`OTEL_EXPORTER_OTLP_ENDPOINT`。
+- 当 agent 专属 API key / model / base URL 变量未设置时，支持共享回退：
   - `OPENAI_API_KEY` -> `CODEX_API_KEY`
-  - `OPENAI_BASE_URL` -> `CODEX_API_BASE`
+  - `OPENAI_BASE_URL` -> `CODEX_BASE_URL`
   - `OPENAI_DEFAULT_MODEL` -> `CODEX_MODEL`
 
 **图像输入**
@@ -49,7 +49,7 @@
 
 **备注**
 - 若设置了 `CAKIT_CODEX_USE_OAUTH`，cakit 会要求 `${CODEX_HOME}/auth.json`（由 `codex login` 生成）。
-- 若使用 API Key 模式，请设置 `CODEX_API_KEY`，并在需要时设置 `CODEX_API_BASE`。
+- 若使用 API Key 模式，请设置 `CODEX_API_KEY`，并在需要时设置 `CODEX_BASE_URL`；cakit 运行时会把解析后的值通过 `OPENAI_BASE_URL` 传给 Codex。
 - 若 `cakit configure codex` 之后还需要补充 cakit 尚未覆盖的自定义 Codex 设置，可设置 `CAKIT_CONFIGURE_POST_COMMAND`；该 hook 会收到 `CAKIT_CONFIG_PATH` 以便后处理 `config.toml`。
 - 如果想通过这个 hook 在简单 fresh-config 场景里顺手打开 upstream multi-agent，可这样做：
 

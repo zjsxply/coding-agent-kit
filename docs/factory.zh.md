@@ -29,7 +29,7 @@ cakit 行为：
 | 环境变量 | 含义 | 要求 |
 | --- | --- | --- |
 | `FACTORY_API_KEY` | Factory API Key（API 鉴权） | 可选（未做 OAuth 登录时通常必需） |
-| `FACTORY_API_BASE_URL` | 可选的上游 API Base URL 覆盖项 | 可选 |
+| `FACTORY_BASE_URL` | 可选的 cakit 自管覆盖项；设置后映射到 Droid 内部 `FACTORY_API_BASE_URL` | 可选 |
 | `FACTORY_TOKEN` | 某些 CI 工作流中使用的可选 token 变量名 | 可选 |
 | `CAKIT_FACTORY_MODEL` | cakit 的默认模型（映射到 `droid exec --model`；BYOK 模式可回退 `OPENAI_DEFAULT_MODEL`） | 可选 |
 | `CAKIT_FACTORY_BYOK_API_KEY` | cakit BYOK 上游 API Key（写入 `customModels[].apiKey`；回退：`OPENAI_API_KEY`） | 可选 |
@@ -39,6 +39,11 @@ cakit 行为：
 | `FACTORY_DISABLE_KEYRING` | 可选；在 headless 环境禁用 keyring | 可选 |
 
 当同时设置 `CAKIT_FACTORY_BYOK_API_KEY` + `CAKIT_FACTORY_BYOK_BASE_URL` + `CAKIT_FACTORY_MODEL` 时，cakit 会自动写入/更新 `~/.factory/settings.json` 的 `customModels`，并使用生成的 `custom:...` 模型引用运行 Droid。
+
+上游命名细节：
+- 对于 BYOK 自定义模型，Factory 官方文档使用的是 `~/.factory/settings.json` 中的 `customModels[].baseUrl`。
+- 旧版 `~/.factory/config.json` 则使用 snake_case 的 `custom_models[].base_url`。
+- 因此 cakit 对外继续统一使用 `*_BASE_URL`，但会按 Factory 各条路径实际需要的上游命名进行映射。
 
 当启用 BYOK 模式时，也支持共享回退：
 - `OPENAI_API_KEY` -> `CAKIT_FACTORY_BYOK_API_KEY`

@@ -51,7 +51,7 @@ class CursorAgent(CodingAgent):
         base_env: Optional[Dict[str, str]] = None,
     ) -> Optional[RunPlan]:
         model = runtime_env.resolve_openai_model("CURSOR_MODEL", model_override=model_override)
-        endpoint = runtime_env.resolve_openai_base_url("CURSOR_API_BASE")
+        endpoint = runtime_env.resolve_openai_base_url("CURSOR_BASE_URL")
         env = {"CURSOR_API_KEY": runtime_env.resolve_openai_api_key("CURSOR_API_KEY")}
         template = self.run_template
         extra_args: list[str] = []

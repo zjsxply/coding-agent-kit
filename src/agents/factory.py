@@ -85,7 +85,7 @@ class FactoryAgent(CodingAgent):
 
         env: Dict[str, str] = {
             "FACTORY_API_KEY": os.environ.get("FACTORY_API_KEY"),
-            "FACTORY_API_BASE_URL": os.environ.get("FACTORY_API_BASE_URL"),
+            "FACTORY_API_BASE_URL": os.environ.get("FACTORY_BASE_URL"),
             "FACTORY_TOKEN": os.environ.get("FACTORY_TOKEN"),
             "FACTORY_LOG_FILE": os.environ.get("FACTORY_LOG_FILE"),
             "FACTORY_DISABLE_KEYRING": os.environ.get("FACTORY_DISABLE_KEYRING"),

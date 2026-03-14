@@ -7,7 +7,7 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
 - API only.
 - Required env vars:
   - `TRAE_AGENT_API_KEY` (fallback: `OPENAI_API_KEY`)
-  - `TRAE_AGENT_API_BASE` (fallback: `OPENAI_BASE_URL`)
+  - `TRAE_AGENT_BASE_URL` (fallback: `OPENAI_BASE_URL`)
   - `TRAE_AGENT_MODEL` (fallback: `OPENAI_DEFAULT_MODEL`)
 
 ## Install
@@ -32,6 +32,7 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
   - `CAKIT_TRAE_TRAJECTORY` when set (supports `~` expansion)
   - fallback: run-unique temp path `/tmp/cakit-trae-<uuid>.json`
 - Model priority is: `--model` > `TRAE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`.
+- cakit forwards the resolved shared OpenAI-compatible base URL to the child via `OPENAI_BASE_URL`.
 
 ## Stats extraction
 

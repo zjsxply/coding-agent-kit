@@ -74,23 +74,23 @@ Use `--version` to install a specific version or reference:
 #### Login
 
 For OAuth, use the official CLI login. For API keys, copy `.env.template` to `.env`, then run `set -a; source .env; set +a` in the current shell (and rerun it after changing `.env`).
-For coding agents with OpenAI-compatible API mode, shared fallback vars are also supported:
+Some coding agents with OpenAI-compatible API mode support shared fallback vars:
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `OPENAI_DEFAULT_MODEL`
-When agent-specific API/base/model vars are unset, cakit maps these shared vars to the corresponding agent vars.
+Support is agent-specific. Use the documented cakit-managed `*_BASE_URL` vars as the preferred names; when an agent doc explicitly says shared `OPENAI_BASE_URL` fallback is supported, cakit preserves that fallback.
 Model priority for those agents is: `--model` > agent-specific model env var > `OPENAI_DEFAULT_MODEL`.
 
 - claude: run `claude`, then `/login` in the interactive UI; `ANTHROPIC_AUTH_TOKEN` is also supported
-- codex: `codex login`
+- codex: `codex login`, or API via `CODEX_API_KEY` (+ optional `CODEX_BASE_URL`; shared `OPENAI_*` fallback applies)
 - codebuddy: OAuth via `codebuddy login`, or API via `CODEBUDDY_API_KEY` (+ `CODEBUDDY_BASE_URL` / `CODEBUDDY_MODEL` / `CODEBUDDY_INTERNET_ENVIRONMENT` as needed)
-- aider: API only via `AIDER_OPENAI_API_KEY` + `AIDER_MODEL`
-- cursor: `cursor-agent login`
+- aider: API only via `AIDER_OPENAI_API_KEY` + `AIDER_MODEL` (+ optional `AIDER_OPENAI_BASE_URL`; shared `OPENAI_*` fallback applies)
+- cursor: `cursor-agent login`, or API via `CURSOR_API_KEY` (+ optional `CURSOR_BASE_URL`; shared `OPENAI_*` fallback applies, and cakit maps the resolved value to Cursor's `--endpoint`)
 - copilot: run `copilot`, then `/login`; `GH_TOKEN`/`GITHUB_TOKEN` are also supported
 - gemini: run `gemini` and choose Login with Google
 - crush: OAuth via `crush login` (for example `crush login hyper`), or API via `CRUSH_OPENAI_API_KEY` + `CRUSH_OPENAI_BASE_URL` + `CAKIT_CRUSH_MODEL`
 - opencode: OAuth via `opencode auth login`, or API via `CAKIT_OPENCODE_OPENAI_API_KEY` + `CAKIT_OPENCODE_MODEL` (+ optional `CAKIT_OPENCODE_OPENAI_BASE_URL`; if model is bare, set `CAKIT_OPENCODE_PROVIDER`; for custom API models you can declare multimodal input capabilities via `CAKIT_OPENCODE_MODEL_CAPABILITIES=image,video`; provider list: `opencode models`)
-- factory: OAuth via `droid` then `/login`, or API via `FACTORY_API_KEY`; BYOK custom models are supported via `CAKIT_FACTORY_BYOK_API_KEY` + `CAKIT_FACTORY_BYOK_BASE_URL` + `CAKIT_FACTORY_MODEL` (optional `CAKIT_FACTORY_BYOK_PROVIDER`; `OPENAI_*` fallback also applies)
+- factory: OAuth via `droid` then `/login`, or API via `FACTORY_API_KEY` (+ optional `FACTORY_BASE_URL`, which cakit maps to Droid's internal `FACTORY_API_BASE_URL` when set); BYOK custom models are supported via `CAKIT_FACTORY_BYOK_API_KEY` + `CAKIT_FACTORY_BYOK_BASE_URL` + `CAKIT_FACTORY_MODEL` (optional `CAKIT_FACTORY_BYOK_PROVIDER`; `OPENAI_*` fallback applies for BYOK)
 - auggie: OAuth via `auggie login`, or API via `AUGMENT_API_TOKEN` + `AUGMENT_API_URL` (optional `AUGMENT_SESSION_AUTH`)
 - continue: OAuth via `cn login`, or API via `CAKIT_CONTINUE_OPENAI_API_KEY` + `CAKIT_CONTINUE_OPENAI_MODEL` + `cakit configure continue`
 - goose: API via `CAKIT_GOOSE_PROVIDER` + `CAKIT_GOOSE_MODEL` + `CAKIT_GOOSE_OPENAI_API_KEY` (+ `CAKIT_GOOSE_OPENAI_BASE_URL` for OpenAI-compatible endpoints)
@@ -99,7 +99,7 @@ Model priority for those agents is: `--model` > agent-specific model env var > `
 - deepagents: API only via `DEEPAGENTS_OPENAI_API_KEY` + `DEEPAGENTS_OPENAI_MODEL`
 - kimi: OAuth via `kimi` then `/login`, or API via `KIMI_API_KEY` + `cakit configure kimi`
 - trae-cn: OAuth via `traecli` then `/login`, or API via `CAKIT_TRAE_CN_API_KEY` + `cakit configure trae-cn`
-- qwen: run `qwen` and follow the browser login flow
+- qwen: run `qwen` and follow the browser login flow, or API via `QWEN_OPENAI_API_KEY` (+ optional `QWEN_OPENAI_BASE_URL` / `QWEN_OPENAI_MODEL`; shared `OPENAI_*` fallback applies)
 - qoder: OAuth via `qodercli /login`, or Qoder token auth via `QODER_PERSONAL_ACCESS_TOKEN` (no custom OpenAI-compatible API auth)
 - openhands: API only (`LLM_API_KEY` + `LLM_MODEL`, or `OPENAI_API_KEY` + `OPENAI_DEFAULT_MODEL` fallback; see `.env.template`)
 - swe-agent: API only (see `.env.template`)
@@ -263,12 +263,12 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 | codex | ✓ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.114.0 |
 | codebuddy |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 2.58.0 |
 | aider | ✗ | ✓ | ✓ | ✗ |  |  |  | ✓ | 0.86.2 |
-| cursor |  |  | ✗ | ✗ |  |  |  |  |  |
+| cursor |  |  | ✗ | ✗ |  |  |  |  | 2026.02.27-e7d2ef6 |
 | copilot | ✓ | ✗ | ✓ | ✗ |  |  |  | ✓ | 1.0.4 |
 | gemini |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 0.33.0 |
 | crush |  | ✓ | ✗ | ✗ |  |  |  | ✓ | 0.47.2 |
 | opencode |  | ✓ | ✓ | ✗ |  |  |  | ✓ | 1.2.24 |
-| factory |  |  |  | ✗ |  |  |  |  | 0.57.17 |
+| factory |  |  |  | ✗ |  |  |  |  | 0.72.0 |
 | auggie |  |  |  | ✗ |  |  | ✓ |  | 0.16.1 |
 | continue |  | ✓ | ✗ | ✗ |  |  | ✓ | ✓ | 1.5.45 |
 | goose |  | ✓ | ✓ | ✓ |  |  |  | ✓ | 1.27.2 |

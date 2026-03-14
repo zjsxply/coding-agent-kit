@@ -33,8 +33,12 @@ cursor-agent -p "<prompt>" --print --output-format stream-json --force
 
 - 可选模型覆盖：`cakit run cursor --model <model>`
 - 模型优先级：`--model` > `CURSOR_MODEL` > `OPENAI_DEFAULT_MODEL`
-- 可选端点覆盖：`CURSOR_API_BASE`（回退：`OPENAI_BASE_URL`）
+- 可选端点覆盖：`CURSOR_BASE_URL`（回退：`OPENAI_BASE_URL`）
 - API key：`CURSOR_API_KEY`（回退：`OPENAI_API_KEY`）
+
+实现细节：
+- cakit 保持对外环境变量名为 `CURSOR_BASE_URL`，并把解析后的值通过 `--endpoint` 传给 Cursor。
+- 这与 Cursor 公开 CLI 参数一致；本机安装的上游 bundle 内部也能看到 `CURSOR_API_ENDPOINT` 处理逻辑。
 
 Cursor 在 cakit 中不支持图像/视频参数（`--image` / `--video` 会返回不支持）。
 
