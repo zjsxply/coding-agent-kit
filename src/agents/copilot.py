@@ -30,7 +30,15 @@ class CopilotAgent(CodingAgent):
     binary = "copilot"
     supports_images = True
     supports_videos = False
-    install_strategy = InstallStrategy(kind="npm", package="@github/copilot")
+    required_runtimes = ("curl", "tar")
+    install_strategy = [
+        InstallStrategy(
+            kind="shell",
+            shell_command="curl -fsSL https://gh.io/copilot-install | bash",
+            shell_versioned_command="curl -fsSL https://gh.io/copilot-install | VERSION={version_quoted} bash",
+        ),
+        InstallStrategy(kind="npm", package="@github/copilot"),
+    ]
     run_template = RunCommandTemplate(
         base_args=("--yolo", "--no-ask-user", "--log-level", "debug"),
         prompt_mode="flag",

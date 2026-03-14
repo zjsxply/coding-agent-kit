@@ -2,8 +2,15 @@
 
 本文说明 cakit 如何运行 OpenCode 并提取运行统计信息。
 
-**安装版本**
-- `cakit install opencode --version <npm_version_or_tag>` 会安装 `opencode-ai@<version>`。
+**安装方式**
+- `cakit install opencode` 会运行 OpenCode 官方安装脚本，但 cakit 会先通过宿主机包管理器补齐缺失的 `which` 运行时依赖，并通过 `--no-modify-path` 禁止上游修改 PATH 配置文件。
+- `cakit install opencode --version <version>` 会在同样的前提下传入 `--no-modify-path --version <value>`。
+- 实际调用的上游入口为：
+  - `curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path`
+  - `curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path --version <version>`
+- cakit 会先尝试这条脚本路径；如果脚本路径失败，再回退到 `npm install -g opencode-ai`。
+- `--scope user|global` 对主脚本路径不生效；只有在 cakit 触发 npm 回退时才会影响安装位置。
+- cakit 会刻意禁止上游安装器改写 shell rc/profile 文件；如果你想在 cakit 之外的登录 shell 里直接使用它，需要自行把 `~/.opencode/bin` 暴露到 PATH。
 
 **鉴权与配置**
 - OAuth：使用上游 CLI 执行 `opencode auth login`。

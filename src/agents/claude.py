@@ -25,7 +25,15 @@ class ClaudeAgent(CodingAgent):
     binary = "claude"
     supports_images = True
     supports_videos = False
-    install_strategy = InstallStrategy(kind="npm", package="@anthropic-ai/claude-code")
+    required_runtimes = ("curl",)
+    install_strategy = [
+        InstallStrategy(
+            kind="shell",
+            shell_command="curl -fsSL https://claude.ai/install.sh | bash",
+            shell_versioned_command="curl -fsSL https://claude.ai/install.sh | bash -s -- {version_quoted}",
+        ),
+        InstallStrategy(kind="npm", package="@anthropic-ai/claude-code"),
+    ]
     run_template = RunCommandTemplate(
         base_args=(
             "-p",

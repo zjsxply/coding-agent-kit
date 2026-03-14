@@ -1,0 +1,26 @@
+# Historical install-version snapshots for install-script Docker coverage.
+# Columns:
+# timepoint_date	cutoff_utc	agent	install_version	status	source_kind	source_ref	published_at_utc	note
+2026-03-01	2026-03-01T23:59:59Z	aider	0.86.2	confirmed	pypi-release	https://pypi.org/project/aider-chat/	2026-02-12T00:42:52.678771Z	latest plain PyPI release on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	auggie	0.17.2	confirmed	npm-publish	https://www.npmjs.com/package/@augmentcode/auggie	2026-02-27T18:27:03.414000Z	latest plain npm version on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	claude	2.1.63	confirmed	gcs-object-prefix	https://storage.googleapis.com/storage/v1/b/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/o?prefix=claude-code-releases/	2026-02-28T03:07:06.185000Z	latest Claude Code version whose release objects were created on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	codebuddy	2.52.3	confirmed	npm-publish	https://www.npmjs.com/package/@tencent-ai/codebuddy-code	2026-02-28T11:18:55.805000Z	latest plain npm version on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	codex	0.106.0	confirmed	npm-publish	https://www.npmjs.com/package/@openai/codex	2026-02-26T23:12:45.073000Z	latest plain generic npm version on or before cutoff; excludes platform-specific builds
+2026-03-01	2026-03-01T23:59:59Z	continue	1.5.43	confirmed	npm-publish	https://www.npmjs.com/package/@continuedev/cli	2026-02-02T19:23:46.659000Z	latest plain npm version on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	copilot	0.0.420	confirmed	github-release	https://github.com/github/copilot-cli/releases/tag/v0.0.420	2026-02-27T18:47:56Z	pass to cakit without leading v; upstream install script prefixes v automatically
+2026-03-01	2026-03-01T23:59:59Z	crush	0.46.1	confirmed	npm-publish	https://www.npmjs.com/package/@charmland/crush	2026-02-27T20:24:51.839000Z	latest plain npm version on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	cursor	2.5	inferred	cursor-changelog	https://cursor.com/changelog/2-5	2026-02-17T00:00:00.000Z	public Cursor release on or before cutoff; exact agent build ID still unresolved, though README documents an older pre-cutoff build example 2026.01.28-fd13201
+2026-03-01	2026-03-01T23:59:59Z	deepagents	0.0.25	confirmed	pypi-release	https://pypi.org/project/deepagents-cli/	2026-02-20T21:50:52.390025Z	latest plain PyPI release on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	factory	0.65.0	confirmed	cdn-head-scan	https://downloads.factory.ai/factory-cli/releases/0.65.0/linux/x64-baseline/droid	2026-02-27T22:21:27Z	latest confirmed release binary whose Last-Modified is on or before cutoff; 0.65.1 is after cutoff
+2026-03-01	2026-03-01T23:59:59Z	gemini	0.31.0	confirmed	npm-publish	https://www.npmjs.com/package/@google/gemini-cli	2026-02-27T23:07:58.898000Z	latest plain npm version on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	goose	1.26.1	confirmed	github-release	https://github.com/block/goose/releases/tag/v1.26.1	2026-02-27T23:45:05Z	pass to cakit without leading v; cakit normalizes goose tags to v-prefixed downloads
+2026-03-01	2026-03-01T23:59:59Z	kilocode	7.0.33	confirmed	npm-publish	https://www.npmjs.com/package/@kilocode/cli	2026-02-27T19:41:47.132000Z	latest plain npm version on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	kimi	1.16.0	confirmed	pypi-release	https://pypi.org/project/kimi-cli/	2026-02-27T12:08:39.856791Z	latest plain PyPI release on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	openclaw	2026.2.26	confirmed	npm-publish	https://www.npmjs.com/package/openclaw	2026-02-26T23:59:10.915000Z	installer resolves versions from npm package releases
+2026-03-01	2026-03-01T23:59:59Z	opencode	1.2.15	confirmed	github-release	https://github.com/anomalyco/opencode/releases/tag/v1.2.15	2026-02-26T08:22:40Z	pass plain version; upstream installer strips/normalizes leading v internally
+2026-03-01	2026-03-01T23:59:59Z	openhands	1.13.0	confirmed	pypi-release	https://pypi.org/project/openhands/	2026-02-27T16:24:44.432606Z	latest plain PyPI release on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	qoder	0.1.29	confirmed	npm-publish	https://www.npmjs.com/package/@qoder-ai/qodercli	2026-02-19T12:17:07.535000Z	qoder versioned installs should use npm package versions, not the shell manifest
+2026-03-01	2026-03-01T23:59:59Z	qwen	0.11.0	confirmed	npm-publish	https://www.npmjs.com/package/@qwen-code/qwen-code	2026-02-28T10:43:39.127000Z	latest plain npm version on or before cutoff
+2026-03-01	2026-03-01T23:59:59Z	swe-agent	v1.1.0	confirmed	github-release	https://github.com/SWE-agent/SWE-agent/releases/tag/v1.1.0	2025-05-22T16:11:39Z	use exact git ref tag with leading v
+2026-03-01	2026-03-01T23:59:59Z	trae-cn	0.111.5	confirmed	cdn-head-scan	https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/trae-cli_0.111.5_linux_amd64.tar.gz	2026-02-12T13:17:54Z	latest confirmed archive whose Last-Modified is on or before cutoff within the reachable version stream
+2026-03-01	2026-03-01T23:59:59Z	trae-oss	e839e559ac61bdd0e057c375dd1dee391fee797d	confirmed	github-commit-before-date	https://github.com/bytedance/trae-agent/commits/main?until=2026-03-01T23:59:59Z	2026-02-05T11:21:00Z	use exact git commit because upstream repo does not publish a matching release/tag stream for this cutoff

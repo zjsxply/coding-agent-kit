@@ -99,6 +99,9 @@ class InstallStrategy:
     version_normalizer: str = "identity"
 
 
+InstallStrategySpec = InstallStrategy | list[InstallStrategy] | tuple[InstallStrategy, ...]
+
+
 @dataclass(frozen=True)
 class VersionCommandTemplate:
     args: tuple[str, ...]
@@ -154,7 +157,7 @@ class CodingAgent(abc.ABC):
     supports_images: bool = False
     supports_videos: bool = False
     required_runtimes: tuple[str, ...] = ()
-    install_strategy: Optional[InstallStrategy] = None
+    install_strategy: Optional[InstallStrategySpec] = None
     run_template: Optional[RunCommandTemplate] = None
     version_template: Optional[VersionCommandTemplate] = None
 
@@ -166,83 +169,10 @@ class CodingAgent(abc.ABC):
         self._ephemeral_temp_dirs: set[Path] = set()
 
     def install(self, *, scope: str = "user", version: Optional[str] = None) -> "InstallResult":
-        strategy = self.install_strategy
-        if strategy is None:
+        strategies = self._normalize_install_strategies(self.install_strategy)
+        if not strategies:
             raise NotImplementedError(f"{self.__class__.__name__} must define install() or install_strategy")
-
-        if strategy.kind == "npm":
-            if not strategy.package:
-                raise ValueError("install strategy kind=npm requires package")
-            return self._install_with_npm(
-                package=strategy.package,
-                scope=scope,
-                version=version,
-                require_config=strategy.require_config,
-                configure_failure_message=strategy.configure_failure_message,
-            )
-
-        if strategy.kind == "uv_tool":
-            if not strategy.package:
-                raise ValueError("install strategy kind=uv_tool requires package")
-            package_spec = runtime_install.build_install_package_spec(
-                strategy.package,
-                version,
-                style=strategy.version_style,
-            )
-            result = runtime_install.uv_tool_install(
-                package_spec=package_spec,
-                python_version=strategy.python_version,
-                force=strategy.force,
-                with_packages=[pkg for pkg in strategy.with_packages if pkg],
-                fallback_no_cache_dir=strategy.fallback_no_cache_dir,
-                run=self._run,
-                ensure_uv_fn=lambda: runtime_install.ensure_uv(self._run),
-                pip_install_fn=lambda packages, no_cache: runtime_install.pip_install(
-                    packages=packages,
-                    no_cache_dir=no_cache,
-                    run=self._run,
-                ),
-            )
-        elif strategy.kind == "uv_pip":
-            if not strategy.package:
-                raise ValueError("install strategy kind=uv_pip requires package")
-            package_spec = runtime_install.build_install_package_spec(
-                strategy.package,
-                version,
-                style=strategy.version_style,
-            )
-            packages = [package_spec, *[pkg for pkg in strategy.with_packages if pkg]]
-            result = runtime_install.uv_pip_install(
-                packages=packages,
-                no_cache_dir=strategy.no_cache_dir,
-                run=self._run,
-                ensure_uv_fn=lambda: runtime_install.ensure_uv(self._run),
-                pip_install_fn=lambda packages, no_cache: runtime_install.pip_install(
-                    packages=packages,
-                    no_cache_dir=no_cache,
-                    run=self._run,
-                ),
-            )
-        elif strategy.kind == "shell":
-            result = runtime_install.shell_install(
-                shell_command=strategy.shell_command,
-                shell_versioned_command=strategy.shell_versioned_command,
-                shell_version_env=strategy.shell_version_env,
-                version=version,
-                version_normalizer=strategy.version_normalizer,
-                run=self._run,
-            )
-        elif strategy.kind == "custom":
-            result = self._install_with_custom_strategy(strategy=strategy, scope=scope, version=version)
-        else:
-            raise ValueError(f"unsupported install strategy: {strategy.kind}")
-        if not isinstance(result, CommandResult):
-            result = CommandResult(
-                exit_code=getattr(result, "exit_code", 1),
-                stdout=getattr(result, "stdout", ""),
-                stderr=getattr(result, "stderr", ""),
-                duration_seconds=getattr(result, "duration_seconds", 0.0),
-            )
+        result, strategy = self._run_install_strategies(strategies=strategies, scope=scope, version=version)
 
         config_path = self.configure()
         ok = result.exit_code == 0
@@ -447,8 +377,8 @@ class CodingAgent(abc.ABC):
                 if isinstance(runtime, str) and runtime.strip()
             )
         )
-        strategy = self.install_strategy
-        if strategy is None:
+        strategies = self._normalize_install_strategies(self.install_strategy)
+        if not strategies:
             return declared
         runtime_by_install_kind = {
             "npm": ("node",),
@@ -456,9 +386,11 @@ class CodingAgent(abc.ABC):
             "uv_pip": ("uv",),
             "shell": ("bash",),
         }
-        inferred = list(runtime_by_install_kind.get(strategy.kind, ()))
-        if strategy.kind == "uv_tool" and isinstance(strategy.package, str) and strategy.package.startswith("git+"):
-            inferred.append("git")
+        inferred: list[str] = []
+        for strategy in strategies:
+            inferred.extend(runtime_by_install_kind.get(strategy.kind, ()))
+            if strategy.kind == "uv_tool" and isinstance(strategy.package, str) and strategy.package.startswith("git+"):
+                inferred.append("git")
         return tuple(dict.fromkeys([*declared, *inferred]))
 
     def _runtime_asset_env(
@@ -537,6 +469,161 @@ class CodingAgent(abc.ABC):
             ephemeral_dirs=self._ephemeral_temp_dirs,
         )
 
+    def _run_install_strategy(
+        self,
+        *,
+        strategy: InstallStrategy,
+        scope: str,
+        version: Optional[str],
+    ) -> CommandResult:
+        if strategy.kind == "npm":
+            if not strategy.package:
+                raise ValueError("install strategy kind=npm requires package")
+            result = self._run_npm_install_command(package=strategy.package, scope=scope, version=version)
+        elif strategy.kind == "uv_tool":
+            if not strategy.package:
+                raise ValueError("install strategy kind=uv_tool requires package")
+            package_spec = runtime_install.build_install_package_spec(
+                strategy.package,
+                version,
+                style=strategy.version_style,
+            )
+            result = runtime_install.uv_tool_install(
+                package_spec=package_spec,
+                python_version=strategy.python_version,
+                force=strategy.force,
+                with_packages=[pkg for pkg in strategy.with_packages if pkg],
+                fallback_no_cache_dir=strategy.fallback_no_cache_dir,
+                run=self._run,
+                ensure_uv_fn=lambda: runtime_install.ensure_uv(self._run),
+                pip_install_fn=lambda packages, no_cache: runtime_install.pip_install(
+                    packages=packages,
+                    no_cache_dir=no_cache,
+                    run=self._run,
+                ),
+            )
+        elif strategy.kind == "uv_pip":
+            if not strategy.package:
+                raise ValueError("install strategy kind=uv_pip requires package")
+            package_spec = runtime_install.build_install_package_spec(
+                strategy.package,
+                version,
+                style=strategy.version_style,
+            )
+            packages = [package_spec, *[pkg for pkg in strategy.with_packages if pkg]]
+            result = runtime_install.uv_pip_install(
+                packages=packages,
+                no_cache_dir=strategy.no_cache_dir,
+                run=self._run,
+                ensure_uv_fn=lambda: runtime_install.ensure_uv(self._run),
+                pip_install_fn=lambda packages, no_cache: runtime_install.pip_install(
+                    packages=packages,
+                    no_cache_dir=no_cache,
+                    run=self._run,
+                ),
+            )
+        elif strategy.kind == "shell":
+            result = runtime_install.shell_install(
+                shell_command=strategy.shell_command,
+                shell_versioned_command=strategy.shell_versioned_command,
+                shell_version_env=strategy.shell_version_env,
+                version=version,
+                version_normalizer=strategy.version_normalizer,
+                run=self._run,
+            )
+        elif strategy.kind == "custom":
+            result = self._install_with_custom_strategy(scope=scope, version=version)
+        else:
+            raise ValueError(f"unsupported install strategy: {strategy.kind}")
+        if isinstance(result, CommandResult):
+            return result
+        return CommandResult(
+            exit_code=getattr(result, "exit_code", 1),
+            stdout=getattr(result, "stdout", ""),
+            stderr=getattr(result, "stderr", ""),
+            duration_seconds=getattr(result, "duration_seconds", 0.0),
+        )
+
+    def _normalize_install_strategies(
+        self,
+        strategies: Optional[InstallStrategySpec],
+    ) -> tuple[InstallStrategy, ...]:
+        if strategies is None:
+            return ()
+        if isinstance(strategies, InstallStrategy):
+            return (strategies,)
+        if isinstance(strategies, (list, tuple)):
+            normalized = tuple(strategy for strategy in strategies if isinstance(strategy, InstallStrategy))
+            if len(normalized) != len(strategies):
+                raise TypeError("install_strategy sequences must contain only InstallStrategy values")
+            return normalized
+        raise TypeError("install_strategy must be an InstallStrategy or a list/tuple of InstallStrategy values")
+
+    def _run_install_strategies(
+        self,
+        *,
+        strategies: tuple[InstallStrategy, ...],
+        scope: str,
+        version: Optional[str],
+    ) -> tuple[CommandResult, InstallStrategy]:
+        attempts: list[tuple[InstallStrategy, CommandResult]] = []
+        for strategy in strategies:
+            result = self._run_install_strategy(strategy=strategy, scope=scope, version=version)
+            attempts.append((strategy, result))
+            if result.exit_code == 0:
+                return self._collapse_install_attempts(attempts), strategy
+        last_strategy, _ = attempts[-1]
+        return self._collapse_install_attempts(attempts), last_strategy
+
+    def _collapse_install_attempts(
+        self,
+        attempts: list[tuple[InstallStrategy, CommandResult]],
+    ) -> CommandResult:
+        if len(attempts) == 1:
+            return attempts[0][1]
+        combined_output = "\n\n".join(
+            part
+            for index, (strategy, result) in enumerate(attempts, start=1)
+            for part in (
+                f"[install attempt {index}/{len(attempts)}] {self._describe_install_strategy(strategy)}",
+                result.output,
+            )
+            if part
+        )
+        last_result = attempts[-1][1]
+        return CommandResult(
+            exit_code=last_result.exit_code,
+            stdout=combined_output,
+            stderr="",
+            duration_seconds=sum(result.duration_seconds for _, result in attempts),
+        )
+
+    @staticmethod
+    def _describe_install_strategy(strategy: InstallStrategy) -> str:
+        if strategy.kind in {"npm", "uv_tool", "uv_pip"} and strategy.package:
+            return f"{strategy.kind}:{strategy.package}"
+        return strategy.kind
+
+    def _run_npm_install_command(
+        self,
+        *,
+        package: str,
+        scope: str,
+        version: Optional[str],
+    ) -> CommandResult:
+        package_spec = runtime_install.build_install_package_spec(package, version, style="npm")
+        if scope == "global":
+            return self._run(["npm", "install", "-g", package_spec])
+
+        prefix = self._npm_prefix()
+        prefix.mkdir(parents=True, exist_ok=True)
+        install_cmd = ["npm", "install", "-g", "--prefix", str(prefix), package_spec]
+        result = self._run(install_cmd)
+        if result.exit_code != 0 and "ENOTEMPTY" in result.output:
+            self._cleanup_npm_user_install_dirs(prefix=prefix, package=package)
+            result = self._run(install_cmd)
+        return result
+
     def _install_with_npm(
         self,
         *,
@@ -546,17 +633,7 @@ class CodingAgent(abc.ABC):
         require_config: bool = False,
         configure_failure_message: Optional[str] = None,
     ) -> "InstallResult":
-        package_spec = runtime_install.build_install_package_spec(package, version, style="npm")
-        if scope == "global":
-            result = self._run(["npm", "install", "-g", package_spec])
-        else:
-            prefix = self._npm_prefix()
-            prefix.mkdir(parents=True, exist_ok=True)
-            install_cmd = ["npm", "install", "-g", "--prefix", str(prefix), package_spec]
-            result = self._run(install_cmd)
-            if result.exit_code != 0 and "ENOTEMPTY" in result.output:
-                self._cleanup_npm_user_install_dirs(prefix=prefix, package=package)
-                result = self._run(install_cmd)
+        result = self._run_npm_install_command(package=package, scope=scope, version=version)
         config_path = self.configure()
         ok = result.exit_code == 0
         details = None if ok else result.output
@@ -599,7 +676,6 @@ class CodingAgent(abc.ABC):
     def _install_with_custom_strategy(
         self,
         *,
-        strategy: InstallStrategy,
         scope: str,
         version: Optional[str],
     ) -> CommandResult:

@@ -12,7 +12,20 @@ cakit install openclaw
 cakit install openclaw --version <openclaw_version>
 ```
 
-`cakit install openclaw` 默认安装 npm 包 `openclaw`（user scope）。
+`cakit install openclaw` 会先运行官方安装脚本，并在安装阶段显式跳过 onboarding：
+
+```bash
+curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard
+```
+
+`cakit install openclaw --version <openclaw_version>` 会把 `--no-onboard --version <value>` 传给同一脚本：
+
+```bash
+curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --version <openclaw_version>
+```
+
+`--scope user|global` 对主脚本路径不生效；只有在 cakit 触发 npm 回退时才会影响安装位置。安装阶段跳过 onboarding，可以避免非交互环境下的 `/dev/tty` 失败；后续可通过 `cakit configure openclaw` 或 `cakit run openclaw ...` 完成非交互配置。
+如果上游安装器失败，cakit 会统一回退到 `npm install -g openclaw`。
 
 ## API 配置（`cakit configure openclaw`）
 

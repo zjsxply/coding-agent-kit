@@ -12,7 +12,20 @@ Install a specific version:
 cakit install openclaw --version <openclaw_version>
 ```
 
-`cakit install openclaw` installs npm package `openclaw` (user scope by default).
+`cakit install openclaw` first runs the official install script with onboarding disabled during install:
+
+```bash
+curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard
+```
+
+`cakit install openclaw --version <openclaw_version>` runs the same script with `--no-onboard --version <value>`:
+
+```bash
+curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --version <openclaw_version>
+```
+
+`--scope user|global` does not affect the primary script path. It only affects the npm fallback path if cakit has to use it. Skipping onboarding during install avoids `/dev/tty` failures in non-interactive environments; use `cakit configure openclaw` or `cakit run openclaw ...` to complete non-interactive setup later.
+If the upstream installer fails for any reason, cakit falls back to `npm install -g openclaw`.
 
 ## API Configuration (`cakit configure openclaw`)
 

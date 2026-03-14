@@ -35,6 +35,7 @@ SYSTEM_RUNTIME_BINARIES = {
     "git": "git",
     "gzip": "gzip",
     "tar": "tar",
+    "which": "which",
 }
 TargetCommandResult = tuple[bool, dict[str, object]]
 

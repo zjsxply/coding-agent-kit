@@ -2,8 +2,11 @@
 
 This document explains how cakit runs Claude Code and extracts metadata.
 
-**Versioned Installation**
-- `cakit install claude --version <npm_version_or_tag>` installs `@anthropic-ai/claude-code@<version>`.
+**Installation**
+- `cakit install claude` runs Anthropic's official install script: `curl -fsSL https://claude.ai/install.sh | bash`.
+- `cakit install claude --version <installer_selector>` runs the same script with a version selector: `curl -fsSL https://claude.ai/install.sh | bash -s -- <installer_selector>`.
+- Upstream documentation still lists `npm install -g @anthropic-ai/claude-code` for compatibility/migration, but marks npm installation as deprecated. cakit tries the native script installer first and falls back to that npm package only if the script path fails.
+- `--scope user|global` does not affect the primary script path. It only affects the npm fallback path if cakit has to use it.
 
 **Sources**
 - CLI stdout from `claude -p --output-format stream-json --verbose ...` (JSONL-like events, one JSON object per line).

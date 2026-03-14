@@ -2,8 +2,15 @@
 
 This document explains how cakit runs OpenCode and extracts run metadata.
 
-**Versioned Installation**
-- `cakit install opencode --version <npm_version_or_tag>` installs `opencode-ai@<version>`.
+**Installation**
+- `cakit install opencode` runs OpenCode's official install script with cakit's install-time adjustments: cakit auto-installs the missing `which` runtime dependency via the host package manager when needed, and upstream PATH mutation is disabled with `--no-modify-path`.
+- `cakit install opencode --version <version>` runs the same script with `--no-modify-path --version <value>`.
+- Effective upstream invocation:
+  - `curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path`
+  - `curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path --version <version>`
+- cakit tries that script path first and falls back to `npm install -g opencode-ai` if the script path fails.
+- `--scope user|global` does not affect the primary script path. It only affects the npm fallback path if cakit has to use it.
+- cakit intentionally does not let the upstream installer edit shell rc/profile files; expose `~/.opencode/bin` yourself if you need it in login shells outside the current cakit-managed flow.
 
 **Auth and Configuration**
 - OAuth: run `opencode auth login` with the upstream CLI flow.

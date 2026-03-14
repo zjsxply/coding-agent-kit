@@ -1,5 +1,12 @@
 # Copilot
 
+## Installation
+
+- `cakit install copilot` runs GitHub's current installer entrypoint: `curl -fsSL https://gh.io/copilot-install | bash`.
+- `cakit install copilot --version <version>` runs the same installer with `VERSION=<value>`: `curl -fsSL https://gh.io/copilot-install | VERSION=<version> bash`.
+- cakit tries the official installer first and falls back to `npm install -g @github/copilot` if the script path fails.
+- `--scope user|global` does not affect the primary script path. It only affects the npm fallback path if cakit has to use it.
+
 ## Auth
 
 - OAuth: run `copilot`, then `/login`.

@@ -21,8 +21,17 @@ class OpenClawAgent(CodingAgent):
     binary = "openclaw"
     supports_images = False
     supports_videos = False
-    required_runtimes = ("git",)
-    install_strategy = InstallStrategy(kind="npm", package="openclaw")
+    required_runtimes = ("curl", "git", "node")
+    install_strategy = [
+        InstallStrategy(
+            kind="shell",
+            shell_command="curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard",
+            shell_versioned_command=(
+                "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --version {version_quoted}"
+            ),
+        ),
+        InstallStrategy(kind="npm", package="openclaw"),
+    ]
     run_template = RunCommandTemplate(
         base_args=("agent", "--local", "--agent", "main", "--json"),
         prompt_mode="flag",
@@ -32,6 +41,7 @@ class OpenClawAgent(CodingAgent):
     )
 
     _SAFE_PROVIDER_ID_RE = re.compile(r"[^a-z0-9._-]+")
+
     def configure(self) -> Optional[str]:
         settings, err = self._resolve_runtime_settings(model_override=None)
         if err is not None:

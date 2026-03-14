@@ -1,5 +1,12 @@
 # Copilot
 
+## 安装方式
+
+- `cakit install copilot` 会运行 GitHub 当前可用的安装入口：`curl -fsSL https://gh.io/copilot-install | bash`。
+- `cakit install copilot --version <version>` 会通过 `VERSION=<value>` 调用同一安装器：`curl -fsSL https://gh.io/copilot-install | VERSION=<version> bash`。
+- cakit 会先尝试官方安装器；如果脚本路径失败，再回退到 `npm install -g @github/copilot`。
+- `--scope user|global` 对主脚本路径不生效；只有在 cakit 触发 npm 回退时才会影响安装位置。
+
 ## 鉴权
 
 - OAuth：运行 `copilot`，然后执行 `/login`。

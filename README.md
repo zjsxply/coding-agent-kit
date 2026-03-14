@@ -5,11 +5,11 @@ Coding Agent Kit is a lightweight CLI for academic experiments. It installs and 
 ## Install
 
 ```bash
-pip install git+https://github.com/zjsxply/coding-agent-kit
+curl -fsSL https://raw.githubusercontent.com/zjsxply/coding-agent-kit/main/install.sh | sh
 # or
 uv tool install git+https://github.com/zjsxply/coding-agent-kit
-# or use the installer
-curl -fsSL https://raw.githubusercontent.com/zjsxply/coding-agent-kit/main/install.sh | sh
+# or
+pip install git+https://github.com/zjsxply/coding-agent-kit
 ```
 
 `install.sh` bootstraps `uv` when needed and installs `cakit` into a stable tool/bin location (`/usr/local/bin` for root, otherwise a user-local bin dir). In fresh container environments, this is the recommended path.
@@ -26,13 +26,18 @@ cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 
 By default, `--scope user` installs npm-based agents under `~/.npm-global` (no sudo). Ensure `~/.npm-global/bin` is on `PATH`.
 For npm-based agents, use `--scope global` to run system-level install commands (may require sudo).
+Some agents try an official shell installer first and only fall back to npm if that path fails; for those agents, `--scope` only matters when the npm fallback is used.
 For Python/uv-based agents, `--scope` is currently ignored; cakit uses the agent installer's default behavior.
 `all` and `*` install all supported agents (`*` should be quoted to avoid shell expansion).
 If `<agent>` is omitted, it defaults to `all`.
 For `all` / `*`, cakit installs targets in parallel and reports failed agents together in the final aggregate output instead of stopping at the first failure.
 When `--version` is omitted, `cakit install` always installs the latest upstream release available at install time.
 Use `--version` to install a specific version or reference:
-- `codex` / `codebuddy` / `claude` / `copilot` / `gemini` / `qwen` / `qoder` / `continue` / `crush` / `opencode` / `auggie` / `kilocode` / `openclaw` / `kimi`: npm package version or tag (for example `0.98.0`, `2026.2.15`, `1.9.0`).
+- `codex` / `codebuddy` / `gemini` / `qwen` / `qoder` / `continue` / `crush` / `auggie` / `kilocode` / `kimi`: npm package version or tag (for example `0.98.0`, `2026.2.15`, `1.9.0`).
+- `claude`: Claude Code install-script selector (for example `stable` or an exact Claude Code version supported by Anthropic's installer). cakit tries the official install script first and falls back to the deprecated npm package `@anthropic-ai/claude-code` if the script path fails.
+- `copilot`: Copilot installer `VERSION` value (for example `1.0.3`). cakit tries the official installer first and falls back to the npm package `@github/copilot` if the script path fails.
+- `openclaw`: OpenClaw install-script `--version` value (for example `1.0.0`). cakit tries the official installer first and falls back to the npm package `openclaw` if the script path fails.
+- `opencode`: OpenCode install-script `--version` value (for example `0.0.8`). cakit tries the official installer first and falls back to the npm package `opencode-ai` if the script path fails.
 - `aider`: `aider-chat` package version (for example `0.88.0`).
 - `cursor`: Cursor build ID (for example `2026.01.28-fd13201`).
 - `goose`: Goose CLI release version (for example `v1.2.3` or `1.2.3`).
@@ -42,6 +47,8 @@ Use `--version` to install a specific version or reference:
 - `openhands`: `openhands` package version (for example `1.12.1`).
 - `swe-agent`: upstream git ref / release tag (for example `v1.1.0`).
 - `trae-oss`: git ref (tag / branch / commit).
+
+For a per-agent install-method and runtime-dependency matrix, see `docs/runtime_dependencies_compatibility.md`.
 
 #### Supported Agents
 
@@ -247,6 +254,8 @@ cakit tools
 ```
 
 Installs (Linux only): `rg`, `fd`, `fzf`, `jq`, `yq`, `ast-grep`, `bat`, `git`, `git-lfs`, `git-delta`, `gh`, and Playwright Chromium (including runtime deps).
+Supported package managers: `apt-get`, `apk`, `dnf`, `microdnf`, `yum`, `zypper`, and `pacman`.
+On apt-based distros, cakit also attempts to install Playwright Chromium runtime deps and the browser. On other Linux distros, Playwright Chromium may be skipped while the rest of the toolchain still installs.
 Successful steps stay quiet; if a tool install fails, cakit continues with the remaining tools and reports `installed` / `skipped` / `failed` in the final JSON output.
 
 ## Environment Variables
@@ -286,7 +295,6 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 ## Todo
 
 - [ ] Add `cakit run` flag: disable web search vs fully disable network
-- [ ] Support multiagent
 - [ ] Add an API mock server to simplify testing
 - [ ] Support `--timeout` in `cakit run` and return partial run artifacts on timeout
 - [ ] Support `AGENTS.md`
@@ -296,7 +304,9 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 - [ ] Support MCP
 - [ ] Support balanced mode
 - [ ] Expand Ubuntu and Debian coverage to releases from the last ten years and ensure tests pass
+- [ ] Support Playwright in `cakit tools` on other Linux distributions
 - [ ] Support ARM
+- [x] Support multiagent
 - [ ] Record versions once per month and verify CI test functionality
 - [x] Write an install script `.sh`, then add test points that start Docker containers (including Ubuntu, Debian, etc.) to ensure the install script can install cakit successfully in arbitrary Docker image environments
 - [x] Support additional setup scripts

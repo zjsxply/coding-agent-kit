@@ -2,8 +2,11 @@
 
 本文说明 cakit 如何运行 Claude Code 并提取统计信息。
 
-**安装版本**
-- `cakit install claude --version <npm_version_or_tag>` 会安装 `@anthropic-ai/claude-code@<version>`。
+**安装方式**
+- `cakit install claude` 会运行 Anthropic 官方安装脚本：`curl -fsSL https://claude.ai/install.sh | bash`。
+- `cakit install claude --version <installer_selector>` 会把版本选择器传给同一脚本：`curl -fsSL https://claude.ai/install.sh | bash -s -- <installer_selector>`。
+- 上游文档仍保留 `npm install -g @anthropic-ai/claude-code` 作为兼容/迁移路径，但已将 npm 安装标记为 deprecated。cakit 会先尝试原生脚本安装器，只有脚本路径失败时才回退到这个 npm 包。
+- `--scope user|global` 对主脚本路径不生效；只有在 cakit 触发 npm 回退时才会影响安装位置。
 
 **数据来源**
 - `claude -p --output-format stream-json --verbose ...` 的 stdout（每行一个 JSON 对象，类似 JSONL）。

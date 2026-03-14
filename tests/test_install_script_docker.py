@@ -25,8 +25,12 @@ DEFAULT_DOCKER_IMAGES = (
     "opensuse/leap:15.6",
     "archlinux:latest",
 )
+TOOLS_TEST_SKIPS = {
+    "rockylinux:9": "cakit tools support for the Rocky Linux 9 package set is not implemented yet",
+}
 DOCKER_TEST_TIMEOUT_SECONDS = 15 * 60
 DOCKER_INSTALL_ALL_TIMEOUT_SECONDS = 30 * 60
+DOCKER_TOOLS_TIMEOUT_SECONDS = 30 * 60
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCKER_TEST_DOCKERFILE = REPO_ROOT / "tests" / "install_script_docker.Dockerfile"
 
@@ -71,7 +75,11 @@ def _run_docker_build_test(image: str, *, mode: str) -> None:
     env["DOCKER_BUILDKIT"] = "1"
     env["BUILDKIT_PROGRESS"] = "plain"
     cache_key = _docker_image_id(image).lower()
-    timeout_seconds = DOCKER_INSTALL_ALL_TIMEOUT_SECONDS if mode == "install-all" else DOCKER_TEST_TIMEOUT_SECONDS
+    timeout_seconds = {
+        "basic": DOCKER_TEST_TIMEOUT_SECONDS,
+        "install-all": DOCKER_INSTALL_ALL_TIMEOUT_SECONDS,
+        "tools": DOCKER_TOOLS_TIMEOUT_SECONDS,
+    }.get(mode, DOCKER_TEST_TIMEOUT_SECONDS)
     command = [
         "docker",
         "build",
@@ -115,3 +123,11 @@ def test_install_script_installs_cakit_in_docker(image: str) -> None:
 @pytest.mark.parametrize("image", _docker_images(), ids=_docker_image_id)
 def test_install_script_installs_all_agents_in_docker(image: str) -> None:
     _run_docker_build_test(image, mode="install-all")
+
+
+@pytest.mark.parametrize("image", _docker_images(), ids=_docker_image_id)
+def test_cakit_tools_installs_shell_tools_in_docker(image: str) -> None:
+    skip_reason = TOOLS_TEST_SKIPS.get(image)
+    if skip_reason is not None:
+        pytest.skip(skip_reason)
+    _run_docker_build_test(image, mode="tools")

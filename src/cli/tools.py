@@ -1,16 +1,28 @@
 from __future__ import annotations
 
+import io
+import json
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import urllib.request as urlrequest
+import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from ..io_helpers import emit_json
-from .install import apt_get_command, ensure_node_tools, run_logged_command, with_sudo
+from .install import (
+    apt_get_command,
+    detect_package_manager,
+    ensure_node_tools,
+    package_install_commands,
+    run_logged_command,
+    with_sudo,
+)
 
 
 def run_skills(passthrough_args: list[str]) -> int:
@@ -59,6 +71,83 @@ COMPONENT_BINARIES: dict[str, tuple[str, ...]] = {
     "ast-grep": ("sg",),
 }
 
+AST_GREP_RELEASE_API_URL = "https://api.github.com/repos/ast-grep/ast-grep/releases/latest"
+AST_GREP_LINUX_ASSET_NAMES = {
+    "x86_64": "app-x86_64-unknown-linux-gnu.zip",
+    "amd64": "app-x86_64-unknown-linux-gnu.zip",
+}
+YQ_LINUX_DOWNLOAD_URLS = {
+    "x86_64": "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64",
+    "amd64": "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64",
+}
+DELTA_RELEASES_LATEST_URL = "https://github.com/dandavison/delta/releases/latest"
+DELTA_LINUX_ASSET_PATTERNS = {
+    "x86_64": "delta-{tag}-x86_64-unknown-linux-gnu.tar.gz",
+    "amd64": "delta-{tag}-x86_64-unknown-linux-gnu.tar.gz",
+}
+
+PACKAGE_MANAGER_BOOTSTRAP_PACKAGES: dict[str, tuple[str, ...]] = {
+    "apt-get": ("curl", "ca-certificates", "gnupg", "lsb-release", "unzip", "tar", "gzip"),
+    "apk": ("curl", "ca-certificates", "unzip", "tar", "gzip"),
+    "dnf": ("curl", "ca-certificates", "unzip", "tar", "gzip"),
+    "microdnf": ("curl", "ca-certificates", "unzip", "tar", "gzip"),
+    "yum": ("curl", "ca-certificates", "unzip", "tar", "gzip"),
+    "zypper": ("curl", "ca-certificates", "unzip", "tar", "gzip"),
+    "pacman": ("curl", "ca-certificates", "unzip", "tar", "gzip"),
+}
+
+TOOL_PACKAGE_CANDIDATES: dict[str, dict[str, tuple[tuple[str, ...], ...]]] = {
+    "rg": {
+        "default": (("ripgrep",),),
+    },
+    "fd": {
+        "default": (("fd",),),
+        "apt-get": (("fd-find",),),
+        "dnf": (("fd-find",), ("fd",)),
+        "microdnf": (("fd-find",), ("fd",)),
+        "yum": (("fd-find",), ("fd",)),
+    },
+    "fzf": {
+        "default": (("fzf",),),
+    },
+    "jq": {
+        "default": (("jq",),),
+    },
+    "yq": {
+        "default": (("yq",),),
+        "apk": (("yq-go",), ("yq",)),
+    },
+    "bat": {
+        "default": (("bat",),),
+    },
+    "git": {
+        "default": (("git",),),
+        "dnf": (("git-core",), ("git",)),
+        "microdnf": (("git-core",), ("git",)),
+        "yum": (("git-core",), ("git",)),
+        "zypper": (("git-core",), ("git",)),
+    },
+    "git-lfs": {
+        "default": (("git-lfs",),),
+    },
+    "git-delta": {
+        "default": (("git-delta",),),
+        "apk": (("delta",), ("git-delta",)),
+        "pacman": (("git-delta",), ("delta",)),
+    },
+    "gh": {
+        "apk": (("github-cli",), ("gh",)),
+        "dnf": (("gh",), ("github-cli",)),
+        "microdnf": (("gh",), ("github-cli",)),
+        "yum": (("gh",), ("github-cli",)),
+        "zypper": (("gh",), ("github-cli",)),
+        "pacman": (("github-cli",), ("gh",)),
+    },
+}
+
+PLAYWRIGHT_DEPS_PACKAGE_MANAGERS = {"apt-get"}
+
+
 def _append_unique(items: list[str], value: str) -> None:
     if value not in items:
         items.append(value)
@@ -80,6 +169,168 @@ def _has_component_binary(component: str) -> bool:
     return any(shutil.which(binary) is not None for binary in binaries)
 
 
+def _tool_package_candidates(component: str, package_manager: str) -> tuple[tuple[str, ...], ...]:
+    package_mapping = TOOL_PACKAGE_CANDIDATES.get(component, {})
+    if package_manager in package_mapping:
+        return package_mapping[package_manager]
+    return package_mapping.get("default", ())
+
+
+def _install_package_candidates(
+    component: str,
+    *,
+    package_manager: str,
+    package_installer: Callable[[list[str]], bool],
+) -> bool:
+    for package_names in _tool_package_candidates(component, package_manager):
+        if package_installer(list(package_names)):
+            return True
+    return False
+
+
+def _resolve_ast_grep_download_url(arch: str) -> Optional[str]:
+    asset_name = AST_GREP_LINUX_ASSET_NAMES.get(arch)
+    if asset_name is None:
+        return None
+    request = urlrequest.Request(AST_GREP_RELEASE_API_URL, headers={"User-Agent": "cakit"})
+    try:
+        with urlrequest.urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    assets = payload.get("assets")
+    if not isinstance(assets, list):
+        return None
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        if asset.get("name") != asset_name:
+            continue
+        download_url = asset.get("browser_download_url")
+        if isinstance(download_url, str) and download_url:
+            return download_url
+    return None
+
+
+def _resolve_latest_github_release_tag(releases_latest_url: str) -> Optional[str]:
+    request = urlrequest.Request(releases_latest_url, headers={"User-Agent": "cakit"})
+    try:
+        with urlrequest.urlopen(request, timeout=60) as response:
+            final_url = response.geturl()
+    except OSError:
+        return None
+    marker = "/tag/"
+    if marker not in final_url:
+        return None
+    tag = final_url.rsplit(marker, 1)[-1].strip()
+    return tag or None
+
+
+def _download_url_to_file(download_url: str, destination: Path) -> bool:
+    request = urlrequest.Request(download_url, headers={"User-Agent": "cakit"})
+    try:
+        with urlrequest.urlopen(request, timeout=120) as response, destination.open("wb") as output_file:
+            shutil.copyfileobj(response, output_file)
+    except OSError:
+        return False
+    destination.chmod(0o755)
+    return True
+
+
+def _download_binary_from_zip(download_url: str, *, binary_name: str, destination: Path) -> bool:
+    request = urlrequest.Request(download_url, headers={"User-Agent": "cakit"})
+    try:
+        with urlrequest.urlopen(request, timeout=120) as response:
+            payload = response.read()
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive, destination.open("wb") as output_file:
+            member_name = next(
+                (
+                    name
+                    for name in archive.namelist()
+                    if not name.endswith("/") and Path(name).name == binary_name
+                ),
+                None,
+            )
+            if member_name is None:
+                return False
+            with archive.open(member_name) as member_file:
+                shutil.copyfileobj(member_file, output_file)
+    except (OSError, ValueError, TypeError, zipfile.BadZipFile):
+        return False
+    destination.chmod(0o755)
+    return True
+
+
+def _download_binary_from_tar_gz(download_url: str, *, binary_name: str, destination: Path) -> bool:
+    request = urlrequest.Request(download_url, headers={"User-Agent": "cakit"})
+    try:
+        with urlrequest.urlopen(request, timeout=120) as response:
+            payload = response.read()
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive, destination.open("wb") as output_file:
+            member = next(
+                (
+                    candidate
+                    for candidate in archive.getmembers()
+                    if candidate.isfile() and Path(candidate.name).name == binary_name
+                ),
+                None,
+            )
+            if member is None:
+                return False
+            member_file = archive.extractfile(member)
+            if member_file is None:
+                return False
+            with member_file:
+                shutil.copyfileobj(member_file, output_file)
+    except (OSError, tarfile.TarError):
+        return False
+    destination.chmod(0o755)
+    return True
+
+
+def _install_download_fallback(component_name: str, *, arch: str, use_sudo: bool, run_tool_cmd: Callable[[list[str]], bool]) -> bool:
+    download_url: Optional[str] = None
+    binary_name: Optional[str] = None
+    target_name: Optional[str] = None
+    use_tar_gz = False
+
+    if component_name == "yq":
+        download_url = YQ_LINUX_DOWNLOAD_URLS.get(arch)
+        binary_name = "yq"
+        target_name = "yq"
+    elif component_name == "git-delta":
+        tag = _resolve_latest_github_release_tag(DELTA_RELEASES_LATEST_URL)
+        asset_pattern = DELTA_LINUX_ASSET_PATTERNS.get(arch)
+        if tag is not None and asset_pattern is not None:
+            asset_name = asset_pattern.format(tag=tag)
+            download_url = f"https://github.com/dandavison/delta/releases/download/{tag}/{asset_name}"
+            binary_name = "delta"
+            target_name = "delta"
+            use_tar_gz = True
+
+    if download_url is None or binary_name is None or target_name is None:
+        return False
+
+    with tempfile.TemporaryDirectory(prefix=f"cakit-{component_name}-") as download_dir:
+        download_path = Path(download_dir) / binary_name
+        download_ok = (
+            _download_binary_from_tar_gz(download_url, binary_name=binary_name, destination=download_path)
+            if use_tar_gz
+            else _download_url_to_file(download_url, download_path)
+        )
+        if not download_ok:
+            return False
+        if not run_logged_command(
+            "[tools]",
+            with_sudo(["cp", str(download_path), f"/usr/local/bin/{target_name}"], use_sudo=use_sudo),
+            quiet_success=True,
+        ):
+            return False
+        return run_tool_cmd(["chmod", "0755", f"/usr/local/bin/{target_name}"])
+
+
 def install_fast_tools_linux() -> dict[str, object]:
     if not sys.platform.startswith("linux"):
         return {
@@ -89,10 +340,11 @@ def install_fast_tools_linux() -> dict[str, object]:
             "skipped": [],
             "failed": [],
         }
-    if shutil.which("apt-get") is None:
+    package_manager = detect_package_manager()
+    if package_manager is None:
         return {
             "ok": False,
-            "details": "apt-get not found; please install tools manually",
+            "details": "no supported package manager detected; please install tools manually",
             "installed": [],
             "skipped": [],
             "failed": [],
@@ -111,52 +363,74 @@ def install_fast_tools_linux() -> dict[str, object]:
     installed_components: list[str] = []
     skipped_components: list[str] = []
     failed_components: list[str] = []
+    refresh_package_index = package_manager == "pacman"
 
     def run_tool_cmd(cmd: list[str]) -> bool:
         return run_logged_command("[tools]", with_sudo(cmd, use_sudo=use_sudo), quiet_success=True)
 
-    if not run_tool_cmd(apt_get_command("update")):
+    def install_package_group(packages: list[str]) -> bool:
+        nonlocal refresh_package_index
+        commands = package_install_commands(
+            package_manager,
+            packages,
+            refresh_package_index=refresh_package_index,
+        )
+        if not commands:
+            return False
+        refresh_package_index = False
+        for command in commands:
+            if not run_tool_cmd(command):
+                return False
+        return True
+
+    if package_manager == "apt-get" and not run_tool_cmd(apt_get_command("update")):
         _append_unique(failed_components, "apt-get update")
 
-    bootstrap_apt_packages: tuple[str, ...] = (
-        "curl",
-        "ca-certificates",
-        "gnupg",
-        "lsb-release",
-        "unzip",
-    )
-    for package_name in bootstrap_apt_packages:
-        run_tool_cmd(apt_get_command("install", "-y", package_name))
+    bootstrap_packages = PACKAGE_MANAGER_BOOTSTRAP_PACKAGES.get(package_manager, ())
+    if bootstrap_packages:
+        install_package_group(list(bootstrap_packages))
 
-    base_apt_packages: tuple[tuple[str, str], ...] = (
-        ("ripgrep", "rg"),
-        ("fd-find", "fd"),
-        ("fzf", "fzf"),
-        ("jq", "jq"),
-        ("yq", "yq"),
-        ("bat", "bat"),
-        ("git", "git"),
-        ("git-lfs", "git-lfs"),
-        ("git-delta", "git-delta"),
+    package_manager_components: tuple[str, ...] = (
+        "rg",
+        "fd",
+        "fzf",
+        "jq",
+        "yq",
+        "bat",
+        "git",
+        "git-lfs",
+        "git-delta",
     )
-    for package_name, component_name in base_apt_packages:
+    for component_name in package_manager_components:
         if _has_component_binary(component_name):
             _append_unique(skipped_components, f"{component_name} (already available)")
             continue
-        if run_tool_cmd(apt_get_command("install", "-y", package_name)):
+        install_ok = _install_package_candidates(
+            component_name,
+            package_manager=package_manager,
+            package_installer=install_package_group,
+        )
+        if not install_ok and _install_download_fallback(
+            component_name,
+            arch=arch,
+            use_sudo=use_sudo,
+            run_tool_cmd=run_tool_cmd,
+        ):
+            install_ok = True
+        if install_ok:
             _append_unique(installed_components, component_name)
         else:
             _append_unique(failed_components, component_name)
 
     if shutil.which("git-lfs") is not None:
-        if run_tool_cmd(["git", "lfs", "install", "--system"]):
+        if run_tool_cmd(["git", "-C", "/", "lfs", "install", "--system", "--skip-repo"]):
             _append_unique(installed_components, "git-lfs")
         else:
             _append_unique(failed_components, "git-lfs")
 
     if shutil.which("gh") is not None:
         _append_unique(skipped_components, "gh (already available)")
-    else:
+    elif package_manager == "apt-get":
         if not run_tool_cmd(["mkdir", "-p", "/etc/apt/keyrings"]):
             _append_unique(failed_components, "gh")
         else:
@@ -225,6 +499,11 @@ def install_fast_tools_linux() -> dict[str, object]:
                 _append_unique(installed_components, "gh")
             else:
                 _append_unique(failed_components, "gh")
+    else:
+        if _install_package_candidates("gh", package_manager=package_manager, package_installer=install_package_group):
+            _append_unique(installed_components, "gh")
+        else:
+            _append_unique(failed_components, "gh")
 
     if arch_supported:
         for component_name, installer_key in ARCH_SPECIFIC_TOOL_COMPONENTS:
@@ -233,29 +512,25 @@ def install_fast_tools_linux() -> dict[str, object]:
                     _append_unique(skipped_components, f"{component_name} (already available)")
                     continue
                 sg_ok = True
+                download_url = _resolve_ast_grep_download_url(arch)
                 with tempfile.TemporaryDirectory(prefix="cakit-ast-grep-") as sg_tmp_dir:
-                    sg_tmp = Path(sg_tmp_dir) / "ast-grep-linux-x86_64.tar.gz"
-                    if not run_logged_command(
-                        "[tools]",
-                        [
-                            "curl",
-                            "-fsSL",
-                            "https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-linux-x86_64.tar.gz",
-                            "-o",
-                            str(sg_tmp),
-                        ],
-                        quiet_success=True,
-                    ):
+                    sg_tmp = Path(sg_tmp_dir) / "sg"
+                    if download_url is None:
                         sg_ok = False
-                    elif not run_logged_command(
-                        "[tools]",
-                        with_sudo(
-                            ["tar", "-xzf", str(sg_tmp), "-C", "/usr/local/bin", "sg"],
-                            use_sudo=use_sudo,
-                        ),
-                        quiet_success=True,
-                    ):
-                        sg_ok = False
+                    else:
+                        if not _download_binary_from_zip(download_url, binary_name="sg", destination=sg_tmp):
+                            sg_ok = False
+                        elif not run_logged_command(
+                            "[tools]",
+                            with_sudo(
+                                ["cp", str(sg_tmp), "/usr/local/bin/sg"],
+                                use_sudo=use_sudo,
+                            ),
+                            quiet_success=True,
+                        ):
+                            sg_ok = False
+                        elif not run_tool_cmd(["chmod", "0755", "/usr/local/bin/sg"]):
+                            sg_ok = False
                 if sg_ok:
                     _append_unique(installed_components, component_name)
                 else:
@@ -263,6 +538,12 @@ def install_fast_tools_linux() -> dict[str, object]:
                 continue
 
             if installer_key == "_install_playwright_chromium":
+                if package_manager not in PLAYWRIGHT_DEPS_PACKAGE_MANAGERS:
+                    _append_unique(
+                        skipped_components,
+                        f"{component_name} (auto-deps unsupported on {package_manager})",
+                    )
+                    continue
                 if not ensure_node_tools(quiet_success=True):
                     _append_unique(failed_components, component_name)
                     continue

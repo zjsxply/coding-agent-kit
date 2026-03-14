@@ -23,7 +23,17 @@ class OpenCodeAgent(CodingAgent):
     binary = "opencode"
     supports_images = True
     supports_videos = False
-    install_strategy = InstallStrategy(kind="npm", package="opencode-ai")
+    required_runtimes = ("curl", "tar", "which")
+    install_strategy = [
+        InstallStrategy(
+            kind="shell",
+            shell_command="curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path",
+            shell_versioned_command=(
+                "curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path --version {version_quoted}"
+            ),
+        ),
+        InstallStrategy(kind="npm", package="opencode-ai"),
+    ]
     run_template = RunCommandTemplate(
         base_args=("run", "--format", "json"),
         prompt_mode="arg",

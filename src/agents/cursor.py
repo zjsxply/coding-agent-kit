@@ -34,7 +34,6 @@ class CursorAgent(CodingAgent):
     def _install_with_custom_strategy(
         self,
         *,
-        strategy: InstallStrategy,
         scope: str,
         version: Optional[str],
     ) -> CommandResult:
