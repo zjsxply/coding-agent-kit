@@ -295,6 +295,9 @@ cakit tools
 - [ ] `cakit` 不再需要 `configure` 命令（默认由 `run` 自动配置并完全托管）
 - [ ] 支持 MCP
 - [ ] 支持 balanced 模式
+- [ ] 扩展到十年内的 Ubuntu 和 Debian 版本，保证测试通过
+- [ ] 适配 ARM
+- [ ] 每个月记录一次版本号，验证 CI 测试功能是否正常
 - [x] 写一个安装脚本 `.sh`，并构建测试点：启动 Docker 容器（包括 Ubuntu、Debian 等系统），保证这个安装脚本能在任意 Docker 镜像环境内把 cakit 安装成功
 - [x] 支持 额外的设置脚本
 - [x] 支持 skills

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import abc
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -446,17 +447,19 @@ class CodingAgent(abc.ABC):
                 if isinstance(runtime, str) and runtime.strip()
             )
         )
-        if declared:
-            return declared
         strategy = self.install_strategy
         if strategy is None:
-            return ()
+            return declared
         runtime_by_install_kind = {
             "npm": ("node",),
             "uv_tool": ("uv",),
             "uv_pip": ("uv",),
+            "shell": ("bash",),
         }
-        return runtime_by_install_kind.get(strategy.kind, ())
+        inferred = list(runtime_by_install_kind.get(strategy.kind, ()))
+        if strategy.kind == "uv_tool" and isinstance(strategy.package, str) and strategy.package.startswith("git+"):
+            inferred.append("git")
+        return tuple(dict.fromkeys([*declared, *inferred]))
 
     def _runtime_asset_env(
         self,
@@ -511,7 +514,15 @@ class CodingAgent(abc.ABC):
         return Path.home() / ".npm-global"
 
     def _runtime_path_prefixes(self) -> tuple[str, ...]:
-        cache_key = os.environ.get("CAKIT_NPM_PREFIX", "")
+        cache_key = "\0".join(
+            [
+                os.environ.get("CAKIT_NPM_PREFIX", ""),
+                os.environ.get("CAKIT_INSTALL_HOME", ""),
+                os.environ.get("CAKIT_INSTALL_UV_DIR", ""),
+                os.environ.get("UV_TOOL_BIN_DIR", ""),
+                os.environ.get("XDG_BIN_HOME", ""),
+            ]
+        )
         if self._path_prefix_cache_key == cache_key:
             return self._path_prefix_cache
         self._path_prefix_cache = runtime_command.build_runtime_path_prefixes(cache_key)
@@ -541,7 +552,11 @@ class CodingAgent(abc.ABC):
         else:
             prefix = self._npm_prefix()
             prefix.mkdir(parents=True, exist_ok=True)
-            result = self._run(["npm", "install", "-g", "--prefix", str(prefix), package_spec])
+            install_cmd = ["npm", "install", "-g", "--prefix", str(prefix), package_spec]
+            result = self._run(install_cmd)
+            if result.exit_code != 0 and "ENOTEMPTY" in result.output:
+                self._cleanup_npm_user_install_dirs(prefix=prefix, package=package)
+                result = self._run(install_cmd)
         config_path = self.configure()
         ok = result.exit_code == 0
         details = None if ok else result.output
@@ -557,6 +572,29 @@ class CodingAgent(abc.ABC):
             details=details,
             config_path=config_path,
         )
+
+    def _cleanup_npm_user_install_dirs(self, *, prefix: Path, package: str) -> None:
+        node_modules_dir = prefix / "lib" / "node_modules"
+        if not node_modules_dir.exists():
+            return
+        if package.startswith("@") and "/" in package:
+            scope_name, package_name = package.split("/", 1)
+            package_parent = node_modules_dir / scope_name
+        else:
+            package_name = package
+            package_parent = node_modules_dir
+
+        candidates = [package_parent / package_name, *package_parent.glob(f".{package_name}-*")]
+        for candidate in candidates:
+            if not candidate.exists() and not candidate.is_symlink():
+                continue
+            if candidate.is_dir() and not candidate.is_symlink():
+                shutil.rmtree(candidate, ignore_errors=True)
+                continue
+            try:
+                candidate.unlink()
+            except OSError:
+                shutil.rmtree(candidate, ignore_errors=True)
 
     def _install_with_custom_strategy(
         self,

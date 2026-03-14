@@ -4,13 +4,13 @@ This document explains how cakit installs and configures Kimi Code CLI.
 
 ## Install
 
-`cakit install kimi` uses the official installer script by default:
+`cakit install kimi` installs the latest `kimi-cli` release via `uv tool`:
 
 ```bash
-curl -LsSf https://code.kimi.com/install.sh | bash
+uv tool install --python 3.13 kimi-cli
 ```
 
-The upstream installer handles runtime bootstrap (including `uv` when needed).
+cakit bootstraps `uv` automatically when needed. If `uv` still cannot be used, the shared installer falls back to `pip install`.
 
 To install a specific Kimi CLI version:
 
@@ -18,7 +18,7 @@ To install a specific Kimi CLI version:
 cakit install kimi --version <kimi_cli_version>
 ```
 
-When `--version` is provided, cakit installs `kimi-cli==<version>` (prefers `uv tool install --python 3.13`, falls back to `pip install` if `uv` is unavailable).
+When `--version` is provided, cakit installs `kimi-cli==<version>` with the same `uv tool install --python 3.13` path (and the same `pip` fallback only when `uv` cannot be used).
 
 ## API Configuration (`cakit configure kimi`)
 

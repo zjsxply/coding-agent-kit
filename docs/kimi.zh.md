@@ -4,13 +4,13 @@
 
 ## 安装
 
-`cakit install kimi` 默认使用 Kimi 官方安装脚本：
+`cakit install kimi` 默认通过 `uv tool` 安装最新的 `kimi-cli`：
 
 ```bash
-curl -LsSf https://code.kimi.com/install.sh | bash
+uv tool install --python 3.13 kimi-cli
 ```
 
-上游安装脚本会处理运行时依赖初始化（包括在缺少 `uv` 时自动安装）。
+cakit 会在需要时自动引导安装 `uv`；如果最终仍无法使用 `uv`，共享安装逻辑才会回退到 `pip install`。
 
 如需安装指定 Kimi CLI 版本：
 
@@ -18,7 +18,7 @@ curl -LsSf https://code.kimi.com/install.sh | bash
 cakit install kimi --version <kimi_cli_version>
 ```
 
-传入 `--version` 后，cakit 会安装 `kimi-cli==<version>`（优先使用 `uv tool install --python 3.13`，若本机无 `uv` 则回退到 `pip install`）。
+传入 `--version` 后，cakit 会通过同一条 `uv tool install --python 3.13` 路径安装 `kimi-cli==<version>`（只有在 `uv` 最终不可用时才会回退到 `pip install`）。
 
 ## API 配置（`cakit configure kimi`）
 

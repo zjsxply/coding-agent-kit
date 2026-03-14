@@ -20,6 +20,7 @@ class CursorAgent(CodingAgent):
     name = "cursor"
     display_name = "Cursor Agent"
     binary = "cursor-agent"
+    required_runtimes = ("bash", "curl", "tar", "gzip")
     install_strategy = InstallStrategy(kind="custom")
     run_template = RunCommandTemplate(
         base_args=("--print", "--output-format", "stream-json", "--force"),

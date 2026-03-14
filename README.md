@@ -295,6 +295,9 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 - [ ] `cakit` should no longer need the `configure` command (configuration should be fully managed automatically by `cakit run`)
 - [ ] Support MCP
 - [ ] Support balanced mode
+- [ ] Expand Ubuntu and Debian coverage to releases from the last ten years and ensure tests pass
+- [ ] Support ARM
+- [ ] Record versions once per month and verify CI test functionality
 - [x] Write an install script `.sh`, then add test points that start Docker containers (including Ubuntu, Debian, etc.) to ensure the install script can install cakit successfully in arbitrary Docker image environments
 - [x] Support additional setup scripts
 - [x] Support skills

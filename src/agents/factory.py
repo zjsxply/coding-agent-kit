@@ -30,7 +30,7 @@ class FactoryAgent(CodingAgent):
     binary = "droid"
     supports_images = True
     supports_videos = False
-    required_runtimes = ("node",)
+    required_runtimes = ("node", "bash", "curl")
     install_strategy = InstallStrategy(kind="custom")
     run_template = RunCommandTemplate(
         base_args=("exec", "--output-format", "json"),

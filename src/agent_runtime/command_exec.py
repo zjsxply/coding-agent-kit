@@ -9,15 +9,32 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 
+def _default_install_home(env_source: Dict[str, str]) -> Path:
+    install_home = env_source.get("CAKIT_INSTALL_HOME")
+    if install_home:
+        return Path(install_home).expanduser()
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return Path("/opt/cakit")
+    return Path.home() / ".local" / "share" / "cakit"
+
+
 def build_runtime_path_prefixes(cache_key: str) -> tuple[str, ...]:
-    npm_prefix = Path(cache_key).expanduser() if cache_key else Path.home() / ".npm-global"
+    npm_prefix_env = os.environ.get("CAKIT_NPM_PREFIX")
+    npm_prefix = Path(npm_prefix_env).expanduser() if npm_prefix_env else Path.home() / ".npm-global"
     uv_tool_bin = os.environ.get("UV_TOOL_BIN_DIR")
     xdg_bin_home = os.environ.get("XDG_BIN_HOME")
+    install_uv_dir = os.environ.get("CAKIT_INSTALL_UV_DIR")
+    cakit_uv_root = (
+        Path(install_uv_dir).expanduser()
+        if install_uv_dir
+        else _default_install_home(os.environ) / "uv"
+    )
     return tuple(
         dict.fromkeys(
             (
                 str(Path(uv_tool_bin).expanduser()) if uv_tool_bin else str(Path("/tmp") / "cakit" / "bin"),
                 str(Path(xdg_bin_home).expanduser()) if xdg_bin_home else str(Path.home() / ".local" / "bin"),
+                str(cakit_uv_root),
                 str(npm_prefix / "bin"),
                 str(Path.home() / ".npm" / "bin"),
                 str(Path.home() / ".local" / "bin"),

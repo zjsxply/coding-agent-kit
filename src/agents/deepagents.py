@@ -16,6 +16,7 @@ from .base import (
 from ..stats_extract import last_value, merge_model_usage, parse_usage_by_model, req_str, select_values, sum_int
 from ..agent_runtime import command_exec as runtime_command
 from ..agent_runtime import env as runtime_env
+from ..agent_runtime import install_version as runtime_install
 from ..agent_runtime import parsing as runtime_parsing
 
 
@@ -196,8 +197,8 @@ class DeepAgentsAgent(CodingAgent):
         if not binary:
             return None
         binary_path = Path(binary).expanduser().resolve()
-        python_executable = binary_path.parent / "python"
-        if not python_executable.exists():
+        python_executable = runtime_install.resolve_python_executable(search_dirs=(binary_path.parent,))
+        if python_executable is None:
             return None
         parser_code = r"""
 import json
@@ -281,9 +282,9 @@ print(
         sort_keys=True,
     )
 )
-"""
+        """
         return runtime_parsing.run_json_dict_command(
-            args=[str(python_executable), "-c", parser_code, thread_id],
+            args=[python_executable, "-c", parser_code, thread_id],
             run=self._run,
             base_env=base_env,
         )

@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .base import (
     CodingAgent,
-    CommandResult,
     InstallStrategy,
     RunCommandTemplate,
     VersionCommandTemplate,
@@ -23,7 +22,6 @@ from ..stats_extract import (
     select_values,
     sum_usage_entries,
 )
-from ..agent_runtime import install_version as runtime_install
 from ..agent_runtime import parsing as runtime_parsing
 from ..agent_runtime import env as runtime_env
 from ..agent_runtime import trajectory as runtime_trajectory
@@ -37,7 +35,12 @@ class KimiAgent(CodingAgent):
     supports_images = True
     supports_videos = True
     required_runtimes = ("uv",)
-    install_strategy = InstallStrategy(kind="custom")
+    install_strategy = InstallStrategy(
+        kind="uv_tool",
+        package="kimi-cli",
+        version_style="pep440",
+        python_version="3.13",
+    )
     run_template = RunCommandTemplate(
         base_args=("--print", "--output-format", "stream-json", "--yolo"),
         prompt_mode="flag",
@@ -52,39 +55,6 @@ class KimiAgent(CodingAgent):
         json_path="$.kimi_cli_version",
     )
     _ALLOWED_PROVIDER_TYPES = {"kimi", "openai_legacy", "openai_responses"}
-
-    def _install_with_custom_strategy(
-        self,
-        *,
-        strategy: InstallStrategy,
-        scope: str,
-        version: Optional[str],
-    ) -> CommandResult:
-        if version and version.strip():
-            package_spec = f"kimi-cli=={version.strip()}"
-            result = runtime_install.uv_tool_install(
-                package_spec=package_spec,
-                python_version="3.13",
-                force=False,
-                with_packages=None,
-                fallback_no_cache_dir=False,
-                run=self._run,
-                ensure_uv_fn=lambda: runtime_install.ensure_uv(self._run),
-                pip_install_fn=lambda packages, no_cache: runtime_install.pip_install(
-                    packages=packages,
-                    no_cache_dir=no_cache,
-                    run=self._run,
-                ),
-            )
-            if isinstance(result, CommandResult):
-                return result
-            return CommandResult(
-                exit_code=getattr(result, "exit_code", 1),
-                stdout=getattr(result, "stdout", ""),
-                stderr=getattr(result, "stderr", ""),
-                duration_seconds=getattr(result, "duration_seconds", 0.0),
-            )
-        return self._run(["bash", "-lc", "curl -LsSf https://code.kimi.com/install.sh | bash"])
 
     def configure(self) -> Optional[str]:
         settings = self._resolve_runtime_settings(model_override=None)

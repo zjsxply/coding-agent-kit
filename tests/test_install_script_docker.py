@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import os
-import time
+import re
+import shutil
+import subprocess
 from functools import lru_cache
 from pathlib import Path
 
 import docker
 import pytest
-from docker.errors import APIError, DockerException
+from docker.errors import DockerException
 
 
 DEFAULT_DOCKER_IMAGES = (
@@ -24,6 +26,9 @@ DEFAULT_DOCKER_IMAGES = (
     "archlinux:latest",
 )
 DOCKER_TEST_TIMEOUT_SECONDS = 15 * 60
+DOCKER_INSTALL_ALL_TIMEOUT_SECONDS = 30 * 60
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DOCKER_TEST_DOCKERFILE = REPO_ROOT / "tests" / "install_script_docker.Dockerfile"
 
 
 def _env_truthy(name: str) -> bool:
@@ -45,6 +50,8 @@ def _docker_images() -> tuple[str, ...]:
 def _docker_client() -> docker.DockerClient:
     if not _env_truthy("CAKIT_RUN_DOCKER_INSTALL_TESTS"):
         pytest.skip("set CAKIT_RUN_DOCKER_INSTALL_TESTS=1 to run Docker install tests")
+    if shutil.which("docker") is None:
+        pytest.skip("docker CLI is unavailable")
 
     try:
         client = docker.from_env(timeout=DOCKER_TEST_TIMEOUT_SECONDS)
@@ -54,56 +61,57 @@ def _docker_client() -> docker.DockerClient:
     return client
 
 
-def _container_logs(container: docker.models.containers.Container) -> str:
-    return container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+def _docker_image_id(image: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", image)
 
 
-def _wait_for_container(container: docker.models.containers.Container) -> int:
-    deadline = time.monotonic() + DOCKER_TEST_TIMEOUT_SECONDS
-    while True:
-        container.reload()
-        if container.status == "exited":
-            result = container.wait()
-            return int(result.get("StatusCode", 1))
-        if time.monotonic() >= deadline:
-            container.kill()
-            pytest.fail(f"docker install validation timed out:\n{_container_logs(container)}")
-        time.sleep(1)
+def _run_docker_build_test(image: str, *, mode: str) -> None:
+    _docker_client()
+    env = os.environ.copy()
+    env["DOCKER_BUILDKIT"] = "1"
+    env["BUILDKIT_PROGRESS"] = "plain"
+    cache_key = _docker_image_id(image).lower()
+    timeout_seconds = DOCKER_INSTALL_ALL_TIMEOUT_SECONDS if mode == "install-all" else DOCKER_TEST_TIMEOUT_SECONDS
+    command = [
+        "docker",
+        "build",
+        "--pull",
+        "--platform",
+        "linux/amd64",
+        "--progress=plain",
+        "-f",
+        str(DOCKER_TEST_DOCKERFILE),
+        "--build-arg",
+        f"BASE_IMAGE={image}",
+        "--build-arg",
+        f"CACHE_KEY={cache_key}",
+        "--build-arg",
+        f"TEST_MODE={mode}",
+        str(REPO_ROOT),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = f"{exc.stdout or ''}{exc.stderr or ''}"
+        pytest.fail(f"docker {mode} validation timed out for {image}:\n{output}")
+    if result.returncode != 0:
+        output = f"{result.stdout}{result.stderr}"
+        pytest.fail(f"docker {mode} validation failed for {image}:\n{output}")
 
 
-@pytest.mark.parametrize("image", _docker_images())
+@pytest.mark.parametrize("image", _docker_images(), ids=_docker_image_id)
 def test_install_script_installs_cakit_in_docker(image: str) -> None:
-    client = _docker_client()
-    repo_root = Path(__file__).resolve().parent
+    _run_docker_build_test(image, mode="basic")
 
-    try:
-        client.images.pull(image, platform="linux/amd64")
-    except APIError as exc:
-        explanation = getattr(exc, "explanation", str(exc))
-        pytest.fail(f"docker pull failed for {image}:\n{explanation}")
 
-    shell_script = """
-set -eu
-export DEBIAN_FRONTEND=noninteractive
-sh ./install.sh
-command -v cakit
-cakit --help >/tmp/cakit-help.txt
-cakit install --help >/tmp/cakit-install-help.txt
-grep -q "Coding Agent Kit CLI" /tmp/cakit-help.txt
-grep -q "Install a coding agent" /tmp/cakit-install-help.txt
-"""
-    container = client.containers.create(
-        image=image,
-        command=["sh", "-lc", shell_script],
-        working_dir="/work/cakit",
-        volumes={str(repo_root): {"bind": "/work/cakit", "mode": "rw"}},
-        platform="linux/amd64",
-        detach=True,
-    )
-    try:
-        container.start()
-        status_code = _wait_for_container(container)
-        if status_code != 0:
-            pytest.fail(f"docker install validation failed for {image}:\n{_container_logs(container)}")
-    finally:
-        container.remove(force=True)
+@pytest.mark.parametrize("image", _docker_images(), ids=_docker_image_id)
+def test_install_script_installs_all_agents_in_docker(image: str) -> None:
+    _run_docker_build_test(image, mode="install-all")

@@ -13,6 +13,52 @@ from typing import Any, Callable, Dict, Iterable, Optional
 from ..io_helpers import file_lock
 
 
+def _default_cakit_install_home() -> Path:
+    install_home = os.environ.get("CAKIT_INSTALL_HOME")
+    if install_home:
+        return Path(install_home).expanduser()
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return Path("/opt/cakit")
+    return Path.home() / ".local" / "share" / "cakit"
+
+
+def resolve_uv_binary() -> Optional[str]:
+    path = shutil.which("uv")
+    if path:
+        return path
+
+    install_uv_dir = os.environ.get("CAKIT_INSTALL_UV_DIR")
+    candidates = [
+        (Path(install_uv_dir).expanduser() / "uv") if install_uv_dir else None,
+        _default_cakit_install_home() / "uv" / "uv",
+        Path.home() / ".local" / "bin" / "uv",
+        Path("/tmp") / "cakit" / "bin" / "uv",
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.exists():
+            return str(candidate)
+    return None
+
+
+def resolve_python_executable(*, search_dirs: Optional[Iterable[Path]] = None) -> Optional[str]:
+    for directory in search_dirs or ():
+        expanded = Path(directory).expanduser()
+        for binary_name in ("python", "python3"):
+            candidate = expanded / binary_name
+            if candidate.exists():
+                return str(candidate)
+
+    for binary_name in ("python", "python3"):
+        path = shutil.which(binary_name)
+        if path:
+            return path
+
+    current_python = Path(sys.executable).expanduser()
+    if current_python.exists():
+        return str(current_python)
+    return None
+
+
 def build_install_package_spec(package: str, version: Optional[str], *, style: str) -> str:
     if not version:
         return package
@@ -177,16 +223,16 @@ def parse_version_json_path(
 
 def ensure_uv(run: Callable[[Iterable[str]], Any]) -> bool:
     with file_lock("deps-uv"):
-        if shutil.which("uv") is not None:
+        if resolve_uv_binary() is not None:
             return True
         if not sys.platform.startswith("linux"):
             return False
         if shutil.which("curl") is None:
             return False
-        install = run(["bash", "-lc", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
+        install = run(["sh", "-lc", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
         if getattr(install, "exit_code", 1) != 0:
             return False
-        return shutil.which("uv") is not None or (Path.home() / ".local" / "bin" / "uv").exists()
+        return resolve_uv_binary() is not None
 
 
 def pip_install(
@@ -195,7 +241,8 @@ def pip_install(
     no_cache_dir: bool,
     run: Callable[..., Any],
 ):
-    cmd = ["python", "-m", "pip", "install"]
+    python_executable = resolve_python_executable() or "python"
+    cmd = [python_executable, "-m", "pip", "install"]
     if no_cache_dir:
         cmd.append("--no-cache-dir")
     cmd.extend(packages)
@@ -255,7 +302,8 @@ def uv_tool_install(
 ):
     extras = [pkg for pkg in (with_packages or []) if pkg]
     if ensure_uv_fn():
-        cmd = ["uv", "tool", "install"]
+        uv_binary = resolve_uv_binary() or "uv"
+        cmd = [uv_binary, "tool", "install"]
         if force:
             cmd.append("--force")
         if python_version:
@@ -276,7 +324,8 @@ def uv_pip_install(
     pip_install_fn: Callable[[list[str], bool], Any],
 ):
     if ensure_uv_fn():
-        cmd = ["uv", "pip", "install"]
+        uv_binary = resolve_uv_binary() or "uv"
+        cmd = [uv_binary, "pip", "install"]
         if no_cache_dir:
             cmd.append("--no-cache-dir")
         cmd.extend(packages)

@@ -32,6 +32,7 @@ class TraeCnAgent(CodingAgent):
     name = "trae-cn"
     display_name = "TRAE CLI (trae.cn)"
     binary = "traecli"
+    required_runtimes = ("curl", "tar", "gzip")
     install_strategy = InstallStrategy(kind="custom")
     run_template = RunCommandTemplate(
         base_args=("--print", "--json", "--yolo"),

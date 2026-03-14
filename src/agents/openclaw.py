@@ -21,6 +21,7 @@ class OpenClawAgent(CodingAgent):
     binary = "openclaw"
     supports_images = False
     supports_videos = False
+    required_runtimes = ("git",)
     install_strategy = InstallStrategy(kind="npm", package="openclaw")
     run_template = RunCommandTemplate(
         base_args=("agent", "--local", "--agent", "main", "--json"),
