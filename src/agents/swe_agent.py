@@ -276,7 +276,11 @@ class SweAgent(CodingAgent):
         marker_version = self._read_runtime_assets_version_marker()
         if marker_version is not None:
             return marker_version
-        result = self._run(["sweagent", "-h"], env=self._runtime_asset_env(create_if_missing=False))
+        known_env = self._runtime_asset_env_for_versions(
+            self._candidate_runtime_asset_versions(),
+            create_if_missing=False,
+        )
+        result = self._run(["sweagent", "-h"], env=known_env or None)
         if result.exit_code != 0:
             return None
         text = runtime_parsing.first_nonempty_line(result.output)
@@ -287,15 +291,24 @@ class SweAgent(CodingAgent):
             return match.group(0)
         return runtime_parsing.normalize_text(text)
 
-    def _runtime_asset_env(self, *, create_if_missing: bool) -> Dict[str, str]:
+    def _candidate_runtime_asset_versions(self) -> list[str]:
         versions: list[str] = []
         install_version = self._install_runtime_asset_version
         if install_version and install_version not in versions:
             versions.append(install_version)
+        marker_version = self._read_runtime_assets_version_marker()
+        if marker_version and marker_version not in versions:
+            versions.append(marker_version)
+        return versions
+
+    def _runtime_asset_env(self, *, create_if_missing: bool) -> Dict[str, str]:
+        versions = self._candidate_runtime_asset_versions()
         installed = self._installed_version()
         if installed and installed not in versions:
             versions.append(installed)
+        return self._runtime_asset_env_for_versions(versions, create_if_missing=create_if_missing)
 
+    def _runtime_asset_env_for_versions(self, versions: list[str], *, create_if_missing: bool) -> Dict[str, str]:
         for version in versions:
             normalized = self._normalize_release_tag(version)
             paths = self._runtime_asset_paths(normalized)
@@ -313,7 +326,6 @@ class SweAgent(CodingAgent):
                     "SWE_AGENT_TOOLS_DIR": str(paths["tools"]),
                     "SWE_AGENT_TRAJECTORY_DIR": str(paths["trajectories"]),
                 }
-
         if create_if_missing:
             resolved_version = self._resolve_version(None)
             normalized = self._normalize_release_tag(resolved_version)
