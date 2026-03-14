@@ -345,17 +345,17 @@ class CodexAgent(CodingAgent):
             input_tokens = runtime_parsing.as_int(last_value(raw_usage, "$.input_tokens"))
             cached_input_tokens = runtime_parsing.as_int(last_value(raw_usage, "$.cached_input_tokens"))
             output_tokens = runtime_parsing.as_int(last_value(raw_usage, "$.output_tokens"))
+            total_tokens = runtime_parsing.as_int(last_value(raw_usage, "$.total_tokens"))
             if input_tokens is None or cached_input_tokens is None or output_tokens is None:
                 continue
             snapshot = (input_tokens, cached_input_tokens, output_tokens)
             if snapshot != previous_snapshot:
                 llm_calls += 1
                 previous_snapshot = snapshot
-            prompt_tokens = input_tokens + cached_input_tokens
             final_usage = {
-                "prompt_tokens": prompt_tokens,
+                "prompt_tokens": input_tokens,
                 "completion_tokens": output_tokens,
-                "total_tokens": prompt_tokens + output_tokens,
+                "total_tokens": total_tokens if total_tokens is not None else input_tokens + output_tokens,
             }
         if final_usage is None:
             return None, None
@@ -486,13 +486,13 @@ class CodexAgent(CodingAgent):
         input_tokens = sum_int(payloads, '$[?(@.type=="turn.completed")].usage.input_tokens')
         cached_input_tokens = sum_int(payloads, '$[?(@.type=="turn.completed")].usage.cached_input_tokens')
         output_tokens = sum_int(payloads, '$[?(@.type=="turn.completed")].usage.output_tokens')
+        total_tokens = sum_int(payloads, '$[?(@.type=="turn.completed")].usage.total_tokens')
         if input_tokens is None or cached_input_tokens is None or output_tokens is None:
             return None, llm_calls
-        prompt_tokens = input_tokens + cached_input_tokens
         usage = {
-            "prompt_tokens": prompt_tokens,
+            "prompt_tokens": input_tokens,
             "completion_tokens": output_tokens,
-            "total_tokens": prompt_tokens + output_tokens,
+            "total_tokens": total_tokens if total_tokens is not None else input_tokens + output_tokens,
         }
         return usage, llm_calls
 

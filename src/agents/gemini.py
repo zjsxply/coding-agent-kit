@@ -100,6 +100,7 @@ class GeminiAgent(CodingAgent):
                 extract_gemini_style_stats(
                     artifacts,
                     source_field="json_payload",
+                    include_thoughts_in_completion=True,
                 ),
             ]
         )

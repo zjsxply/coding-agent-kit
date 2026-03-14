@@ -49,8 +49,9 @@
   - 模型名：`providerID/modelID`。
   - token 来源为 `info.tokens`：
     - prompt tokens: `input + cache.read + cache.write`
-    - completion tokens: `output + reasoning`
-    - total tokens: 优先取 `total`，缺失时为 prompt + completion
+    - completion tokens: `output + reasoning`（若存在 `reasoning` 则计入）
+    - total tokens：优先取 `info.tokens.total`，缺失时才回退为 `prompt_tokens + completion_tokens`
+    - 历史 OpenCode step 日志里出现过上游 `info.tokens.total` 与 cakit prompt/completion 拆分不相等的情况；cakit 会保留这个上游 total
 - `llm_calls`：导出会话中 assistant 消息数量。
 - `tool_calls`：导出会话中 assistant 消息里 `type == "tool"` 的 part 数量。
 - `total_cost`：assistant `info.cost` 求和。

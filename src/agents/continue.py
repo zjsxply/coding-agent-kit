@@ -219,12 +219,10 @@ class ContinueAgent(CodingAgent):
             if model_name is None or prompt_tokens is None or completion_tokens is None:
                 continue
             total_tokens = req_int(usage, "$.total_tokens")
-            if total_tokens is None:
-                total_tokens = prompt_tokens + completion_tokens
             usage_entry = {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
+                "total_tokens": total_tokens if total_tokens is not None else prompt_tokens + completion_tokens,
             }
             merge_model_usage(models_usage, model_name, usage_entry)
 

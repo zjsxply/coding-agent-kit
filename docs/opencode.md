@@ -49,8 +49,9 @@ This document explains how cakit runs OpenCode and extracts run metadata.
   - Model key: `providerID/modelID`.
   - Token fields from `info.tokens`:
     - prompt tokens: `input + cache.read + cache.write`
-    - completion tokens: `output + reasoning`
-    - total tokens: `total` when present, otherwise prompt + completion
+    - completion tokens: `output + reasoning` when `reasoning` is present
+    - total tokens: `info.tokens.total` when present; otherwise cakit falls back to `prompt_tokens + completion_tokens`
+    - historical OpenCode step logs include upstream `info.tokens.total` values that do not equal the cakit prompt/completion split; cakit preserves the upstream total in the result
 - `llm_calls`: number of exported assistant messages.
 - `tool_calls`: number of exported assistant parts with `type == "tool"`.
 - `total_cost`: sum of exported assistant `info.cost`.

@@ -56,6 +56,7 @@
   - 统计字段提取不到时不要写猜测值；必须保留 `None`（JSON 中为 `null`），不要用 `0` 占位。
   - 统计字段提取必须彼此独立：某个字段提取不到时，只将该字段置为 `None`（`models_usage` 置为 `{}`）；其余已成功提取字段必须保留。
   - Token usage 定义为 agent 运行过程中所有 LLM call 的 prompt tokens 与 completion tokens 的总和（包含 subagents 时一并计入）。
+  - 对 cakit 的 `run` 结果 JSON（`RunResult.models_usage`）而言，若经源码与原始产物确认上游 raw/session 提供了 total token 字段，cakit 应直接复用该上游 total；只有在上游 total 字段缺失时，才回退为 `prompt_tokens + completion_tokens`。若出现 `prompt_tokens + completion_tokens != total_tokens`，应先视为待排查问题；但若精确的上游原始产物本身就不一致，则应保留上游 total，并在文档中明确这是 cakit 结果口径。
   - `models_usage` 中的模型名必须来自本次运行产物（stdout payload/session 日志），不能从配置、环境变量或 `--model` 输入回填。
   - 提取逻辑必须严格按格式读取：仅解析明确、文档化字段；结构异常时应立即返回 `None`，不要叠加多层 fallback 解析器。
   - 字段名必须精确且稳定。不要对同一信号尝试多个字段名或回退链；必需字段缺失时直接返回 `None`。

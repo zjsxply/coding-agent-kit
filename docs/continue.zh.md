@@ -48,7 +48,6 @@ Continue 的模型/鉴权解析优先级为：
    - `<CONTINUE_GLOBAL_DIR>/sessions/<session_id>.json`
 3. 解析 `history[]` 中 assistant 消息（JSONPath 过滤 `message.role == "assistant"`）：
    - `models_usage`：聚合 `usage.model` + `usage.prompt_tokens` / `usage.completion_tokens` / `usage.total_tokens`
-     - 若缺少 `usage.total_tokens`，则使用 `prompt_tokens + completion_tokens`
    - `llm_calls`：带有效 usage 的 assistant 消息数量
    - `tool_calls`：assistant 消息里 `message.toolCalls[*]` 的总数
    - `total_cost`：会话顶层 `usage.totalCost`（若可用）

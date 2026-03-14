@@ -22,7 +22,10 @@
 - `agent_version`：来自 `gemini --version`。
 - `runtime_seconds`：`gemini` 进程墙钟耗时。
 - `response`：顶层 JSON 字段 `response`。
-- `models_usage`：`stats.models[model].tokens.prompt` / `candidates` / `total`。
+- `models_usage`：
+  - `prompt_tokens` <- `stats.models[model].tokens.prompt`
+  - `completion_tokens` <- `stats.models[model].tokens.candidates + thoughts`（若存在 `thoughts` 则计入）
+  - `total_tokens` <- 优先取 `stats.models[model].tokens.total`；缺失时才回退为 `prompt_tokens + completion_tokens`
 - `llm_calls`：`stats.models[model].api.totalRequests` 求和。
 - `tool_calls`：`stats.tools.totalCalls`。
 - `output_path`/`raw_output`：捕获的 Gemini CLI stdout/stderr。

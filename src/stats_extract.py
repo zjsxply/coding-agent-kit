@@ -466,7 +466,8 @@ _USAGE_FIELD_SPECS_BY_MODEL: Dict[str, UsageFieldSpec] = {
     ),
     "opencode": UsageFieldSpec(
         prompt_required_fields=("input", ("cache", "read"), ("cache", "write")),
-        completion_required_fields=("output", "reasoning"),
+        completion_required_fields=("output",),
+        completion_optional_fields=("reasoning",),
         total_field="total",
     ),
 }
@@ -620,6 +621,7 @@ def extract_gemini_style_stats(
     artifacts: StatsArtifacts,
     *,
     source_field: str = "result_payload",
+    include_thoughts_in_completion: bool = False,
 ) -> Optional[StatsSnapshot]:
     payload = _artifact_dict(artifacts, source_field)
     if payload is None:
@@ -645,7 +647,13 @@ def extract_gemini_style_stats(
         model_name = _normalize_nonempty_text(raw_model_name)
         prompt_tokens = sum_int(model_stats, "$.tokens.prompt")
         completion_tokens = sum_int(model_stats, "$.tokens.candidates")
+        if include_thoughts_in_completion and completion_tokens is not None:
+            thought_tokens = sum_int(model_stats, "$.tokens.thoughts")
+            if thought_tokens is not None:
+                completion_tokens += thought_tokens
         total_tokens = sum_int(model_stats, "$.tokens.total")
+        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+            total_tokens = prompt_tokens + completion_tokens
         usage = (
             _compose_usage_entry(
                 prompt_tokens=prompt_tokens,

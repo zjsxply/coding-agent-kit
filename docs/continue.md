@@ -48,7 +48,6 @@ If required values are missing, `cakit configure continue` returns `config_path:
    - `<CONTINUE_GLOBAL_DIR>/sessions/<session_id>.json`
 3. Parse assistant messages from `history[]` (JSONPath filter on `message.role == "assistant"`):
    - `models_usage`: aggregate `usage.model` + `usage.prompt_tokens` / `usage.completion_tokens` / `usage.total_tokens`
-     - if `usage.total_tokens` is missing, use `prompt_tokens + completion_tokens`
    - `llm_calls`: number of assistant messages with valid usage
    - `tool_calls`: count of `message.toolCalls[*]` across assistant messages
    - `total_cost`: `usage.totalCost` from the top-level session payload (when available)

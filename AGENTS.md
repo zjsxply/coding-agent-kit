@@ -56,6 +56,7 @@
   - Do not write guessed values for missing stats. If extraction is not possible, keep `None` (`null`) instead of writing placeholder values like `0`.
   - Stats fields must be extracted independently: if one field cannot be extracted, set only that field to `None` (or `{}` for `models_usage`) and keep other successfully extracted fields.
   - Token usage is defined as the sum of prompt tokens and completion tokens across all LLM calls made during the agent run (including subagents when applicable).
+  - For cakit `run` result JSON (`RunResult.models_usage`), if source-verified upstream raw/session artifacts provide a total token field, cakit should reuse that upstream total. Only fall back to `prompt_tokens + completion_tokens` when the upstream total field is absent. Treat `prompt_tokens + completion_tokens != total_tokens` as a bug candidate first, but if the mismatch already exists in the exact upstream artifacts, keep the upstream total and document that this is the cakit result behavior.
   - Model name in `models_usage` must come from run artifacts (stdout payload/session logs). Do not fill it from config/env/`--model` input.
   - Parsing must be strict and format-aware: read only exact, documented fields; if structure is unexpected, return `None` immediately instead of stacking fallback parsers.
   - Field names must be exact and stable. Do not try multiple alternative field names or fallback chains for the same signal; if a required field is missing, return `None`.

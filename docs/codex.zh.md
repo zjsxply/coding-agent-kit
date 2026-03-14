@@ -31,7 +31,9 @@
   - 主来源是主线程及其子线程的精确 rollout family。
   - 对每个线程，读取最后一个非空 `token_count` 事件里的 `event_msg.payload.info.total_token_usage`。
   - 每个快照必须字段：`input_tokens`、`cached_input_tokens`、`output_tokens`。
-  - `prompt_tokens = input_tokens + cached_input_tokens`，`completion_tokens = output_tokens`。
+  - `prompt_tokens = input_tokens`，`completion_tokens = output_tokens`。
+  - `cached_input_tokens` 只用于校验与 LLM call 去重；Codex 的 `input_tokens` 已经包含 cached input。
+  - 若存在 `total_token_usage.total_tokens`，则直接复用；缺失时才回退为 `prompt_tokens + completion_tokens`。
   - 模型名来自 rollout 的 `turn_context.payload.model`。
   - 若 rollout family 无法解析，再回退到 CLI stdout 的 `turn.completed.usage` 聚合。
 - `tool_calls`：

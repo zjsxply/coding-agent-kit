@@ -22,7 +22,10 @@ This document explains how cakit runs Gemini CLI and extracts run metadata.
 - `agent_version`: from `gemini --version`.
 - `runtime_seconds`: wall time of the `gemini` process.
 - `response`: top-level JSON field `response`.
-- `models_usage`: `stats.models[model].tokens.prompt` / `candidates` / `total`.
+- `models_usage`:
+  - `prompt_tokens` <- `stats.models[model].tokens.prompt`
+  - `completion_tokens` <- `stats.models[model].tokens.candidates + thoughts` when `thoughts` is present
+  - `total_tokens` <- `stats.models[model].tokens.total` when present; otherwise cakit falls back to `prompt_tokens + completion_tokens`
 - `llm_calls`: sum of `stats.models[model].api.totalRequests`.
 - `tool_calls`: `stats.tools.totalCalls`.
 - `output_path`/`raw_output`: captured Gemini CLI stdout/stderr.

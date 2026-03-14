@@ -186,12 +186,11 @@ class GooseAgent(CodingAgent):
                 {
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
+                    "total_tokens": total_tokens if total_tokens is not None else prompt_tokens + completion_tokens,
                 }
                 if model_name is not None
                 and prompt_tokens is not None
                 and completion_tokens is not None
-                and total_tokens is not None
                 else None
             )
             if model_name is not None and usage is not None:
@@ -254,12 +253,12 @@ class GooseAgent(CodingAgent):
         prompt_tokens = req_int(final_usage, "$.input_tokens")
         completion_tokens = req_int(final_usage, "$.output_tokens")
         total_tokens = req_int(final_usage, "$.total_tokens")
-        if prompt_tokens is None or completion_tokens is None or total_tokens is None:
+        if prompt_tokens is None or completion_tokens is None:
             return None
         return {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
+            "total_tokens": total_tokens if total_tokens is not None else prompt_tokens + completion_tokens,
         }
 
     def _build_run_trajectory_content(
@@ -416,12 +415,11 @@ class GooseAgent(CodingAgent):
             model_name is not None
             and prompt_tokens is not None
             and completion_tokens is not None
-            and total_tokens is not None
         ):
             models_usage[model_name] = {
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
+                "total_tokens": total_tokens if total_tokens is not None else prompt_tokens + completion_tokens,
             }
 
         tool_calls = None

@@ -30,7 +30,9 @@ This document explains how cakit collects Codex CLI metadata.
   - Primary source: exact rollout family for the main thread plus spawned subagent threads.
   - Per thread, cakit reads the last non-null `event_msg.payload.info.total_token_usage` from `token_count` events.
   - Required fields per snapshot: `input_tokens`, `cached_input_tokens`, `output_tokens`.
-  - `prompt_tokens = input_tokens + cached_input_tokens`, `completion_tokens = output_tokens`.
+  - `prompt_tokens = input_tokens`, `completion_tokens = output_tokens`.
+  - `cached_input_tokens` is retained only for validation and LLM-call deduping; Codex `input_tokens` already includes cached input.
+  - `total_tokens = total_token_usage.total_tokens` when present; otherwise cakit falls back to `prompt_tokens + completion_tokens`.
   - Model name comes from rollout `turn_context.payload.model`.
   - Fallback when rollout family cannot be resolved: aggregate `turn.completed.usage` from CLI stdout.
 - `tool_calls`:
