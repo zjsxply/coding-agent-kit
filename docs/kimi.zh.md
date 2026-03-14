@@ -48,7 +48,8 @@ cakit 仅写 provider 配置：
 `cakit run kimi --image <path>` 已支持。
 
 - cakit 使用 print mode 的 `--prompt` 输入，并在 prompt 中注入图片绝对路径，供 Kimi 读取文件。
-- cakit 会在提示中要求 Kimi 在有 `ReadMediaFile` 工具时优先使用它；若该工具不可用，则改用当前可用的其他工具继续读取媒体。
+- cakit 只会提示 Kimi 使用 `ReadMediaFile` 或模型原生多模态路径。
+- OCR、shell 检查、`python` 等非原生 fallback 不计入 Kimi 图像多模态支持，cakit 也不会用这些方式兜底。
 - 如果当前 provider/model 不会自动声明媒体能力，可设置 `KIMI_MODEL_CAPABILITIES=image_in`（或 `image_in,video_in`），让 Kimi CLI 暴露媒体读取路径。
 - 是否能真正读图仍取决于所选模型能力。若模型不支持图像输入，Kimi 可能失败或直接返回不支持读图。
 
@@ -57,7 +58,8 @@ cakit 仅写 provider 配置：
 `cakit run kimi --video <path>` 已支持。
 
 - 有视频场景：cakit 使用 print mode 的 `--prompt` 输入，并在 prompt 中注入视频绝对路径。
-- cakit 会在提示中要求 Kimi 在有 `ReadMediaFile` 工具时优先使用它；若该工具不可用，则改用当前可用的其他工具继续读取媒体。
+- cakit 只会提示 Kimi 使用 `ReadMediaFile` 或模型原生多模态路径。
+- `ffmpeg`、`python`、shell 检查、抽帧工具等非原生 fallback 不计入 Kimi 视频支持，cakit 也不会用这些方式兜底。
 - 如果当前 provider/model 不会自动声明媒体能力，可设置 `KIMI_MODEL_CAPABILITIES=image_in,video_in`，让 Kimi CLI 暴露媒体读取路径。
 - 是否能真正读视频仍取决于所选模型能力。若模型不支持视频输入，Kimi 可能失败或直接返回不支持读视频。
 
@@ -109,7 +111,8 @@ Kimi 支持 Agent Swarm 风格流程，可直接通过 prompt 触发，例如：
 若上游这些字段返回 `0`，则 `prompt_tokens` 可能为 `0`。
 
 若提取异常，优先排查 `output_path` / `raw_output` 以及 Kimi 的 session/log 文件。
-`trajectory_path` 指向格式化的人类可读轨迹文件：由 `output_path` / `raw_output` 转为结构化 YAML 格式输出（Unicode 不转义，多行文本用 `|` 块，不做截断）。
+`trajectory_path` 指向 family-aware 的 YAML 轨迹：由 CLI stdout 加上匹配的 `wire.jsonl`
+session 日志（若存在也包含 `context.jsonl`）组合而成，因此 Kimi 记录在 wire 里的嵌套 subagent 事件也会保留下来。
 
 ## 推理强度参数映射
 

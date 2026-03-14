@@ -203,7 +203,7 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 | kilocode | ✓ | ✗ | 原生 `--attach`；无已文档化 `--video` 参数 |
 | openclaw | ✗ | ✗ | `openclaw agent` 无已文档化 `--image` / `--video` 参数 |
 | deepagents | ✗ | ✗ | `deepagents` 非交互 CLI 无已文档化 `--image` / `--video` 参数 |
-| kimi | ✓ | ✓ | `ReadMediaFile` + 模型能力（`image_in`/`video_in`）；若 provider 元数据不完整，需要显式设置 `KIMI_MODEL_CAPABILITIES` |
+| kimi | ✓ | ✓ | 仅依赖原生 `ReadMediaFile` / 模型能力（`image_in`/`video_in`）；若 provider 元数据不完整，需要显式设置 `KIMI_MODEL_CAPABILITIES` |
 | trae-cn | ✗ | ✗ | `traecli` 无 `--image` / `--video` 参数 |
 | qwen | ✓ |  | `@{path}` 注入；在 Qwen OAuth / DashScope 兼容视觉配置下最稳定，通用 OpenAI 兼容 API 模式仍依赖具体 provider 能力 |
 | qoder | ✓ | ✗ | `--image` 通过原生 `--attachment` 映射；cakit 中无 `--video` 支持 |
@@ -211,11 +211,8 @@ cakit run <agent> "<prompt>" [--cwd /path/to/repo] [--image /path/to/image] [--v
 | swe-agent | ✗ | ✗ | 上游多模态仅支持 `swe_bench_multimodal` 的 issue 图片 URL；`sweagent run` 无通用 `--image` / `--video` 参数 |
 | trae-oss | ✗ | ✗ | `trae-cli run` 无 `--image` / `--video` 参数 |
 
-Kimi Agent Swarm：
-- Kimi 支持在一次 run 中启动多个 subagents。
-- 在 prompt 中使用类似 `launch multiple subagents` 的表述即可（例如：“Can you launch multiple subagents to solve this task and summarize the results?”）。
-- 对 Kimi 而言，在 session 日志可用时，`models_usage`/`llm_calls`/`tool_calls` 会聚合 subagent 事件。
-注意：经测试，Kimi CLI 在并发多会话时可能出现竞态导致失败，建议避免同时运行多个 Kimi 会话。
+Swarm-like 多 agent spawn：
+- Kimi / Claude / Codex / OpenClaw / Goose 的当前状态与开启方式见 `docs/swarm_like_spawn.zh.md`。
 
 ### Skills（技能）
 

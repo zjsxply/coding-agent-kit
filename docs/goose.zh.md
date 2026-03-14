@@ -57,20 +57,32 @@ goose run -t "<prompt>" --name <unique_name> --output-format stream-json
 
 ## 统计提取
 
-`cakit run goose` 采用严格字段解析：
+`cakit run goose` 会把本次 run 的临时 Goose HOME 视为 swarm/subagent 统计的权威来源：
 
-1. 运行时使用唯一会话名（`--name`）。
-2. 按该名称精确导出会话：
-   - `goose session export --name <unique_name> --format json`
+1. cakit 每次运行都会创建隔离的临时 `HOME`/`XDG_*` 目录。
+2. 统计严格从这份 run-local 状态提取：
+   - session 数据库：
+     - `<临时 HOME>/data/goose/sessions/sessions.db`
+   - request 日志：
+     - `<临时 HOME>/state/goose/logs/llm_request.*.jsonl`
+   - 主会话导出（仅用于 `response`）：
+     - `goose session export --session-id <id> --format json`
 3. 解析固定字段：
    - `models_usage`：
-     - `accumulated_input_tokens` / `accumulated_output_tokens` / `accumulated_total_tokens`
+     - 把 SQLite 里所有 session 行（包括 `sub_agent`）的
+       `accumulated_input_tokens` / `accumulated_output_tokens` / `accumulated_total_tokens` 求和
    - 模型名：
-     - session `model_config.model_name`
-   - `llm_calls`：session `conversation` 里 assistant 消息数
-   - `tool_calls`：assistant 消息 `content` 中 `type` 为 `toolRequest` 或 `frontendToolRequest` 的条数
-   - `response`：会话里最后一条 assistant 文本内容
+     - 每个 session 的 `model_config_json.model_name`
+   - `tool_calls`：
+     - 统计所有 run-local session 的 assistant `content_json` 中
+       `type == "toolRequest"` 或 `type == "frontendToolRequest"` 的块数量
+   - `llm_calls`：
+     - 仅当 `llm_request.*.jsonl` 的 usage 求和与 session usage 求和完全一致时，
+       才把日志文件数作为精确 `llm_calls`；否则返回 `null`，不做猜测
+   - `response`：
+     - 主会话导出里的最后一条 assistant 文本内容
 
 若 Goose 命令本身成功，但上述关键统计字段缺失或无效，cakit 会返回非零 `exit_code`。
 
-`trajectory_path` 指向由 Goose 原始输出转换得到的 YAML 人类可读轨迹文件。
+`trajectory_path` 指向 family-aware 的 YAML 轨迹，包含 CLI stdout、主会话导出、run-local Goose
+SQLite 中所有 session/message 的快照，以及该临时 HOME 下可用的 `llm_request.*.jsonl` 日志。

@@ -9,9 +9,10 @@ from typing import Any, Dict, Optional, Tuple
 
 from ..agent_runtime import env as runtime_env
 from ..agent_runtime import parsing as runtime_parsing
+from ..agent_runtime import trajectory as runtime_trajectory
 from .base import CodingAgent, InstallStrategy, RunCommandTemplate
 from ..models import RunResult
-from ..stats_extract import last_value, select_values, sum_usage_entries
+from ..stats_extract import last_value, merge_model_usage, select_values
 
 
 class OpenClawAgent(CodingAgent):
@@ -50,6 +51,9 @@ class OpenClawAgent(CodingAgent):
         limit_error = self._patch_custom_provider_limits(config_path)
         if limit_error is not None:
             self._raise_config_error(limit_error)
+        gateway_error = self._patch_gateway_remote_token(config_path)
+        if gateway_error is not None:
+            self._raise_config_error(gateway_error)
         return str(config_path)
 
     def _run_impl(
@@ -92,6 +96,9 @@ class OpenClawAgent(CodingAgent):
         limit_error = self._patch_custom_provider_limits(runtime_config_path)
         if limit_error is not None:
             return self._build_error_run_result(message=limit_error, cakit_exit_code=1)
+        gateway_error = self._patch_gateway_remote_token(runtime_config_path)
+        if gateway_error is not None:
+            return self._build_error_run_result(message=gateway_error, cakit_exit_code=1)
         extra_args = ["--session-id", session_id]
         if reasoning_effort:
             extra_args.extend(["--thinking", reasoning_effort])
@@ -107,18 +114,11 @@ class OpenClawAgent(CodingAgent):
         payload = runtime_parsing.parse_output_json_object(output)
         payload_session_id = runtime_parsing.normalize_text(last_value(payload, "$.meta.agentMeta.sessionId"))
 
-        resolved_session_id = payload_session_id or session_id
-        session_path = self._resolve_session_path(resolved_session_id, agent_id="main", env_source=env)
-        records: Optional[list[Dict[str, Any]]] = None
-        if session_path.exists():
-            raw_records = self._read_text_lossy(session_path) or ""
-            if raw_records:
-                loaded_records = runtime_parsing.load_output_json_payloads(raw_records, stdout_only_output=False)
-                if loaded_records:
-                    records = loaded_records
+        transcript_paths = self._list_session_family_paths(env_source=env)
+        record_sets = self._load_session_family_records(env_source=env)
         models_usage, llm_calls, tool_calls = self._extract_run_stats(
             payload=payload,
-            records=records,
+            record_sets=record_sets,
         )
         response = (
             runtime_parsing.last_nonempty_text(select_values(payload, "$.payloads[*].text"))
@@ -127,6 +127,7 @@ class OpenClawAgent(CodingAgent):
         )
         if response is None:
             response = runtime_parsing.last_stdout_line(output)
+        trajectory_content = self._build_transcript_family_trajectory(output, transcript_paths, env_source=env)
 
         return self.finalize_run(
             command_result=result,
@@ -134,6 +135,8 @@ class OpenClawAgent(CodingAgent):
             models_usage=models_usage,
             llm_calls=llm_calls,
             tool_calls=tool_calls,
+            trajectory_content=trajectory_content,
+            trajectory_source=str(self._resolve_state_roots(env_source=env)[0]),
         )
 
     def _resolve_runtime_settings(
@@ -264,6 +267,36 @@ class OpenClawAgent(CodingAgent):
             self._write_text(config_path, json.dumps(payload, ensure_ascii=True, indent=2))
         return None
 
+    def _patch_gateway_remote_token(self, config_path: Path) -> Optional[str]:
+        text = self._read_text(config_path)
+        if not text:
+            return f"openclaw config not found or empty for gateway token patch: {config_path}"
+        payload = runtime_parsing.parse_json_dict(text)
+        if payload is None:
+            return f"failed to parse openclaw config for gateway token patch: {config_path}"
+        gateway = payload.get("gateway")
+        if not isinstance(gateway, dict):
+            return "openclaw config is missing gateway for gateway token patch"
+        auth = gateway.get("auth")
+        if not isinstance(auth, dict):
+            return "openclaw config is missing gateway.auth for gateway token patch"
+        auth_mode = runtime_parsing.normalize_text(auth.get("mode"))
+        auth_token = runtime_parsing.normalize_text(auth.get("token"))
+        if auth_mode != "token" or auth_token is None:
+            return None
+        remote = gateway.get("remote")
+        if remote is None:
+            remote = {}
+            gateway["remote"] = remote
+        if not isinstance(remote, dict):
+            return "openclaw config is missing gateway.remote object for gateway token patch"
+        remote_token = runtime_parsing.normalize_text(remote.get("token"))
+        if remote_token == auth_token:
+            return None
+        remote["token"] = auth_token
+        self._write_text(config_path, json.dumps(payload, ensure_ascii=True, indent=2))
+        return None
+
     def _resolve_limit_env(self, env_key: str) -> Tuple[Optional[int], Optional[str]]:
         raw = runtime_parsing.normalize_text(os.environ.get(env_key))
         if raw is None:
@@ -303,6 +336,88 @@ class OpenClawAgent(CodingAgent):
                 return candidate
         return roots[0] / "agents" / agent_id / "sessions" / f"{session_id}.jsonl"
 
+    def _resolve_state_roots(
+        self,
+        *,
+        env_source: Optional[Dict[str, str]] = None,
+    ) -> list[Path]:
+        source = env_source if env_source is not None else os.environ
+        roots: list[Path] = []
+        state_dir = source.get("OPENCLAW_STATE_DIR")
+        if state_dir:
+            roots.append(Path(state_dir).expanduser())
+        else:
+            openclaw_home = source.get("OPENCLAW_HOME")
+            if openclaw_home:
+                home_root = Path(openclaw_home).expanduser()
+                roots.append(home_root / ".openclaw")
+                roots.append(home_root)
+            else:
+                roots.append(self._openclaw_home())
+        deduped_roots: list[Path] = []
+        seen: set[Path] = set()
+        for root in roots:
+            resolved = root.expanduser()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            deduped_roots.append(resolved)
+        return deduped_roots
+
+    def _load_session_family_records(
+        self,
+        *,
+        env_source: Optional[Dict[str, str]] = None,
+    ) -> list[list[Dict[str, Any]]]:
+        record_sets: list[list[Dict[str, Any]]] = []
+        for transcript_path in self._list_session_family_paths(env_source=env_source):
+            raw_records = self._read_text_lossy(transcript_path)
+            if not raw_records:
+                continue
+            loaded_records = runtime_parsing.load_output_json_payloads(raw_records, stdout_only_output=False)
+            if loaded_records:
+                record_sets.append(loaded_records)
+        return record_sets
+
+    def _list_session_family_paths(
+        self,
+        *,
+        env_source: Optional[Dict[str, str]] = None,
+    ) -> list[Path]:
+        transcript_paths: list[Path] = []
+        seen_paths: set[Path] = set()
+        for root in self._resolve_state_roots(env_source=env_source):
+            agents_root = root / "agents"
+            if not agents_root.exists():
+                continue
+            for transcript_path in sorted(agents_root.glob("*/sessions/*.jsonl")):
+                if transcript_path in seen_paths:
+                    continue
+                seen_paths.add(transcript_path)
+                transcript_paths.append(transcript_path)
+        return transcript_paths
+
+    def _build_transcript_family_trajectory(
+        self,
+        output: str,
+        transcript_paths: list[Path],
+        *,
+        env_source: Optional[Dict[str, str]] = None,
+    ) -> Optional[str]:
+        if not transcript_paths:
+            return None
+        sections: list[tuple[str, str, Optional[str]]] = [("stdout", output, None)]
+        for path in transcript_paths:
+            raw = self._read_text_lossy(path)
+            if not raw:
+                continue
+            sections.append((f"transcript:{path.parent.parent.name}:{path.name}", raw, str(path)))
+        content = runtime_trajectory.build_family_trajectory_content(
+            source=str(self._resolve_state_roots(env_source=env_source)[0]),
+            sections=sections,
+        )
+        return content or None
+
     def _usage_from_total_and_output(self, usage_raw: Any, *, total_path: str) -> Optional[Dict[str, int]]:
         completion_tokens = runtime_parsing.as_int(last_value(usage_raw, "$.output"))
         total_tokens = runtime_parsing.as_int(last_value(usage_raw, total_path))
@@ -320,7 +435,7 @@ class OpenClawAgent(CodingAgent):
         self,
         *,
         payload: Optional[Dict[str, Any]],
-        records: Optional[list[Dict[str, Any]]],
+        record_sets: list[list[Dict[str, Any]]],
     ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
         payload_usage = self._usage_from_total_and_output(
             last_value(payload, "$.meta.agentMeta.usage"),
@@ -333,43 +448,64 @@ class OpenClawAgent(CodingAgent):
         models_usage: Dict[str, Dict[str, int]] = {}
         llm_calls: Optional[int] = None
         tool_calls: Optional[int] = None
-        if records:
-            assistant_messages = [
-                item
-                for item in (select_values(records, '$[?(@.message.role == "assistant")].message') or [])
-                if isinstance(item, dict)
-            ]
-            llm_calls = len(assistant_messages) if assistant_messages else None
-            tool_calls = 0
-            for message in assistant_messages:
-                block_call_values = select_values(message, '$.content[?(@.type == "toolCall")]')
-                block_calls = len(block_call_values) if block_call_values is not None else 0
-                if block_calls > 0:
-                    tool_calls += block_calls
-                elif runtime_parsing.normalize_text(last_value(message, "$.toolName")) is not None:
-                    tool_calls += 1
-
-            assistant_usages = [
-                parsed
-                for parsed in (
-                    self._usage_from_total_and_output(entry, total_path="$.totalTokens")
-                    for entry in (
-                        select_values(
-                            records,
-                            '$[?(@.message.role == "assistant")].message.usage',
-                        )
-                        or []
-                    )
-                )
-                if parsed is not None
-            ]
-            if assistant_usages:
-                transcript_usage = sum_usage_entries(assistant_usages)
-                provider = runtime_parsing.normalize_text(last_value(records, '$[?(@.message.role == "assistant")].message.provider'))
-                model = runtime_parsing.normalize_text(last_value(records, '$[?(@.message.role == "assistant")].message.model'))
-                if transcript_usage is not None and provider and model:
-                    models_usage[f"{provider}/{model}"] = transcript_usage
+        if record_sets:
+            parsed_models_usage, parsed_llm_calls, parsed_tool_calls = self._extract_transcript_family_stats(record_sets)
+            models_usage = parsed_models_usage
+            llm_calls = parsed_llm_calls
+            tool_calls = parsed_tool_calls
 
         if not models_usage and payload_usage is not None and payload_model_name is not None:
             models_usage[payload_model_name] = payload_usage
         return models_usage, llm_calls, tool_calls
+
+    def _extract_transcript_family_stats(
+        self,
+        record_sets: list[list[Dict[str, Any]]],
+    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
+        models_usage: Dict[str, Dict[str, int]] = {}
+        llm_calls = 0
+        has_llm_calls = False
+        tool_calls = 0
+        has_tool_calls = False
+        assistant_message_count = 0
+        for records in record_sets:
+            current_provider: Optional[str] = None
+            current_model: Optional[str] = None
+            for record in records:
+                record_type = runtime_parsing.normalize_text(last_value(record, "$.type"))
+                if record_type == "model_change":
+                    current_provider = runtime_parsing.normalize_text(last_value(record, "$.provider"))
+                    current_model = runtime_parsing.normalize_text(last_value(record, "$.modelId"))
+                    continue
+                if record_type == "custom" and runtime_parsing.normalize_text(last_value(record, "$.customType")) == "model-snapshot":
+                    current_provider = runtime_parsing.normalize_text(last_value(record, "$.data.provider")) or current_provider
+                    current_model = runtime_parsing.normalize_text(last_value(record, "$.data.modelId")) or current_model
+                    continue
+                if record_type != "message":
+                    continue
+                message = last_value(record, "$.message")
+                if not isinstance(message, dict):
+                    continue
+                if runtime_parsing.normalize_text(last_value(message, "$.role")) != "assistant":
+                    continue
+                assistant_message_count += 1
+                usage = self._usage_from_total_and_output(last_value(message, "$.usage"), total_path="$.totalTokens")
+                if usage is not None:
+                    llm_calls += 1
+                    has_llm_calls = True
+                    provider = runtime_parsing.normalize_text(last_value(message, "$.provider")) or current_provider
+                    model = runtime_parsing.normalize_text(last_value(message, "$.model")) or current_model
+                    if provider and model:
+                        merge_model_usage(models_usage, f"{provider}/{model}", usage)
+                block_call_values = select_values(message, '$.content[?(@.type == "toolCall")]')
+                if block_call_values is not None:
+                    tool_calls += len(block_call_values)
+                    has_tool_calls = True
+                elif runtime_parsing.normalize_text(last_value(message, "$.toolName")) is not None:
+                    tool_calls += 1
+                    has_tool_calls = True
+        return (
+            models_usage,
+            llm_calls if has_llm_calls else None,
+            tool_calls if has_tool_calls or assistant_message_count > 0 else None,
+        )

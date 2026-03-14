@@ -203,7 +203,7 @@ Image and video input support:
 | kilocode | ✓ | ✗ | native `--attach`; no documented `--video` flag |
 | openclaw | ✗ | ✗ | `openclaw agent` has no documented `--image` / `--video` flags |
 | deepagents | ✗ | ✗ | `deepagents` non-interactive CLI has no documented `--image` / `--video` flags |
-| kimi | ✓ | ✓ | `ReadMediaFile` + model capability (`image_in`/`video_in`); when provider metadata is incomplete, set `KIMI_MODEL_CAPABILITIES` explicitly |
+| kimi | ✓ | ✓ | native `ReadMediaFile` / model capability (`image_in`/`video_in`) only; when provider metadata is incomplete, set `KIMI_MODEL_CAPABILITIES` explicitly |
 | trae-cn | ✗ | ✗ | `traecli` has no `--image` / `--video` flags |
 | qwen | ✓ |  | `@{path}` injection; best verified with Qwen OAuth / DashScope-compatible vision setup, while generic OpenAI-compatible API mode remains provider-dependent |
 | qoder | ✓ | ✗ | native `--attachment` mapping for `--image`; no `--video` support in cakit |
@@ -211,11 +211,8 @@ Image and video input support:
 | swe-agent | ✗ | ✗ | upstream multimodal path supports issue-image URLs (`swe_bench_multimodal`), but `sweagent run` has no generic `--image` / `--video` flags |
 | trae-oss | ✗ | ✗ | `trae-cli run` has no `--image` / `--video` flags |
 
-Kimi Agent Swarm:
-- Kimi supports launching multiple subagents in one run.
-- In your prompt, use wording like `launch multiple subagents` (for example: "Can you launch multiple subagents to solve this task and summarize the results?").
-- For Kimi runs, `models_usage`/`llm_calls`/`tool_calls` are aggregated from subagent events in session logs when available.
-Note: In our testing, Kimi CLI may hit a race condition when multiple sessions run concurrently, leading to failures. Avoid running multiple Kimi sessions at the same time.
+Swarm-like multiagent spawn:
+- For the current status and enablement notes for Kimi / Claude / Codex / OpenClaw / Goose, see `docs/swarm_like_spawn.md`.
 
 ### Skills
 

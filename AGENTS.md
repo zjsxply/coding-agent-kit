@@ -37,6 +37,7 @@
   - Do not treat automated pass/fail in scripts as sufficient by itself; always inspect response content and judge correctness manually.
   - Record whether each check passes based on the actual response content (not just process start).
   - For image/video capability checks, the configured base model must natively support the corresponding modality. If the current model does not support image/video input (for example text-only variants), switch to a modality-capable model before concluding support status.
+  - For image/video support, rely only on native multimodal capability exposed by the selected model / upstream media path. Do not count OCR, `ffmpeg`, `python`, shell inspection, or other non-native fallbacks as multimodal support, and do not prompt to use those fallbacks.
 - If manual validation is required, run tests in this order and in the same shell:
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`

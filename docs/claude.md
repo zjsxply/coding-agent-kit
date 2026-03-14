@@ -7,7 +7,7 @@ This document explains how cakit runs Claude Code and extracts metadata.
 
 **Sources**
 - CLI stdout from `claude -p --output-format stream-json --verbose ...` (JSONL-like events, one JSON object per line).
-- Environment variables such as `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CAKIT_CLAUDE_USE_OAUTH`, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`/`ANTHROPIC_DEFAULT_SONNET_MODEL`/`ANTHROPIC_DEFAULT_HAIKU_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- Environment variables such as `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CAKIT_CLAUDE_USE_OAUTH`, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`/`ANTHROPIC_DEFAULT_SONNET_MODEL`/`ANTHROPIC_DEFAULT_HAIKU_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_ENABLE_AGENT_TEAMS`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 **Image Input**
 - `cakit run claude --image <path>` is supported by injecting the image file path(s) into the prompt and letting Claude Code open them via the built-in `Read` tool.
@@ -25,17 +25,30 @@ This document explains how cakit runs Claude Code and extracts metadata.
 - `agent_version`: from `claude --version`.
 - `runtime_seconds`: from the final `{"type":"result", ...}` payload field `duration_ms / 1000`.
 - `response`: from the `result` payload field `result`.
-- `models_usage`: from the `result` payload field `modelUsage` (per-model `inputTokens`/`outputTokens` plus `cacheReadInputTokens`/`cacheCreationInputTokens`, which are required and summed into `prompt_tokens`).
-- `tool_calls`: count of `{"type":"assistant", "message": {"content": [{"type":"tool_use", ...}, ...]}}` blocks.
-- `llm_calls`: from the `result` payload field `num_turns`.
+- `models_usage`:
+  - default source: `result.modelUsage`
+  - when `result.modelUsage` is empty on a normal non-team run, cakit falls back to assistant
+    stream messages (`message.usage` + `message.model`) from CLI stdout
+  - when the exact Claude transcript family exists under `~/.claude/projects/.../subagents`, cakit aggregates
+    deduplicated assistant messages from the lead transcript plus child transcripts instead, so Agent Teams /
+    runtime-created subagents are included in `models_usage`
+- `tool_calls`:
+  - default source: count of `tool_use` blocks in CLI stdout assistant messages
+  - when transcript-family aggregation is available, count `tool_use` blocks across the deduplicated lead + child transcripts
+- `llm_calls`:
+  - default source: `result.num_turns`
+  - when transcript-family aggregation is available, count deduplicated assistant message IDs across the lead + child transcripts
 - `total_cost`: from the `result` payload field `total_cost_usd`.
 - `telemetry_log`: `OTEL_EXPORTER_OTLP_ENDPOINT` when telemetry is enabled and the endpoint is present.
 - `output_path`/`raw_output`: captured stdout/stderr from the Claude Code run.
-- `trajectory_path`: formatted, human-readable trace built from the Claude Code stdout/stderr stream JSON and rendered as YAML (no truncation).
+- `trajectory_path`:
+  - when transcript files are available, cakit writes a family-aware YAML trace containing CLI stdout plus the main transcript and any Agent Teams child transcripts
+  - otherwise it falls back to the formatted stdout/stderr trace
 
 **Notes**
 - cakit sets `IS_SANDBOX=1` for Claude Code runs so `--dangerously-skip-permissions` can be used in root/sudo environments.
 - `CAKIT_CLAUDE_USE_OAUTH` is the cakit switch for choosing OAuth when both API key and auth token are present.
+- To enable upstream Agent Teams, set `CLAUDE_CODE_ENABLE_AGENT_TEAMS=1`; cakit passes it through unchanged.
 - Telemetry behavior: if `CLAUDE_CODE_ENABLE_TELEMETRY` is unset and `OTEL_EXPORTER_OTLP_ENDPOINT` is set, cakit enables telemetry for the run; if `CLAUDE_CODE_ENABLE_TELEMETRY` is explicitly set, that value is respected. When explicitly set to a falsey value, cakit also unsets `OTEL_EXPORTER_OTLP_ENDPOINT` for the child process.
 - cakit always sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` for Claude runs.
 - Standard network actions (for example `curl`) generally work when the runtime/network policy allows them.

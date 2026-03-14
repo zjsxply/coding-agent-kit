@@ -37,16 +37,16 @@ def _append_stderr(doc: dict[str, object], stderr: str) -> None:
         doc["stderr"] = stderr
 
 
-def format_trace_text(
+def _build_trace_doc(
     text: str,
     *,
     source: Optional[str] = None,
-) -> str:
+) -> dict[str, object]:
     if text is None:
-        return ""
+        return {}
     stripped = text.strip("\n")
     if not stripped:
-        return ""
+        return {}
 
     if STDERR_MARKER not in text:
         stdout, stderr = text, ""
@@ -64,7 +64,7 @@ def format_trace_text(
     if not stdout_stripped:
         doc["text"] = ""
         _append_stderr(doc, stderr)
-        return _yaml_dump(doc)
+        return doc
 
     try:
         payload = json.loads(stdout_stripped)
@@ -76,7 +76,7 @@ def format_trace_text(
         doc["format"] = "json-yaml"
         doc["item"] = payload
         _append_stderr(doc, stderr)
-        return _yaml_dump(doc)
+        return doc
 
     entries: list[dict[str, object]] = []
     json_found = False
@@ -98,7 +98,48 @@ def format_trace_text(
     else:
         doc["text"] = stdout_stripped
     _append_stderr(doc, stderr)
+    return doc
+
+
+def format_trace_text(
+    text: str,
+    *,
+    source: Optional[str] = None,
+) -> str:
+    doc = _build_trace_doc(text, source=source)
+    if not doc:
+        return ""
     return _yaml_dump(doc)
+
+
+def build_family_trajectory_content(
+    *,
+    source: str,
+    sections: list[tuple[str, str, Optional[str]]],
+) -> str:
+    rendered_sections: list[dict[str, object]] = []
+    for label, text, section_source in sections:
+        section_doc = _build_trace_doc(text, source=section_source)
+        if not section_doc:
+            continue
+        section_doc.pop("title", None)
+        rendered_sections.append(
+            {
+                "label": label,
+                **section_doc,
+            }
+        )
+    if not rendered_sections:
+        return ""
+    return _yaml_dump(
+        {
+            "title": "Coding Agent Trace",
+            "format": "family-yaml",
+            "source": source,
+            "section_count": len(rendered_sections),
+            "sections": rendered_sections,
+        }
+    )
 
 
 def build_trajectory_content(

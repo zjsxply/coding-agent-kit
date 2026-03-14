@@ -48,7 +48,8 @@ Reference:
 `cakit run kimi --image <path>` is supported.
 
 - cakit uses print mode `--prompt` input and injects absolute image paths into the prompt so Kimi can read the files.
-- cakit prompts Kimi to use `ReadMediaFile` when that tool is available, and otherwise to fall back to other available tools.
+- cakit prompts Kimi to use `ReadMediaFile` or the model's native multimodal path only.
+- Non-native fallbacks such as OCR, shell inspection, `python`, or other tool-based image analysis do not count as Kimi multimodal support and are not used by cakit for this path.
 - If the current provider/model does not advertise media capabilities automatically, set `KIMI_MODEL_CAPABILITIES=image_in` (or `image_in,video_in`) so Kimi CLI exposes the media-reading path.
 - Image understanding still depends on the selected model capability. If the model does not support image input, Kimi may fail or report that image reading is unsupported.
 
@@ -57,7 +58,8 @@ Reference:
 `cakit run kimi --video <path>` is supported.
 
 - For video runs, cakit uses print mode `--prompt` input and injects absolute video paths into the prompt.
-- cakit prompts Kimi to use `ReadMediaFile` when that tool is available, and otherwise to fall back to other available tools.
+- cakit prompts Kimi to use `ReadMediaFile` or the model's native multimodal path only.
+- Non-native fallbacks such as `ffmpeg`, `python`, shell inspection, or frame-extraction-based tooling do not count as Kimi video support and are not used by cakit for this path.
 - If the current provider/model does not advertise media capabilities automatically, set `KIMI_MODEL_CAPABILITIES=image_in,video_in` so Kimi CLI exposes the media-reading path.
 - Video understanding depends on the selected model capability. If the model does not support video input, Kimi may fail or report that video reading is unsupported.
 
@@ -109,7 +111,9 @@ Model name is extracted from run artifacts only (session wire / session logs). I
 If upstream emits these values as `0`, `prompt_tokens` can be `0`.
 
 When extraction fails unexpectedly, inspect `output_path` / `raw_output` plus Kimi session/log files.
-`trajectory_path` points to a formatted, human-readable trace built from `output_path` / `raw_output`, rendered as YAML (Unicode unescaped, multiline text as `|` blocks, no truncation).
+`trajectory_path` points to a family-aware YAML trace built from CLI stdout plus the matching
+`wire.jsonl` session log (and `context.jsonl` when present), so nested subagent events recorded by Kimi are
+preserved in the trace.
 
 ## Reasoning Effort Mapping
 

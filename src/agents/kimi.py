@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,6 +26,7 @@ from ..stats_extract import (
 from ..agent_runtime import install_version as runtime_install
 from ..agent_runtime import parsing as runtime_parsing
 from ..agent_runtime import env as runtime_env
+from ..agent_runtime import trajectory as runtime_trajectory
 from ..io_helpers import dump_toml
 
 
@@ -138,6 +140,18 @@ class KimiAgent(CodingAgent):
             # Keep --model for explicit run control and also set env for compatibility.
             env["KIMI_MODEL_NAME"] = requested_model_name
         template = self.run_template
+        run_prompt = prompt
+        run_images = images
+        run_videos = videos
+        command_template = template
+        if images or videos:
+            run_prompt, run_images, run_videos = self._build_native_media_prompt(
+                prompt,
+                images=images,
+                videos=videos,
+                tool_name="ReadMediaFile",
+            )
+            command_template = replace(template, media_injection="none")
         extra_args = [
             "--work-dir",
             str(self.workdir),
@@ -149,11 +163,11 @@ class KimiAgent(CodingAgent):
         elif reasoning_effort == "none":
             extra_args.append("--no-thinking")
         cmd, run_prompt = self._build_templated_command(
-            template=template,
-            prompt=prompt,
+            template=command_template,
+            prompt=run_prompt,
             model=requested_model_name,
-            images=images,
-            videos=videos,
+            images=run_images,
+            videos=run_videos,
             extra_args=extra_args,
         )
         result = self._run(cmd, env, base_env=base_env)
@@ -163,6 +177,11 @@ class KimiAgent(CodingAgent):
             payloads=payloads,
             session_id=session_id,
             prompt=run_prompt,
+            kimi_root=kimi_root,
+        )
+        trajectory_content = self._build_session_trajectory(
+            output=output,
+            session_id=session_id,
             kimi_root=kimi_root,
         )
         snapshot = build_single_model_stats_snapshot(
@@ -179,7 +198,33 @@ class KimiAgent(CodingAgent):
             models_usage=snapshot.models_usage if snapshot is not None else {},
             llm_calls=snapshot.llm_calls if snapshot is not None else None,
             tool_calls=snapshot.tool_calls if snapshot is not None else None,
+            trajectory_content=trajectory_content,
+            trajectory_source=str(kimi_root),
         )
+
+    def _build_session_trajectory(
+        self,
+        *,
+        output: str,
+        session_id: str,
+        kimi_root: Path,
+    ) -> Optional[str]:
+        wire_path = self._find_session_wire_path(session_id, kimi_root=kimi_root)
+        if wire_path is None:
+            return None
+        sections: list[tuple[str, str, Optional[str]]] = [("stdout", output, None)]
+        wire_text = self._read_text_lossy(wire_path)
+        if wire_text:
+            sections.append(("wire.jsonl", wire_text, str(wire_path)))
+        context_path = wire_path.parent / "context.jsonl"
+        context_text = self._read_text_lossy(context_path)
+        if context_text:
+            sections.append(("context.jsonl", context_text, str(context_path)))
+        content = runtime_trajectory.build_family_trajectory_content(
+            source=str(kimi_root),
+            sections=sections,
+        )
+        return content or None
 
     def _extract_stream_response(self, payloads: List[Dict[str, Any]], output: str) -> Optional[str]:
         assistant_contents = select_values(payloads, '$[?(@.role == "assistant")].content')

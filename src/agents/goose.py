@@ -1,7 +1,8 @@
 from __future__ import annotations
-
+import json
 import os
 import re
+import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -10,7 +11,8 @@ from urllib.parse import urlparse
 from .base import CodingAgent, InstallStrategy, RunCommandTemplate, RunParseResult, RunPlan, VersionCommandTemplate
 from ..agent_runtime import env as runtime_env
 from ..agent_runtime import parsing as runtime_parsing
-from ..stats_extract import req_int, req_str, select_values
+from ..agent_runtime import trajectory as runtime_trajectory
+from ..stats_extract import last_value, merge_model_usage, req_int, req_str, select_values, sum_usage_entries
 
 
 class GooseAgent(CodingAgent):
@@ -82,6 +84,7 @@ class GooseAgent(CodingAgent):
                 output,
                 env=env,
                 session_name=session_name,
+                run_home=run_home,
                 base_env=base_env,
             ),
         )
@@ -92,6 +95,7 @@ class GooseAgent(CodingAgent):
         *,
         env: Dict[str, str],
         session_name: str,
+        run_home: Path,
         base_env: Optional[Dict[str, str]],
     ) -> RunParseResult:
         match = self._SESSION_ID_RE.search(runtime_parsing.stdout_only(output))
@@ -110,9 +114,14 @@ class GooseAgent(CodingAgent):
             base_env=base_env,
             stdout_only_output=True,
         )
-        models_usage, llm_calls, tool_calls = self._extract_session_stats(
-            session_payload=session_payload,
+        models_usage, llm_calls, tool_calls = self._extract_run_stats(
+            run_home=run_home,
+            session_id=session_id,
         )
+        if not models_usage and llm_calls is None and tool_calls is None:
+            models_usage, llm_calls, tool_calls = self._extract_session_stats(
+                session_payload=session_payload,
+            )
         response: Optional[str] = None
         if isinstance(session_payload, dict):
             response = runtime_parsing.last_nonempty_text(
@@ -123,11 +132,194 @@ class GooseAgent(CodingAgent):
             )
         if response is None:
             response = runtime_parsing.last_stdout_line(output)
+        trajectory_content = self._build_run_trajectory_content(
+            output=output,
+            run_home=run_home,
+            session_payload=session_payload,
+        )
         return RunParseResult(
             response=response,
             models_usage=models_usage,
             llm_calls=llm_calls,
             tool_calls=tool_calls,
+            trajectory_content=trajectory_content,
+            trajectory_source=str(run_home),
+        )
+
+    def _extract_run_stats(
+        self,
+        *,
+        run_home: Path,
+        session_id: Optional[str],
+    ) -> tuple[Dict[str, Dict[str, int]], Optional[int], Optional[int]]:
+        db_path = run_home / "data" / "goose" / "sessions" / "sessions.db"
+        if not db_path.exists():
+            return {}, None, None
+        try:
+            connection = sqlite3.connect(str(db_path))
+        except Exception:
+            return {}, None, None
+        connection.row_factory = sqlite3.Row
+        try:
+            session_rows = [dict(row) for row in connection.execute("SELECT * FROM sessions ORDER BY id")]
+            assistant_rows = [
+                dict(row)
+                for row in connection.execute("SELECT session_id, message_id, content_json FROM messages WHERE role = 'assistant' ORDER BY id")
+            ]
+        except Exception:
+            connection.close()
+            return {}, None, None
+        connection.close()
+
+        if session_id is not None and session_rows and session_id not in {row.get("id") for row in session_rows}:
+            return {}, None, None
+
+        models_usage: Dict[str, Dict[str, int]] = {}
+        for row in session_rows:
+            model_config = runtime_parsing.parse_json_dict(row.get("model_config_json"))
+            model_name = runtime_parsing.normalize_text(model_config.get("model_name")) if isinstance(model_config, dict) else None
+            prompt_tokens = runtime_parsing.as_int(row.get("accumulated_input_tokens"))
+            completion_tokens = runtime_parsing.as_int(row.get("accumulated_output_tokens"))
+            total_tokens = runtime_parsing.as_int(row.get("accumulated_total_tokens"))
+            usage = (
+                {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                }
+                if model_name is not None
+                and prompt_tokens is not None
+                and completion_tokens is not None
+                and total_tokens is not None
+                else None
+            )
+            if model_name is not None and usage is not None:
+                merge_model_usage(models_usage, model_name, usage)
+
+        tool_calls = 0
+        has_tool_calls = False
+        for row in assistant_rows:
+            content = runtime_parsing.parse_json(row.get("content_json"))
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = runtime_parsing.normalize_text(item.get("type"))
+                if item_type in {"toolRequest", "frontendToolRequest"}:
+                    tool_calls += 1
+                    has_tool_calls = True
+        parsed_tool_calls = tool_calls if has_tool_calls or assistant_rows else None
+
+        total_usage = sum_usage_entries(models_usage.values())
+        llm_calls = self._extract_run_llm_calls(run_home=run_home, expected_usage=total_usage)
+        return models_usage, llm_calls, parsed_tool_calls
+
+    def _extract_run_llm_calls(
+        self,
+        *,
+        run_home: Path,
+        expected_usage: Optional[Dict[str, int]],
+    ) -> Optional[int]:
+        logs_dir = run_home / "state" / "goose" / "logs"
+        if not logs_dir.exists():
+            return None
+        request_paths = sorted(logs_dir.glob("llm_request.*.jsonl"))
+        if not request_paths:
+            return None
+        request_usages: list[Dict[str, int]] = []
+        for request_path in request_paths:
+            usage = self._extract_request_log_usage(request_path)
+            if usage is None:
+                return None
+            request_usages.append(usage)
+        if expected_usage is None:
+            return None
+        aggregated_request_usage = sum_usage_entries(request_usages)
+        if aggregated_request_usage != expected_usage:
+            return None
+        return len(request_usages)
+
+    def _extract_request_log_usage(self, request_path: Path) -> Optional[Dict[str, int]]:
+        lines = self._read_text_lossy(request_path)
+        if lines is None:
+            return None
+        parsed_lines = runtime_parsing.load_output_json_payloads(lines, stdout_only_output=False)
+        if not parsed_lines:
+            return None
+        final_usage = last_value(parsed_lines, "$[*].usage")
+        if not isinstance(final_usage, dict):
+            return None
+        prompt_tokens = req_int(final_usage, "$.input_tokens")
+        completion_tokens = req_int(final_usage, "$.output_tokens")
+        total_tokens = req_int(final_usage, "$.total_tokens")
+        if prompt_tokens is None or completion_tokens is None or total_tokens is None:
+            return None
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+
+    def _build_run_trajectory_content(
+        self,
+        *,
+        output: str,
+        run_home: Path,
+        session_payload: Optional[Dict[str, Any]],
+    ) -> Optional[str]:
+        sections: list[tuple[str, str, Optional[str]]] = [("stdout", output, None)]
+        if isinstance(session_payload, dict):
+            sections.append(
+                (
+                    "session-export.json",
+                    json.dumps(session_payload, ensure_ascii=False, indent=2),
+                    None,
+                )
+            )
+        db_snapshot = self._build_db_trajectory_snapshot(run_home)
+        if db_snapshot is not None:
+            sections.append(("sessions.db.snapshot.json", db_snapshot, None))
+        logs_dir = run_home / "state" / "goose" / "logs"
+        if logs_dir.exists():
+            for request_path in sorted(logs_dir.glob("llm_request.*.jsonl")):
+                raw = self._read_text_lossy(request_path)
+                if not raw:
+                    continue
+                sections.append((f"request-log:{request_path.name}", raw, str(request_path)))
+        content = runtime_trajectory.build_family_trajectory_content(
+            source=str(run_home),
+            sections=sections,
+        )
+        return content or None
+
+    def _build_db_trajectory_snapshot(self, run_home: Path) -> Optional[str]:
+        db_path = run_home / "data" / "goose" / "sessions" / "sessions.db"
+        if not db_path.exists():
+            return None
+        try:
+            connection = sqlite3.connect(str(db_path))
+        except Exception:
+            return None
+        connection.row_factory = sqlite3.Row
+        try:
+            sessions = [dict(row) for row in connection.execute("SELECT * FROM sessions ORDER BY id")]
+            messages = [dict(row) for row in connection.execute("SELECT * FROM messages ORDER BY id")]
+        except Exception:
+            connection.close()
+            return None
+        connection.close()
+        for row in messages:
+            content_json = row.get("content_json")
+            if isinstance(content_json, str):
+                row["content_json"] = runtime_parsing.parse_json(content_json)
+        return json.dumps(
+            {
+                "sessions": sessions,
+                "messages": messages,
+            },
+            ensure_ascii=False,
+            indent=2,
         )
 
     def _build_run_env(

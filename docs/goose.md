@@ -57,20 +57,33 @@ goose run -t "<prompt>" --name <unique_name> --output-format stream-json
 
 ## Stats Extraction
 
-`cakit run goose` extracts stats with strict parsing from run artifacts:
+`cakit run goose` uses the run-local temporary Goose home as the authoritative source of swarm/subagent stats:
 
-1. Run Goose with a unique session name (`--name`).
-2. Export that exact session:
-   - `goose session export --name <unique_name> --format json`
+1. cakit creates an isolated temporary `HOME`/`XDG_*` tree per run.
+2. Stats are aggregated from that exact run-local state:
+   - session database:
+     - `<temp HOME>/data/goose/sessions/sessions.db`
+   - request logs:
+     - `<temp HOME>/state/goose/logs/llm_request.*.jsonl`
+   - main-session export (response only):
+     - `goose session export --session-id <id> --format json`
 3. Read exact fields:
    - `models_usage`:
-     - `accumulated_input_tokens` / `accumulated_output_tokens` / `accumulated_total_tokens`
+     - sum `accumulated_input_tokens` / `accumulated_output_tokens` / `accumulated_total_tokens`
+       across every session row in the run-local SQLite database, including `sub_agent` sessions
    - model name:
-     - session `model_config.model_name`
-   - `llm_calls`: count of assistant messages in session `conversation`
-   - `tool_calls`: count of assistant message `content` items where `type` is `toolRequest` or `frontendToolRequest`
-   - `response`: last assistant text block in session conversation
+     - per-session `model_config_json.model_name`
+   - `tool_calls`:
+     - count assistant message `content_json` blocks where `type` is `toolRequest` or `frontendToolRequest`
+       across all run-local sessions
+   - `llm_calls`:
+     - count `llm_request.*.jsonl` files only when the summed request-log usage exactly matches the
+       summed session usage; otherwise cakit returns `null` instead of guessing
+   - `response`:
+     - last assistant text block from the exported main session
 
 If Goose command succeeds but strict fields are missing/invalid, cakit returns a non-zero `exit_code`.
 
-`trajectory_path` points to a YAML-formatted, human-readable trace converted from raw Goose output.
+`trajectory_path` points to a family-aware YAML trace containing CLI stdout, the exported main session,
+a SQLite-derived snapshot of all run-local Goose sessions/messages, and any available
+`llm_request.*.jsonl` logs from that same run-local home.

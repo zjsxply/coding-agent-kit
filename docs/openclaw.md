@@ -55,6 +55,8 @@ openclaw agent --local --agent main --session-id <generated_id> --message "<prom
 Run behavior notes:
 - cakit creates an isolated temporary `OPENCLAW_HOME` per run, so parallel runs do not share session/config state.
 - cakit runs non-interactive onboarding before `openclaw agent` so `--model` override is applied to the active custom model.
+- cakit also aligns `gateway.remote.token` with `gateway.auth.token` in the generated config so local `sessions_spawn` subagent calls can authenticate against the run-local gateway.
+- Local OpenClaw subagent spawning still depends on a healthy gateway process for the configured port. If another `openclaw-gateway` is already listening with a different token, `sessions_spawn` can still fail even though cakit's run-local config is correct.
 - Model priority is: `--model` > `CAKIT_OPENCLAW_MODEL` > `OPENAI_DEFAULT_MODEL`.
 
 Reasoning effort mapping:
@@ -65,16 +67,22 @@ Reasoning effort mapping:
 
 `cakit run openclaw` extracts stats strictly from:
 
-1. Session transcript (primary source):
-   - `<temporary OPENCLAW_HOME>/agents/main/sessions/<session_id>.jsonl`
-   - `models_usage`: sum over assistant `message.usage` using `totalTokens` + `output`
-   - `llm_calls`: assistant messages with valid usage
-   - `tool_calls`: assistant tool-use occurrences (`content[].type == "toolCall"`)
-   - model name from assistant `message.provider` + `message.model`
+1. Session-family transcripts inside the isolated temporary `OPENCLAW_HOME` (primary source):
+   - `<temporary OPENCLAW_HOME>/.openclaw/agents/*/sessions/*.jsonl`
+   - cakit aggregates every transcript in that run-local state, so spawned subagents are included
+   - `models_usage`: sum assistant `message.usage` across the full transcript family
+   - `llm_calls`: count assistant transcript messages with valid usage across the family
+   - `tool_calls`: count assistant tool-use occurrences (`content[].type == "toolCall"`) across the family
+   - model name comes from assistant `message.provider` + `message.model`, with `model_change` / `model-snapshot`
+     transcript events used as fallback context when the assistant message omits them
 2. CLI JSON envelope (`payloads` + `meta.agentMeta`) fallback:
    - `response` from `payloads[*].text`
    - fallback usage from `meta.agentMeta.usage` (`total` + `output`)
    - fallback model name from `meta.agentMeta.provider` + `meta.agentMeta.model`
-   - used only when transcript file is unavailable
+   - used only when transcript family data is unavailable
 
 If required stats cannot be parsed, cakit returns non-zero.
+
+`trajectory_path` follows the same session-family rule: when transcript family files exist in the isolated
+temporary `OPENCLAW_HOME`, cakit writes a family-aware YAML trace containing CLI stdout plus every transcript
+in that run-local family.
