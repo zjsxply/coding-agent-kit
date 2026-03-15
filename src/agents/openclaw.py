@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Tuple
 from ..agent_runtime import env as runtime_env
 from ..agent_runtime import parsing as runtime_parsing
 from ..agent_runtime import trajectory as runtime_trajectory
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate, VersionCommandTemplate
 from ..models import RunResult
 from ..stats_extract import last_value, merge_model_usage, select_values
 
@@ -21,7 +21,7 @@ class OpenClawAgent(CodingAgent):
     binary = "openclaw"
     supports_images = False
     supports_videos = False
-    required_runtimes = ("curl", "git", "node")
+    required_runtimes = ("curl", "git", "node", "python3", "make", "g++", "cmake")
     install_strategy = [
         InstallStrategy(
             kind="shell",
@@ -32,6 +32,11 @@ class OpenClawAgent(CodingAgent):
         ),
         InstallStrategy(kind="npm", package="openclaw"),
     ]
+    version_template = VersionCommandTemplate(
+        args=("openclaw", "--version"),
+        parse_mode="regex_first_line",
+        regex=r"^(?:openclaw(?:\s+cli)?\s+|OpenClaw(?:\s+CLI)?\s+|v)?([0-9][A-Za-z0-9._-]*)$",
+    )
     run_template = RunCommandTemplate(
         base_args=("agent", "--local", "--agent", "main", "--json"),
         prompt_mode="flag",

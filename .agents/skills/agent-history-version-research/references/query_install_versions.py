@@ -8,12 +8,15 @@ import datetime as dt
 import email.utils
 import html
 import json
+import os
 import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Callable, Iterable, Optional
+
+from ghapi.all import GhApi
 
 
 UTC = dt.timezone.utc
@@ -327,52 +330,51 @@ def resolve_pypi(spec: AgentSpec, *, timepoint_date: str, cutoff: dt.datetime, a
     )
 
 
-def github_get_json(path: str) -> object:
-    url = f"https://api.github.com{path}"
-    return http_get_json(url, accept="application/vnd.github+json")
-
-
 def resolve_github_release(spec: AgentSpec, *, timepoint_date: str, cutoff: dt.datetime, agent: str) -> SnapshotRow:
     owner, repo = spec.selector.split("/", 1)
-    candidates: list[tuple[str, dt.datetime, str]] = []
     page = 1
+    token = next(
+        (
+            value.strip()
+            for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN")
+            if (value := os.environ.get(name)) is not None and value.strip()
+        ),
+        None,
+    )
+    api = GhApi(token=token, authenticate=token is not None)
     while True:
-        payload = github_get_json(f"/repos/{owner}/{repo}/releases?per_page=100&page={page}")
-        if not isinstance(payload, list):
-            raise RuntimeError("GitHub releases API returned a non-list payload")
+        payload = api.repos.list_releases(owner, repo, per_page=100, page=page)
         if not payload:
-            break
+            raise RuntimeError("no GitHub release exists on or before the cutoff")
         for release in payload:
-            if not isinstance(release, dict) or release.get("draft"):
+            if getattr(release, "draft", False):
                 continue
-            tag_name = release.get("tag_name")
-            published_raw = release.get("published_at")
-            html_url = release.get("html_url")
+            tag_name = getattr(release, "tag_name", None)
+            published_raw = getattr(release, "published_at", None)
+            html_url = getattr(release, "html_url", None)
             if not isinstance(tag_name, str) or not isinstance(published_raw, str) or not isinstance(html_url, str):
+                continue
+            stable_version = tag_name[1:] if tag_name.startswith("v") else tag_name
+            if not plain_version(stable_version):
                 continue
             published_at = parse_utc_date(published_raw)
             if published_at > cutoff:
                 continue
-            candidates.append((tag_name, published_at, html_url))
+            install_version = tag_name[1:] if spec.strip_v and tag_name.startswith("v") else tag_name
+            return snapshot_row(
+                timepoint_date=timepoint_date,
+                cutoff=cutoff,
+                agent=agent,
+                install_version=install_version,
+                status=spec.status,
+                source_kind=spec.source_kind,
+                source_ref=html_url,
+                published_at=published_at,
+                note=spec.note,
+            )
         page += 1
-    if not candidates:
-        raise RuntimeError("no GitHub release exists on or before the cutoff")
-    tag_name, published_at, html_url = max(
-        candidates,
-        key=lambda item: (item[1], version_key(item[0].lstrip("v"))),
-    )
-    install_version = tag_name[1:] if spec.strip_v and tag_name.startswith("v") else tag_name
-    return snapshot_row(
-        timepoint_date=timepoint_date,
-        cutoff=cutoff,
-        agent=agent,
-        install_version=install_version,
-        status=spec.status,
-        source_kind=spec.source_kind,
-        source_ref=html_url,
-        published_at=published_at,
-        note=spec.note,
-    )
+        if page > 100:
+            raise RuntimeError("GitHub release pagination exceeded 100 pages without finding a pre-cutoff release")
 
 
 def iter_claude_objects() -> Iterable[dict[str, object]]:
@@ -547,22 +549,32 @@ def resolve_cursor(*, timepoint_date: str, cutoff: dt.datetime, agent: str) -> S
 
 def resolve_trae_oss(*, timepoint_date: str, cutoff: dt.datetime, agent: str) -> SnapshotRow:
     cutoff_text = format_utc(cutoff)
-    payload = github_get_json(
-        f"/repos/bytedance/trae-agent/commits?sha=main&until={urllib.parse.quote(cutoff_text)}&per_page=1"
+    token = next(
+        (
+            value.strip()
+            for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_API_TOKEN")
+            if (value := os.environ.get(name)) is not None and value.strip()
+        ),
+        None,
     )
-    if not isinstance(payload, list) or not payload:
+    payload = GhApi(token=token, authenticate=token is not None).repos.list_commits(
+        "bytedance",
+        "trae-agent",
+        sha="main",
+        until=cutoff_text,
+        per_page=1,
+        page=1,
+    )
+    if not payload:
         raise RuntimeError("no trae-oss commit exists on or before the cutoff")
     commit = payload[0]
-    if not isinstance(commit, dict):
-        raise RuntimeError("GitHub commits API returned an invalid trae-oss item")
-    sha = commit.get("sha")
-    commit_payload = commit.get("commit")
-    if not isinstance(sha, str) or not isinstance(commit_payload, dict):
-        raise RuntimeError("GitHub commits API omitted trae-oss sha metadata")
-    committer_payload = commit_payload.get("committer")
-    if not isinstance(committer_payload, dict) or not isinstance(committer_payload.get("date"), str):
-        raise RuntimeError("GitHub commits API omitted trae-oss commit date")
-    published_at = parse_utc_date(committer_payload["date"])
+    sha = getattr(commit, "sha", None)
+    commit_payload = getattr(commit, "commit", None)
+    committer_payload = getattr(commit_payload, "committer", None)
+    published_raw = getattr(committer_payload, "date", None)
+    if not isinstance(sha, str) or not isinstance(published_raw, str):
+        raise RuntimeError("GitHub commits API omitted trae-oss commit date metadata")
+    published_at = parse_utc_date(published_raw)
     return snapshot_row(
         timepoint_date=timepoint_date,
         cutoff=cutoff,

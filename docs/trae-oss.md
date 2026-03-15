@@ -14,6 +14,7 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
 
 - `cakit install trae-oss` installs latest upstream ref at install time.
 - `cakit install trae-oss --version <git_ref>` installs from `bytedance/trae-agent`.
+- For installed-version reporting, cakit reads the exact git revision from uv's `uv-receipt.toml` and returns that git ref instead of Trae's package version string from `trae-cli --version`.
 - cakit installs runtime extras required by upstream imports:
   - `docker`
   - `pexpect`
@@ -46,8 +47,8 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
 - Model name: trajectory top-level `model`.
 - `response`:
   - `final_result`
+  - fallback: latest non-empty `agent_steps[*].llm_response.content`
   - fallback: latest non-empty `llm_interactions[*].response.content`
-  - fallback: last non-empty stdout line
 - `trajectory_path`: YAML-formatted trace from trajectory file; fallback to formatted raw output.
 
 ## Exit code policy

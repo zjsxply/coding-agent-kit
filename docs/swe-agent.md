@@ -14,8 +14,8 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
 
 - `cakit install swe-agent` resolves the latest upstream release tag, then installs that git ref with `uv tool install`.
 - If `uv` is unavailable, cakit falls back to `pip install` for the same git ref.
-- `cakit install swe-agent --version <tag>` installs the specified upstream git tag with the same flow.
-- cakit also prepares runtime assets (`config/`, `tools/`, `trajectories/`) under `~/.cache/cakit/swe-agent-assets/<tag>` and passes:
+- `cakit install swe-agent --version <tag_or_plain_version>` installs the specified upstream git tag with the same flow. Plain semver such as `1.1.0` is normalized to the upstream `v1.1.0` tag internally.
+- cakit also prepares runtime assets (`config/`, `tools/`, `trajectories/`) under `~/.cache/cakit/swe-agent-assets/<resolved_tag>` and passes:
   - `SWE_AGENT_CONFIG_DIR`
   - `SWE_AGENT_TOOLS_DIR`
   - `SWE_AGENT_TRAJECTORY_DIR`

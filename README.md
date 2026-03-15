@@ -44,9 +44,9 @@ Use `--version` to install a specific version or reference:
 - `deepagents`: `deepagents-cli` package version (for example `0.0.21`).
 - `factory`: Factory CLI release version (for example `0.57.15`).
 - `trae-cn`: TRAE CLI version (for example `0.111.5`).
-- `openhands`: `openhands` package version (for example `1.12.1`).
-- `swe-agent`: upstream git ref / release tag (for example `v1.1.0`).
-- `trae-oss`: git ref (tag / branch / commit).
+- `openhands`: `openhands` package version (for example `1.13.0`).
+- `swe-agent`: upstream git ref / release tag (for example `1.1.0` or `v1.1.0`; plain semver is normalized to the upstream `v` tag internally).
+- `trae-oss`: git ref (tag / branch / commit). cakit reports the installed git revision rather than Trae's package marketing version string.
 
 For a per-agent install-method and runtime-dependency matrix, see `docs/runtime_dependencies_compatibility.md`.
 
@@ -288,9 +288,9 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 | trae-cn | ✗ |  | ✗ | ✗ |  |  |  |  | 0.111.5 |
 | qwen |  | ✓ | ✓ |  |  |  |  | ✓ | 0.12.3 |
 | qoder |  | ✗ |  | ✗ |  |  |  |  | 0.1.28 |
-| openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
+| openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.13.0 |
 | swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  | 1.1.0 |
-| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  | 0.1.0 |
+| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  | e839e559ac61bdd0e057c375dd1dee391fee797d |
 
 ## Todo
 

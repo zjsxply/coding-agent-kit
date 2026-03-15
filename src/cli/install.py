@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ ALL_AGENT_SELECTORS = {"*", "all"}
 MAX_PARALLEL_INSTALL_TARGETS = 6
 SUPPORTED_PACKAGE_MANAGERS = ("apt-get", "apk", "dnf", "microdnf", "yum", "zypper", "pacman")
 MINIMUM_NODE_VERSION = (22, 16, 0)
+MINIMUM_CMAKE_VERSION = (3, 19, 0)
 NODEJS_LTS_LINE = "22"
 NODEJS_DIST_BASE_URL = "https://nodejs.org/dist"
 APK_EDGE_REPOSITORIES = (
@@ -31,11 +33,19 @@ APK_EDGE_REPOSITORIES = (
 SYSTEM_RUNTIME_BINARIES = {
     "bash": "bash",
     "bzip2": "bzip2",
+    "cmake": "cmake",
     "curl": "curl",
+    "g++": "g++",
     "git": "git",
     "gzip": "gzip",
+    "make": "make",
+    "python3": "python3",
     "tar": "tar",
     "which": "which",
+}
+SYSTEM_RUNTIME_PACKAGES = {
+    "libxcb",
+    "libgomp",
 }
 TargetCommandResult = tuple[bool, dict[str, object]]
 
@@ -347,11 +357,37 @@ def _installed_node_version() -> Optional[tuple[int, ...]]:
     return _parse_version_tuple(result.stdout or "")
 
 
+def _installed_cmake_version() -> Optional[tuple[int, ...]]:
+    cmake_binary = _candidate_runtime_binary("cmake")
+    if cmake_binary is None:
+        return None
+    result = subprocess.run(
+        [cmake_binary, "--version"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if result.returncode != 0:
+        return None
+    output = result.stdout or ""
+    for line in output.splitlines():
+        match = re.search(r"\bversion\s+([0-9]+(?:\.[0-9]+)+)", line, flags=re.IGNORECASE)
+        if match:
+            return _parse_version_tuple(match.group(1))
+    return _parse_version_tuple(output)
+
+
 def _node_tools_ready() -> bool:
     node_binary = _candidate_runtime_binary("node")
     npm_binary = _candidate_runtime_binary("npm")
     version = _installed_node_version()
     return node_binary is not None and npm_binary is not None and version is not None and version >= MINIMUM_NODE_VERSION
+
+
+def _cmake_ready() -> bool:
+    version = _installed_cmake_version()
+    return version is not None and version >= MINIMUM_CMAKE_VERSION
 
 
 def _prepend_path(path: Path) -> None:
@@ -508,6 +544,30 @@ def package_install_commands(
 def system_runtime_package_name(runtime_name: str, package_manager: str) -> str:
     if runtime_name == "git" and package_manager in {"dnf", "microdnf", "yum", "zypper"}:
         return "git-core"
+    if runtime_name == "g++":
+        if package_manager in {"dnf", "microdnf", "yum", "zypper"}:
+            return "gcc-c++"
+        if package_manager == "pacman":
+            return "gcc"
+        return "g++"
+    if runtime_name == "python3-pip":
+        if package_manager == "apk":
+            return "py3-pip"
+        if package_manager == "pacman":
+            return "python-pip"
+        return "python3-pip"
+    if runtime_name == "python3" and package_manager == "pacman":
+        return "python"
+    if runtime_name == "libxcb":
+        if package_manager in {"apt-get", "zypper"}:
+            return "libxcb1"
+        return "libxcb"
+    if runtime_name == "libgomp":
+        if package_manager in {"apt-get", "zypper"}:
+            return "libgomp1"
+        if package_manager == "pacman":
+            return "gcc-libs"
+        return "libgomp"
     return runtime_name
 
 
@@ -569,6 +629,61 @@ def ensure_node_tools(*, quiet_success: bool = False, output_stream: Optional[Te
     return True
 
 
+def _python_pip_ready(python_binary: str) -> bool:
+    result = subprocess.run(
+        [python_binary, "-m", "pip", "--version"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    return result.returncode == 0
+
+
+def ensure_modern_cmake(*, quiet_success: bool = False, output_stream: Optional[TextIO] = None) -> bool:
+    stream = output_stream or sys.stderr
+    if _cmake_ready():
+        return True
+    python_binary = _candidate_runtime_binary("python3")
+    if python_binary is None:
+        print("[deps] python3 is required to install a newer cmake.", file=stream)
+        return False
+    if not _python_pip_ready(python_binary):
+        package_manager = detect_package_manager()
+        if package_manager is None:
+            print("[deps] no supported package manager detected; cannot install python3-pip for cmake.", file=stream)
+            return False
+        if not install_system_packages_linux(
+            [system_runtime_package_name("python3-pip", package_manager)],
+            quiet_success=quiet_success,
+            output_stream=stream,
+            refresh_package_index=True,
+        ):
+            return False
+        if not _python_pip_ready(python_binary):
+            print("[deps] python3-pip installation did not provide pip.", file=stream)
+            return False
+    if not quiet_success:
+        version = _installed_cmake_version()
+        if version is None:
+            print("[deps] cmake not found or version could not be determined; installing a newer user-local cmake.", file=stream)
+        else:
+            print(
+                f"[deps] cmake {_format_version_tuple(version)} is too old; "
+                f"need >= {_format_version_tuple(MINIMUM_CMAKE_VERSION)}. Installing a newer user-local cmake.",
+                file=stream,
+            )
+    if not run_logged_command(
+        "[deps]",
+        [python_binary, "-m", "pip", "install", "--user", "--upgrade", "cmake>=3.19,<4"],
+        quiet_success=quiet_success,
+        output_stream=stream,
+    ):
+        return False
+    _prepend_path(_preferred_bin_dir())
+    return _cmake_ready()
+
+
 def ensure_dependencies(agent_name: str, *, output_stream: Optional[TextIO] = None) -> bool:
     stream = output_stream or sys.stderr
     required_runtimes = create_agent(agent_name).runtime_dependencies()
@@ -584,6 +699,25 @@ def ensure_dependencies(agent_name: str, *, output_stream: Optional[TextIO] = No
                 if runtime_install.resolve_uv_binary() is None:
                     ok = install_uv_linux(quiet_success=True, output_stream=stream) and ok
             continue
+        if runtime_name == "cmake":
+            with file_lock("deps-cmake"):
+                version = _installed_cmake_version()
+                if version is None:
+                    package_manager = detect_package_manager()
+                    if package_manager is None:
+                        ok = False
+                        continue
+                    if not install_system_packages_linux(
+                        [system_runtime_package_name(runtime_name, package_manager)],
+                        quiet_success=True,
+                        output_stream=stream,
+                        refresh_package_index=True,
+                    ):
+                        ok = False
+                        continue
+                if not ensure_modern_cmake(quiet_success=True, output_stream=stream):
+                    ok = False
+            continue
         if runtime_name in SYSTEM_RUNTIME_BINARIES:
             binary_name = SYSTEM_RUNTIME_BINARIES[runtime_name]
             with file_lock(f"deps-system-{runtime_name}"):
@@ -598,6 +732,18 @@ def ensure_dependencies(agent_name: str, *, output_stream: Optional[TextIO] = No
                         output_stream=stream,
                         refresh_package_index=True,
                     ) and ok
+            continue
+        if runtime_name in SYSTEM_RUNTIME_PACKAGES:
+            package_manager = detect_package_manager()
+            if package_manager is None:
+                ok = False
+                continue
+            ok = install_system_packages_linux(
+                [system_runtime_package_name(runtime_name, package_manager)],
+                quiet_success=True,
+                output_stream=stream,
+                refresh_package_index=True,
+            ) and ok
             continue
         print(f"[deps] unsupported runtime dependency for {agent_name}: {runtime_name}", file=stream)
         ok = False

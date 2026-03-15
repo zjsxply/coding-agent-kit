@@ -16,7 +16,10 @@ curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.
 cakit install goose --version <goose_version>
 ```
 
-cakit 会把 `--version` 映射为 `GOOSE_VERSION=<value>`，仍调用同一官方安装脚本。
+cakit 会把 `--version` 映射为 `GOOSE_VERSION=<value>`，仍调用同一官方安装脚本；像 `1.22.0` 这样的纯 semver 会规范化为上游 `v1.22.0` tag 形式。
+
+在 Linux 上，除了 `bzip2`、`tar` 这类解包工具外，cakit 还会把当前 Goose 发行二进制实际依赖的系统运行库 `libxcb`、`libgomp` 也建模为运行时依赖。
+由于官方脚本会直接从所选 release tag 下载当前平台归档，只有该 tag 仍然发布了当前平台对应资产时，指定版本安装才会成功。
 
 ## 配置
 

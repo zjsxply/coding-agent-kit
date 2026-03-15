@@ -66,5 +66,8 @@ Use this skill when you need a `cakit install <agent> --version ...` value for a
 ## References
 
 - For the per-agent source matrix and query rules, read [references/source-matrix.md](references/source-matrix.md).
-- For a reusable command-line helper that emits snapshot TSV rows from official upstream history sources, run `source .venv/bin/activate && python references/query_install_versions.py --timepoint-date YYYY-MM-DD --agent <agent...>`.
+- The reusable command-line helper uses `ghapi` for GitHub history queries. One-time setup:
+  `source .venv/bin/activate && python -m ensurepip && python -m pip install ghapi`
+- Then run:
+  `source .venv/bin/activate && python references/query_install_versions.py --timepoint-date YYYY-MM-DD --agent <agent...>`.
 - For currently saved snapshot work, inspect [tests/install_script_version_snapshots.tsv](/root/coding-agent-kit/tests/install_script_version_snapshots.tsv).

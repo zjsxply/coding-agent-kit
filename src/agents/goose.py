@@ -21,7 +21,7 @@ class GooseAgent(CodingAgent):
     binary = "goose"
     supports_images = True
     supports_videos = True
-    required_runtimes = ("bzip2", "curl", "tar")
+    required_runtimes = ("bzip2", "curl", "tar", "libxcb", "libgomp")
     install_strategy = InstallStrategy(
         kind="shell",
         shell_command="curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash",

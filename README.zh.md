@@ -44,9 +44,9 @@ cakit install [<agent|all|*>] [--scope user|global] [--version <value>]
 - `deepagents`：`deepagents-cli` 包版本（例如 `0.0.21`）。
 - `factory`：Factory CLI release 版本（例如 `0.57.15`）。
 - `trae-cn`：TRAE CLI 版本（例如 `0.111.5`）。
-- `openhands`：`openhands` 包版本（例如 `1.12.1`）。
-- `swe-agent`：上游 git 引用 / release tag（例如 `v1.1.0`）。
-- `trae-oss`：git 引用（tag / branch / commit）。
+- `openhands`：`openhands` 包版本（例如 `1.13.0`）。
+- `swe-agent`：上游 git 引用 / release tag（例如 `1.1.0` 或 `v1.1.0`；纯 semver 会在内部规范化为上游的 `v` 前缀 tag）。
+- `trae-oss`：git 引用（tag / branch / commit）。cakit 回报的是已安装 git revision，而不是 Trae 包自身的 marketing version 字符串。
 
 按 agent 细分的安装方式与运行依赖矩阵见 `docs/runtime_dependencies_compatibility.zh.md`。
 
@@ -288,9 +288,9 @@ cakit tools
 | trae-cn | ✗ |  | ✗ | ✗ |  |  |  |  | 0.111.5 |
 | qwen |  | ✓ | ✓ |  |  |  |  | ✓ | 0.12.3 |
 | qoder |  | ✗ |  | ✗ |  |  |  |  | 0.1.28 |
-| openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.12.1 |
+| openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.13.0 |
 | swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  | 1.1.0 |
-| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  | 0.1.0 |
+| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  | e839e559ac61bdd0e057c375dd1dee391fee797d |
 
 ## 待办（Todo）
 

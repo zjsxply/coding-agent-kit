@@ -7,7 +7,7 @@
 
 **数据来源**
 - `openhands --headless --json --override-with-envs -t ...` 的 stdout/stderr。
-- `~/.openhands/conversations/<conversation_id>/`（或 `OPENHANDS_CONVERSATIONS_DIR`）下的会话产物：
+- 运行时会话产物位于 run-local 持久化目录 `OPENHANDS_PERSISTENCE_DIR/conversations/<conversation_id>/`（若显式设置 `OPENHANDS_CONVERSATIONS_DIR` 则优先使用）。cakit 每次运行都会创建新的临时 persistence root：
   - `base_state.json`
   - `events/event-*.json`
 
@@ -28,7 +28,7 @@
 - `cakit run openhands --image/--video` 视为不支持。
 
 **字段映射**
-- `agent_version`：来自 `openhands --version`。
+- `agent_version`：来自 `openhands --version`，但会去掉前导的 `OpenHands CLI` 前缀后再规范化。
 - `runtime_seconds`：`openhands` 进程的墙钟耗时。
 - `models_usage`：
   - 模型名：`base_state.stats.usage_to_metrics.agent.model_name`。

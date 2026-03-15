@@ -16,7 +16,10 @@ To install a specific Goose version:
 cakit install goose --version <goose_version>
 ```
 
-cakit maps `--version` to `GOOSE_VERSION=<value>` for the same official installer script.
+cakit maps `--version` to `GOOSE_VERSION=<value>` for the same official installer script, and normalizes plain semver such as `1.22.0` to the upstream `v1.22.0` tag form.
+
+On Linux, cakit also models the runtime system libraries currently required by Goose's distributed binaries (`libxcb`, `libgomp`) in addition to archive tools such as `bzip2` and `tar`.
+Because the official script downloads a platform archive from the selected release tag, versioned installs only work for tags that still publish the matching asset for the current platform.
 
 ## Configure
 

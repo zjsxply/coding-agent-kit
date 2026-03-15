@@ -11,6 +11,7 @@ This document explains how cakit runs OpenCode and extracts run metadata.
 - cakit tries that script path first and falls back to `npm install -g opencode-ai` if the script path fails.
 - `--scope user|global` does not affect the primary script path. It only affects the npm fallback path if cakit has to use it.
 - cakit intentionally does not let the upstream installer edit shell rc/profile files; expose `~/.opencode/bin` yourself if you need it in login shells outside the current cakit-managed flow.
+- Inside cakit-managed install/run/version checks, cakit prepends `~/.opencode/bin` to `PATH` so the installed binary is discovered immediately even if your shell profile was not modified.
 
 **Auth and Configuration**
 - OAuth: run `opencode auth login` with the upstream CLI flow.
@@ -42,7 +43,7 @@ This document explains how cakit runs OpenCode and extracts run metadata.
 **Stats Extraction (strict)**
 - cakit first reads `sessionID` from OpenCode JSON events (`--format json`) for the current run.
 - cakit then runs `opencode export <sessionID>` and parses only that exact session.
-- `agent_version`: from `opencode --version`.
+- `agent_version`: normalized from `opencode --version` by stripping the leading upstream CLI token.
 - `response`: from the last `text` event in run JSON output (`type == "text"` and `part.type == "text"`).
 - `models_usage`:
   - From exported assistant messages (`messages[].info.role == "assistant"`).

@@ -45,8 +45,27 @@ class OpenCodeAgent(CodingAgent):
         args=("opencode", "--version"),
         parse_mode="regex_first_line",
         regex=r"^(?:opencode\s+)?([A-Za-z0-9._-]+)$",
+        env_mode="runtime_assets",
     )
     _SUPPORTED_MODALITIES = ("text", "audio", "image", "video", "pdf")
+
+    def _opencode_bin_dir(self) -> Path:
+        return Path.home() / ".opencode" / "bin"
+
+    def _runtime_asset_env(self, *, create_if_missing: bool = True) -> Optional[Dict[str, str]]:
+        bin_dir = self._opencode_bin_dir()
+        if create_if_missing:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+        elif not bin_dir.is_dir():
+            return None
+        return {"PATH": str(bin_dir)}
+
+    def is_installed(self) -> bool:
+        runtime_assets_env = self._runtime_asset_env(create_if_missing=False)
+        if runtime_assets_env is None:
+            return False
+        result = self._run(["opencode", "--version"], env=runtime_assets_env)
+        return result.exit_code == 0 and bool(result.output.strip())
 
     def _run_impl(
         self,
@@ -66,13 +85,17 @@ class OpenCodeAgent(CodingAgent):
         if env_error is not None:
             return self._build_error_run_result(message=env_error, cakit_exit_code=1)
 
-        run_env = self._build_run_env(
+        runtime_assets_env = self._runtime_asset_env(create_if_missing=False) or {}
+        run_env = {
+            **runtime_assets_env,
+            **self._build_run_env(
             model=model,
             custom_model_id=custom_model_id,
             api_key=api_key,
             base_url=base_url,
             model_capabilities=model_capabilities,
-        )
+            ),
+        }
 
         template = self.run_template
         extra_args: list[str] = []

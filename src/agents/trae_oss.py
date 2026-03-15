@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .base import (
     CodingAgent,
@@ -15,6 +16,7 @@ from .base import (
     RunParseResult,
     RunPlan,
 )
+from ..agent_runtime import command_exec as runtime_command
 from ..stats_extract import (
     build_single_model_stats_snapshot,
     parse_usage_by_model,
@@ -62,6 +64,22 @@ class TraeOssAgent(CodingAgent):
             return False
         result = self._run(["trae-cli", "--version"])
         return result.exit_code == 0 and bool(result.output.strip())
+
+    def get_version(self) -> Optional[str]:
+        receipt_path = self._uv_receipt_path()
+        if receipt_path is None:
+            return None
+        receipt_text = runtime_parsing.normalize_text(self._read_text(receipt_path))
+        if receipt_text is None:
+            return None
+        match = re.search(r'git\s*=\s*"([^"]+)"', receipt_text)
+        if match is None:
+            return None
+        query = parse_qs(urlparse(match.group(1)).query)
+        revisions = query.get("rev")
+        if not revisions:
+            return None
+        return runtime_parsing.normalize_text(revisions[-1])
 
     def configure(self) -> Optional[str]:
         api_key, api_base, model = self._resolve_runtime_settings()
@@ -265,3 +283,17 @@ class TraeOssAgent(CodingAgent):
         if host.endswith("api.openai.com"):
             return "openai"
         return "doubao"
+
+    def _uv_receipt_path(self) -> Optional[Path]:
+        binary_path = runtime_command.resolve_binary(
+            agent_name=self.name,
+            binary=self.binary,
+            npm_prefix=self._npm_prefix(),
+            env_source=os.environ,
+        )
+        if binary_path is None:
+            return None
+        resolved_binary = Path(binary_path).expanduser().resolve()
+        if resolved_binary.parent.name != "bin":
+            return None
+        return resolved_binary.parent.parent / "uv-receipt.toml"

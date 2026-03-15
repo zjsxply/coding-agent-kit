@@ -23,7 +23,7 @@ class CrushAgent(CodingAgent):
     version_template = VersionCommandTemplate(
         args=("crush", "--version"),
         parse_mode="regex_first_line",
-        regex=r"(?i)^(?:crush version )?([A-Za-z0-9._-]+)$",
+        regex=r"(?i)^(?:crush version )?v?([A-Za-z0-9._-]+)$",
     )
 
     def _config_path(self) -> Path:

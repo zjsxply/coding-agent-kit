@@ -67,8 +67,8 @@
 | `aider` | `aider-chat` | PEP 440 版本 | 指定 Python `3.12`；启用 force reinstall |
 | `deepagents` | `deepagents-cli` | PEP 440 版本 | 指定 Python `3.12`；启用 force reinstall |
 | `openhands` | `openhands` | PEP 440 版本 | 指定 Python `3.12` |
-| `swe-agent` | `git+https://github.com/SWE-agent/SWE-agent` | Git ref / release tag | 未传 `--version` 时，安装流程会先解析上游最新 release |
-| `trae-oss` | `git+https://github.com/bytedance/trae-agent.git` | Git ref | 指定 Python `3.12`；额外安装 `docker`、`pexpect`、`unidiff` |
+| `swe-agent` | `git+https://github.com/SWE-agent/SWE-agent` | Git ref / release tag | 未传 `--version` 时，安装流程会先解析上游最新 release；纯 semver selector 会规范化为上游 `v` 前缀 tag |
+| `trae-oss` | `git+https://github.com/bytedance/trae-agent.git` | Git ref | 指定 Python `3.12`；额外安装 `docker`、`pexpect`、`unidiff`；已安装版本回报会返回 uv 元数据中的解析后 git revision |
 
 ## Shell 安装器
 
@@ -83,8 +83,8 @@
 | --- | --- | --- | --- | --- | --- |
 | `claude` | `curl -fsSL https://claude.ai/install.sh | bash` | 仍使用同一脚本，但把版本选择器作为 `bash -s -- <value>` 传入 | `bash`、`curl`、`node` | `bash`、`curl`、校验 SHA256 的工具（`sha256sum` 或 `shasum`） | 脚本会先从 GCS bucket 下载对应平台的 `claude` 单文件二进制，读取 `manifest.json` 校验 SHA256，然后执行下载下来的 `claude install` 完成 launcher / shell integration；如果脚本路径失败，cakit 会回退到 `npm install -g @anthropic-ai/claude-code` |
 | `copilot` | `curl -fsSL https://gh.io/copilot-install | bash` | 仍使用同一安装器，但通过 `VERSION=<value>` 传给 `bash` 进程 | `bash`、`curl`、`tar`、`node` | `bash`、`curl`/`wget`、`tar` | 当前可用安装器会下载 release `tar.gz`、可选校验 `SHA256SUMS.txt`、再把 `copilot` 解压到 `PREFIX/bin`；如果脚本路径失败，cakit 会回退到 `npm install -g @github/copilot` |
-| `goose` | 使用 GitHub Releases 提供的官方下载脚本 | 仍使用同一脚本，但由 cakit 注入 `GOOSE_VERSION` | `bash`、`bzip2`、`curl`、`tar` | `bash`、`curl`、Linux/macOS 需要 `tar`，Windows 需要 `unzip`/PowerShell | 脚本会按平台下载 release 归档（Linux/macOS 为 `.tar.bz2`，Windows 为 `.zip`），解压出 `goose`/`goose.exe` 放到 bin 目录，然后可选执行 `goose configure` |
-| `openclaw` | `curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard` | 仍使用同一脚本，但通过 `bash -s -- --no-onboard --version <value>` 传入 `--no-onboard --version` | `bash`、`curl`、`git`、`node` | `bash`、`curl`/`wget`；默认路径还需要 Node.js / npm / git；源码路径还需要 `pnpm` | 默认安装路径在脚本内部仍然是 npm-backed：脚本会准备好 Node / npm 后执行 `npm install -g openclaw@...`。cakit 会在安装阶段禁用上游 onboarding，避免非交互环境因为 `/dev/tty` 失败；如果脚本安装路径失败，cakit 会回退到直接用 npm 安装。同一个脚本还支持 `--install-method git`，会 `git clone` 源码并用 `pnpm` 构建 |
+| `goose` | 使用 GitHub Releases 提供的官方下载脚本 | 仍使用同一脚本，但由 cakit 注入 `GOOSE_VERSION` | `bash`、`bzip2`、`curl`、`tar`、`libxcb`、`libgomp` | `bash`、`curl`、Linux/macOS 需要 `tar`，Windows 需要 `unzip`/PowerShell | 脚本会按平台下载 release 归档（Linux/macOS 为 `.tar.bz2`，Windows 为 `.zip`），解压出 `goose`/`goose.exe` 放到 bin 目录，然后可选执行 `goose configure`。当前 Linux 二进制还会动态依赖 `libxcb`、`libgomp`；而且只有目标 release tag 仍发布了当前平台对应归档时，指定版本安装才会成功 |
+| `openclaw` | `curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard` | 仍使用同一脚本，但通过 `bash -s -- --no-onboard --version <value>` 传入 `--no-onboard --version` | `bash`、`curl`、`git`、`node`、`python3`、`make`、`g++`、`cmake` | `bash`、`curl`/`wget`；默认路径还需要 Node.js / npm / git，且在 `node-llama-cpp` 回退源码构建时还需要原生编译链（`python3`、`make`、`g++`、`cmake >= 3.19`）；源码路径还需要 `pnpm` | 默认安装路径在脚本内部仍然是 npm-backed：脚本会准备好 Node / npm 后执行 `npm install -g openclaw@...`。cakit 会在安装阶段禁用上游 onboarding，避免非交互环境因为 `/dev/tty` 失败；如果宿主发行版自带的 `cmake` 太旧，cakit 会先补一个用户态的新 `cmake` 再继续安装。若脚本路径仍失败，cakit 会回退到直接用 npm 安装。同一个脚本还支持 `--install-method git`，会 `git clone` 源码并用 `pnpm` 构建 |
 | `opencode` | 包装后的 `curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path` | 仍使用同一包装脚本，但通过 `bash -s -- --no-modify-path --version <value>` 传入参数 | `bash`、`curl`、`tar`、`which`、`node` | `bash`、`curl`、Linux 需要 `tar`，其他平台需要 `unzip` | 脚本会从 GitHub Releases 下载对应平台归档，解压出 `opencode` 二进制并安装到 `~/.opencode/bin`。cakit 会把 `which` 建模为运行时依赖，并在缺失时通过宿主机包管理器自动安装；同时继续通过 `--no-modify-path` 禁用上游 PATH 文件改写；如果脚本路径失败，cakit 会回退到 `npm install -g opencode-ai` |
 
 ## Custom 安装器

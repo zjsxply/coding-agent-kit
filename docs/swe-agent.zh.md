@@ -14,8 +14,8 @@
 
 - `cakit install swe-agent` 会先解析上游最新 release tag，再用 `uv tool install` 安装该 git ref。
 - 若本机没有 `uv`，cakit 会回退为对同一 git ref 执行 `pip install`。
-- `cakit install swe-agent --version <tag>` 也走同样流程，只是固定安装指定上游 git tag。
-- cakit 会额外准备运行资源到 `~/.cache/cakit/swe-agent-assets/<tag>`（`config/`、`tools/`、`trajectories/`），并传递：
+- `cakit install swe-agent --version <tag_or_plain_version>` 也走同样流程，只是固定安装指定上游 git tag。像 `1.1.0` 这样的纯 semver 会在内部规范化为上游 `v1.1.0` tag。
+- cakit 会额外准备运行资源到 `~/.cache/cakit/swe-agent-assets/<resolved_tag>`（`config/`、`tools/`、`trajectories/`），并传递：
   - `SWE_AGENT_CONFIG_DIR`
   - `SWE_AGENT_TOOLS_DIR`
   - `SWE_AGENT_TRAJECTORY_DIR`

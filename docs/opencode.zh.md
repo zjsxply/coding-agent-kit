@@ -11,6 +11,7 @@
 - cakit 会先尝试这条脚本路径；如果脚本路径失败，再回退到 `npm install -g opencode-ai`。
 - `--scope user|global` 对主脚本路径不生效；只有在 cakit 触发 npm 回退时才会影响安装位置。
 - cakit 会刻意禁止上游安装器改写 shell rc/profile 文件；如果你想在 cakit 之外的登录 shell 里直接使用它，需要自行把 `~/.opencode/bin` 暴露到 PATH。
+- 在 cakit 自己的 install/run/version 检查流程里，cakit 会主动把 `~/.opencode/bin` 加到 `PATH` 前缀，因此即使没有改 shell profile，也能立即发现已安装二进制。
 
 **鉴权与配置**
 - OAuth：使用上游 CLI 执行 `opencode auth login`。
@@ -42,7 +43,7 @@
 **统计提取（严格模式）**
 - cakit 先从 OpenCode `--format json` 输出中读取本次运行的 `sessionID`。
 - 再调用 `opencode export <sessionID>`，仅解析该精确会话。
-- `agent_version`：来自 `opencode --version`。
+- `agent_version`：来自 `opencode --version`，但会去掉前导的上游 CLI 标识并做规范化。
 - `response`：来自运行 JSON 事件中最后一个文本块（`type == "text"` 且 `part.type == "text"`）。
 - `models_usage`：
   - 来源：导出会话里的 assistant 消息（`messages[].info.role == "assistant"`）。

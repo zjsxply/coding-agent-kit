@@ -14,6 +14,7 @@ from .base import (
     RunParseResult,
     RunPlan,
     RunCommandTemplate,
+    VersionCommandTemplate,
 )
 from ..stats_extract import (
     JsonlStatsSpec,
@@ -39,6 +40,11 @@ class CopilotAgent(CodingAgent):
         ),
         InstallStrategy(kind="npm", package="@github/copilot"),
     ]
+    version_template = VersionCommandTemplate(
+        args=("copilot", "--version"),
+        parse_mode="regex_first_line",
+        regex=r"([0-9]+(?:\.[0-9]+)*)\b",
+    )
     run_template = RunCommandTemplate(
         base_args=("--yolo", "--no-ask-user", "--log-level", "debug"),
         prompt_mode="flag",

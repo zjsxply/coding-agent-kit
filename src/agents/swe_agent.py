@@ -50,7 +50,7 @@ class SweAgent(CodingAgent):
         normalized_version = self._normalize_release_tag(resolved_version)
         self._install_runtime_asset_version = normalized_version
         try:
-            result = super().install(scope=scope, version=resolved_version)
+            result = super().install(scope=scope, version=normalized_version)
         finally:
             self._install_runtime_asset_version = None
         if result.ok:

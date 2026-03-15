@@ -25,6 +25,7 @@ curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --version <o
 ```
 
 `--scope user|global` 对主脚本路径不生效；只有在 cakit 触发 npm 回退时才会影响安装位置。安装阶段跳过 onboarding，可以避免非交互环境下的 `/dev/tty` 失败；后续可通过 `cakit configure openclaw` 或 `cakit run openclaw ...` 完成非交互配置。
+对于当前默认安装路径，cakit 会把 `curl`、`git`、`node`、`python3`、`make`、`g++`、`cmake` 建模为所需运行时；如果发行版自带的 `cmake` 对 `node-llama-cpp` 来说太旧，cakit 会先补一个用户态的新 `cmake` 再继续安装。
 如果上游安装器失败，cakit 会统一回退到 `npm install -g openclaw`。
 
 ## API 配置（`cakit configure openclaw`）

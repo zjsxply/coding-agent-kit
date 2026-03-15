@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 from ..agent_runtime import parsing as runtime_parsing
 from ..agent_runtime import trajectory as runtime_trajectory
-from .base import CodingAgent, InstallStrategy, RunCommandTemplate
+from .base import CodingAgent, InstallStrategy, RunCommandTemplate, VersionCommandTemplate
 from ..models import RunResult
 from ..stats_extract import (
     last_value,
@@ -34,6 +34,11 @@ class ClaudeAgent(CodingAgent):
         ),
         InstallStrategy(kind="npm", package="@anthropic-ai/claude-code"),
     ]
+    version_template = VersionCommandTemplate(
+        args=("claude", "--version"),
+        parse_mode="regex_first_line",
+        regex=r"^([0-9]+(?:\.[0-9]+)*)\b",
+    )
     run_template = RunCommandTemplate(
         base_args=(
             "-p",

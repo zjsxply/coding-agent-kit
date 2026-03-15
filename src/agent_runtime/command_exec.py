@@ -18,6 +18,13 @@ def _default_install_home(env_source: Dict[str, str]) -> Path:
     return Path.home() / ".local" / "share" / "cakit"
 
 
+def _node_install_bin_dirs(env_source: Dict[str, str]) -> tuple[str, ...]:
+    node_root = _default_install_home(env_source) / "node"
+    if not node_root.exists():
+        return ()
+    return tuple(str(path) for path in sorted(node_root.glob("*/bin"), reverse=True) if path.is_dir())
+
+
 def build_runtime_path_prefixes(cache_key: str) -> tuple[str, ...]:
     npm_prefix_env = os.environ.get("CAKIT_NPM_PREFIX")
     npm_prefix = Path(npm_prefix_env).expanduser() if npm_prefix_env else Path.home() / ".npm-global"
@@ -29,12 +36,14 @@ def build_runtime_path_prefixes(cache_key: str) -> tuple[str, ...]:
         if install_uv_dir
         else _default_install_home(os.environ) / "uv"
     )
+    node_bin_dirs = _node_install_bin_dirs(os.environ)
     return tuple(
         dict.fromkeys(
             (
                 str(Path(uv_tool_bin).expanduser()) if uv_tool_bin else str(Path("/tmp") / "cakit" / "bin"),
                 str(Path(xdg_bin_home).expanduser()) if xdg_bin_home else str(Path.home() / ".local" / "bin"),
                 str(cakit_uv_root),
+                *node_bin_dirs,
                 str(npm_prefix / "bin"),
                 str(Path.home() / ".npm" / "bin"),
                 str(Path.home() / ".local" / "bin"),
@@ -126,6 +135,7 @@ def resolve_binary(
     if uv_tool_bin:
         extra_bin_candidates.append(Path(uv_tool_bin).expanduser())
     extra_bin_candidates.append(Path("/tmp") / "cakit" / "bin")
+    extra_bin_candidates.extend(Path(path) for path in _node_install_bin_dirs(env_source))
 
     for folder in (
         *extra_bin_candidates,

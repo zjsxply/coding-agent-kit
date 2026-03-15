@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from .base import (
     CodingAgent,
     InstallStrategy,
+    VersionCommandTemplate,
 )
 from ..io_helpers import dump_toml
 from ..models import RunResult
@@ -35,6 +36,11 @@ class CodexAgent(CodingAgent):
         package="@openai/codex",
         require_config=True,
         configure_failure_message="codex configure failed",
+    )
+    version_template = VersionCommandTemplate(
+        args=("codex", "--version"),
+        parse_mode="regex_first_line",
+        regex=r"([0-9]+(?:\.[0-9]+)*)\b",
     )
 
     def configure(self) -> Optional[str]:

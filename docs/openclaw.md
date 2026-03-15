@@ -25,6 +25,7 @@ curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --version <o
 ```
 
 `--scope user|global` does not affect the primary script path. It only affects the npm fallback path if cakit has to use it. Skipping onboarding during install avoids `/dev/tty` failures in non-interactive environments; use `cakit configure openclaw` or `cakit run openclaw ...` to complete non-interactive setup later.
+For the current default install path, cakit models `curl`, `git`, `node`, `python3`, `make`, `g++`, and `cmake` as required runtimes; if the distro `cmake` is too old for `node-llama-cpp`, cakit supplements it with a newer user-local `cmake` before install.
 If the upstream installer fails for any reason, cakit falls back to `npm install -g openclaw`.
 
 ## API Configuration (`cakit configure openclaw`)

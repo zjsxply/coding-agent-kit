@@ -40,6 +40,56 @@ case "${1:-}" in
     grep -q '"parallel": true' /tmp/cakit-install-all.json
     grep -q '"results": \[' /tmp/cakit-install-all.json
     ;;
+  install-all-versioned)
+    sh ./install.sh
+    command -v cakit
+    snapshot_date=${VERSION_SNAPSHOT_DATE:-}
+    snapshot_file=./tests/install_script_version_snapshots.tsv
+    [ -n "$snapshot_date" ]
+    [ -f "$snapshot_file" ]
+    if awk -F '	' -v date="$snapshot_date" '
+      $0 ~ /^#/ { next }
+      $1 == date && $5 != "confirmed" { print; bad = 1 }
+      END { exit bad ? 0 : 1 }
+    ' "$snapshot_file"; then
+      echo "snapshot date $snapshot_date contains non-confirmed rows" >&2
+      exit 1
+    fi
+    snapshot_rows=$(awk -F '	' -v date="$snapshot_date" '
+      $0 ~ /^#/ { next }
+      $1 == date { printf "%s\t%s\n", $3, $4 }
+    ' "$snapshot_file")
+    if [ -z "$snapshot_rows" ]; then
+      echo "no snapshot rows found for $snapshot_date" >&2
+      exit 1
+    fi
+    printf '%s\n' "$snapshot_rows" >/tmp/cakit-install-all-versioned.tsv
+    while IFS='	' read -r agent version; do
+      [ -n "$agent" ]
+      [ -n "$version" ]
+      echo "[install-all-versioned] installing ${agent}@${version} from snapshot ${snapshot_date}" >&2
+      result_json="/tmp/cakit-install-${agent}.json"
+      result_stderr="/tmp/cakit-install-${agent}.stderr"
+      if ! cakit install "$agent" --version "$version" >"$result_json" 2>"$result_stderr"; then
+        if [ -s "$result_json" ]; then
+          cat "$result_json"
+        fi
+        if [ -s "$result_stderr" ]; then
+          cat "$result_stderr" >&2
+        fi
+        exit 1
+      fi
+      if ! grep -q "\"agent\": \"${agent}\"" "$result_json" \
+        || ! grep -q '"ok": true' "$result_json" \
+        || ! grep -q "\"version\": \"${version}\"" "$result_json"; then
+        cat "$result_json"
+        if [ -s "$result_stderr" ]; then
+          cat "$result_stderr" >&2
+        fi
+        exit 1
+      fi
+    done </tmp/cakit-install-all-versioned.tsv
+    ;;
   tools)
     sh ./install.sh
     command -v cakit

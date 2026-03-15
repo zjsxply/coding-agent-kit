@@ -7,7 +7,7 @@ This document explains how cakit runs OpenHands CLI and extracts run metadata.
 
 **Sources**
 - CLI stdout/stderr from `openhands --headless --json --override-with-envs -t ...`.
-- Conversation artifacts under `~/.openhands/conversations/<conversation_id>/` (or `OPENHANDS_CONVERSATIONS_DIR`):
+- Conversation artifacts from the run-local persistence tree under `OPENHANDS_PERSISTENCE_DIR/conversations/<conversation_id>/` (or `OPENHANDS_CONVERSATIONS_DIR` when explicitly set). cakit creates a fresh temporary persistence root for each run:
   - `base_state.json`
   - `events/event-*.json`
 
@@ -28,7 +28,7 @@ This document explains how cakit runs OpenHands CLI and extracts run metadata.
 - `cakit run openhands --image/--video` is treated as unsupported.
 
 **Field Mapping**
-- `agent_version`: from `openhands --version`.
+- `agent_version`: normalized from `openhands --version` by stripping the leading `OpenHands CLI` prefix.
 - `runtime_seconds`: wall time of the `openhands` process.
 - `models_usage`:
   - Model name: `base_state.stats.usage_to_metrics.agent.model_name`.

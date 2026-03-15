@@ -13,6 +13,7 @@ from .base import (
     RunCommandTemplate,
     RunParseResult,
     RunPlan,
+    VersionCommandTemplate,
 )
 from ..stats_extract import (
     build_single_model_stats_snapshot,
@@ -36,6 +37,11 @@ class OpenHandsAgent(CodingAgent):
         package="openhands",
         version_style="pep440",
         python_version="3.12",
+    )
+    version_template = VersionCommandTemplate(
+        args=("openhands", "--version"),
+        parse_mode="regex_first_line",
+        regex=r"^(?:OpenHands(?:\s+CLI)?\s+)?([A-Za-z0-9._-]+)$",
     )
     run_template = RunCommandTemplate(
         base_args=("--headless", "--json", "--override-with-envs"),

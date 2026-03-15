@@ -14,6 +14,7 @@
 
 - `cakit install trae-oss` 默认安装执行时可获得的上游最新引用。
 - `cakit install trae-oss --version <git_ref>` 从 `bytedance/trae-agent` 安装。
+- 对已安装版本的回报，cakit 会从 uv 的 `uv-receipt.toml` 读取精确 git revision，并返回这个 git ref，而不是 `trae-cli --version` 打印的 Trae 包版本字符串。
 - 为满足上游运行时导入依赖，cakit 会额外安装：
   - `docker`
   - `pexpect`
@@ -46,8 +47,8 @@
 - 模型名：trajectory 顶层 `model`
 - `response`：
   - 优先 `final_result`
+  - 回退为最新非空 `agent_steps[*].llm_response.content`
   - 回退为最新非空 `llm_interactions[*].response.content`
-  - 再回退 stdout 最后一行非空文本
 - `trajectory_path`：轨迹文件转 YAML 可读格式；若轨迹不可用则回退格式化原始输出。
 
 ## 退出码策略

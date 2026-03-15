@@ -10,6 +10,7 @@ from .base import (
     RunParseResult,
     RunPlan,
     RunCommandTemplate,
+    VersionCommandTemplate,
 )
 from ..agent_runtime import parsing as runtime_parsing
 from ..stats_extract import (
@@ -28,6 +29,11 @@ class AuggieAgent(CodingAgent):
     supports_images = True
     supports_videos = False
     install_strategy = InstallStrategy(kind="npm", package="@augmentcode/auggie")
+    version_template = VersionCommandTemplate(
+        args=("auggie", "--version"),
+        parse_mode="regex_first_line",
+        regex=r"^([0-9]+(?:\.[0-9]+)*)\b",
+    )
     run_template = RunCommandTemplate(
         base_args=("--print", "--quiet", "--output-format", "json"),
         prompt_mode="flag",
