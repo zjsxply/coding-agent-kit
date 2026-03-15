@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO_ARCHIVE_URL="https://github.com/zjsxply/coding-agent-kit/archive/refs/heads/main.tar.gz"
+REPO_GIT_URL="git+https://github.com/zjsxply/coding-agent-kit"
 UV_INSTALLER_URL="https://astral.sh/uv/install.sh"
 
 log() {
@@ -107,24 +107,21 @@ resolve_source() {
         return
     fi
 
-    case "$0" in
-        */*)
-            script_dir=$(
-                CDPATH= cd -- "$(dirname -- "$0")"
-                pwd
-            )
+    printf '%s\n' "$REPO_GIT_URL"
+}
+
+install_cakit() {
+    uv_bin=$1
+    source=$2
+
+    case "$source" in
+        git+*|http://*|https://*)
+            run_quiet "$uv_bin" tool install --force "$source"
             ;;
         *)
-            script_dir=$(pwd)
+            run_quiet "$uv_bin" tool install --force --from "$source" coding-agent-kit
             ;;
     esac
-
-    if [ -f "$script_dir/pyproject.toml" ] && [ -f "$script_dir/README.md" ]; then
-        printf '%s\n' "$script_dir"
-        return
-    fi
-
-    printf '%s\n' "$REPO_ARCHIVE_URL"
 }
 
 default_install_home() {
@@ -188,7 +185,7 @@ ensure_cakit_installed() {
     export UV_CACHE_DIR=${CAKIT_INSTALL_CACHE_DIR:-$install_home/cache}
 
     log "installing coding-agent-kit from $source"
-    run_quiet "$uv_bin" tool install --force --from "$source" coding-agent-kit
+    install_cakit "$uv_bin" "$source"
 
     cakit_bin="$UV_TOOL_BIN_DIR/cakit"
     [ -x "$cakit_bin" ] || fail "cakit executable was not created at $cakit_bin"

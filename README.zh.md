@@ -12,7 +12,7 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 pip install git+https://github.com/zjsxply/coding-agent-kit
 ```
 
-`install.sh` 会在需要时自动安装 `uv`，并把 `cakit` 安装到稳定的工具/bin 目录（root 默认 `/usr/local/bin`，非 root 默认用户本地 bin 目录）。对于全新的容器环境，优先推荐这条安装路径。
+`install.sh` 会在需要时自动安装 `uv`，默认通过 `git+https://github.com/zjsxply/coding-agent-kit` 安装 `cakit`，并放到稳定的工具/bin 目录（root 默认 `/usr/local/bin`，非 root 默认用户本地 bin 目录）。
 
 ## 命令
 

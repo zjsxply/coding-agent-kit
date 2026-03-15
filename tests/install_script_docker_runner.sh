@@ -16,7 +16,7 @@ require_command_any() {
 
 case "${1:-}" in
   basic)
-    sh ./install.sh
+    CAKIT_INSTALL_SOURCE=/work/cakit sh ./install.sh
     command -v cakit
     cakit --help >/tmp/cakit-help.txt
     cakit install --help >/tmp/cakit-install-help.txt
@@ -24,7 +24,7 @@ case "${1:-}" in
     grep -q "Install a coding agent" /tmp/cakit-install-help.txt
     ;;
   install-all)
-    sh ./install.sh
+    CAKIT_INSTALL_SOURCE=/work/cakit sh ./install.sh
     command -v cakit
     if ! cakit install all >/tmp/cakit-install-all.json 2>/tmp/cakit-install-all.stderr; then
       if [ -s /tmp/cakit-install-all.json ]; then
@@ -41,7 +41,7 @@ case "${1:-}" in
     grep -q '"results": \[' /tmp/cakit-install-all.json
     ;;
   install-all-versioned)
-    sh ./install.sh
+    CAKIT_INSTALL_SOURCE=/work/cakit sh ./install.sh
     command -v cakit
     snapshot_date=${VERSION_SNAPSHOT_DATE:-}
     snapshot_file=./tests/install_script_version_snapshots.tsv
@@ -91,7 +91,7 @@ case "${1:-}" in
     done </tmp/cakit-install-all-versioned.tsv
     ;;
   tools)
-    sh ./install.sh
+    CAKIT_INSTALL_SOURCE=/work/cakit sh ./install.sh
     command -v cakit
     if ! cakit tools >/tmp/cakit-tools.json 2>/tmp/cakit-tools.stderr; then
       if [ -s /tmp/cakit-tools.json ]; then

@@ -12,7 +12,7 @@ uv tool install git+https://github.com/zjsxply/coding-agent-kit
 pip install git+https://github.com/zjsxply/coding-agent-kit
 ```
 
-`install.sh` bootstraps `uv` when needed and installs `cakit` into a stable tool/bin location (`/usr/local/bin` for root, otherwise a user-local bin dir). In fresh container environments, this is the recommended path.
+`install.sh` bootstraps `uv` when needed and installs `cakit` from `git+https://github.com/zjsxply/coding-agent-kit` into a stable tool/bin location (`/usr/local/bin` for root, otherwise a user-local bin dir).
 
 ## Commands
 

@@ -526,7 +526,19 @@ def package_install_commands(
         commands.append(apt_get_command("install", "-y", *packages))
         return commands
     if package_manager == "apk":
-        return [["apk", "add", "--no-cache", *packages]]
+        command = ["apk", "add", "--no-cache"]
+        if "g++" in packages:
+            command.extend(
+                [
+                    "--update-cache",
+                    "--upgrade",
+                    "--repository",
+                    APK_EDGE_REPOSITORIES[0],
+                    "--repository",
+                    APK_EDGE_REPOSITORIES[1],
+                ]
+            )
+        return [[*command, *packages]]
     if package_manager == "dnf":
         return [["dnf", "install", "-y", "--setopt=install_weak_deps=False", "--setopt=tsflags=nodocs", *packages]]
     if package_manager == "microdnf":

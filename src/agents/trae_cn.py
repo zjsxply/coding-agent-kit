@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -46,6 +47,11 @@ class TraeCnAgent(CodingAgent):
         parse_mode="regex_first_line",
         regex=r"(?i)version\s+([A-Za-z0-9._-]+)$",
     )
+    _CURL_RETRY_ATTEMPTS = 5
+    _CURL_RETRY_DELAY_SECONDS = 2
+    _CURL_CONNECT_TIMEOUT_SECONDS = 30
+    _CURL_DOWNLOAD_MAX_TIME_SECONDS = 600
+    _CURL_TEXT_MAX_TIME_SECONDS = 60
     _LATEST_VERSION_URL = "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/trae-cli_latest_version.txt"
     _DOWNLOAD_URL_TEMPLATE = (
         "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/trae-cli_{version}_{os_name}_{arch}.tar.gz"
@@ -108,7 +114,14 @@ class TraeCnAgent(CodingAgent):
 
         with tempfile.TemporaryDirectory(prefix="cakit-trae-cn-") as temp_dir:
             tmp_archive = Path(temp_dir) / f"trae-cli_{archive_version}_{os_name}_{arch}.tar.gz"
-            download = self._run(["curl", "-fsSL", "-o", str(tmp_archive), download_url])
+            staging_root = Path(temp_dir) / "install-root"
+            staging_root.mkdir(parents=True, exist_ok=True)
+
+            download = self._run_curl_with_retries(
+                url=download_url,
+                target_path=tmp_archive,
+                max_time_seconds=self._CURL_DOWNLOAD_MAX_TIME_SECONDS,
+            )
             detail_parts.append(download.output)
             if download.exit_code != 0:
                 return CommandResult(
@@ -118,16 +131,21 @@ class TraeCnAgent(CodingAgent):
                     duration_seconds=time.monotonic() - started,
                 )
 
-            install_root.mkdir(parents=True, exist_ok=True)
-            extract = self._run(["tar", "-xzf", str(tmp_archive), "-C", str(install_root)])
+            extract = self._run(["tar", "-xzf", str(tmp_archive), "-C", str(staging_root)])
             detail_parts.append(extract.output)
-            if extract.exit_code != 0 or not bin_path.exists():
+            staged_bin_path = staging_root / "trae-cli"
+            if extract.exit_code != 0 or not staged_bin_path.exists():
                 return CommandResult(
                     exit_code=1,
                     stdout="\n".join(part for part in detail_parts if part),
                     stderr="failed to extract trae-cn archive",
                     duration_seconds=time.monotonic() - started,
                 )
+
+            install_root.parent.mkdir(parents=True, exist_ok=True)
+            if install_root.exists():
+                shutil.rmtree(install_root)
+            shutil.move(str(staging_root), str(install_root))
 
         bin_dir.mkdir(parents=True, exist_ok=True)
         symlink_path = bin_dir / "traecli"
@@ -226,7 +244,11 @@ class TraeCnAgent(CodingAgent):
             if not normalized.startswith("v"):
                 normalized = f"v{normalized}"
             return normalized, None
-        result = self._run(["curl", "-fsSL", self._LATEST_VERSION_URL])
+        result = self._run_curl_with_retries(
+            url=self._LATEST_VERSION_URL,
+            max_time_seconds=self._CURL_TEXT_MAX_TIME_SECONDS,
+            log_attempts=False,
+        )
         if result.exit_code != 0:
             return None, result.output
         latest = result.output.strip()
@@ -235,6 +257,65 @@ class TraeCnAgent(CodingAgent):
         if not latest.startswith("v"):
             latest = f"v{latest}"
         return latest, result.output
+
+    def _run_curl_with_retries(
+        self,
+        *,
+        url: str,
+        target_path: Optional[Path] = None,
+        max_time_seconds: int,
+        log_attempts: bool = True,
+    ) -> CommandResult:
+        started = time.monotonic()
+        outputs: list[str] = []
+        last_result: Optional[CommandResult] = None
+
+        for attempt in range(1, self._CURL_RETRY_ATTEMPTS + 1):
+            args = [
+                "curl",
+                "-fsSL",
+                "--connect-timeout",
+                str(self._CURL_CONNECT_TIMEOUT_SECONDS),
+                "--max-time",
+                str(max_time_seconds),
+            ]
+            if target_path is not None:
+                args.extend(["-o", str(target_path)])
+            args.append(url)
+
+            result = self._run(args)
+            last_result = result
+            outputs.append(f"[attempt {attempt}/{self._CURL_RETRY_ATTEMPTS}]\n{result.output}".rstrip())
+
+            if result.exit_code == 0:
+                success_output = "\n\n".join(outputs) if log_attempts else result.output
+                if target_path is None:
+                    return CommandResult(
+                        exit_code=0,
+                        stdout=success_output,
+                        stderr="",
+                        duration_seconds=time.monotonic() - started,
+                    )
+                if target_path.exists() and target_path.stat().st_size > 0:
+                    return CommandResult(
+                        exit_code=0,
+                        stdout=success_output,
+                        stderr="",
+                        duration_seconds=time.monotonic() - started,
+                    )
+                outputs.append("downloaded file is missing or empty")
+
+            if target_path is not None and target_path.exists():
+                target_path.unlink()
+            if attempt < self._CURL_RETRY_ATTEMPTS:
+                time.sleep(self._CURL_RETRY_DELAY_SECONDS * attempt)
+
+        return CommandResult(
+            exit_code=last_result.exit_code if last_result is not None else 1,
+            stdout="\n\n".join(outputs),
+            stderr="",
+            duration_seconds=time.monotonic() - started,
+        )
 
     def _config_root(self) -> Path:
         return self._resolve_writable_dir(
