@@ -85,6 +85,7 @@ class CommandResult:
 class InstallStrategy:
     kind: str
     package: Optional[str] = None
+    minimum_node_version: Optional[tuple[int, ...]] = None
     require_config: bool = False
     configure_failure_message: Optional[str] = None
     version_style: str = "npm"
@@ -432,6 +433,17 @@ class CodingAgent(abc.ABC):
             if strategy.kind == "uv_tool" and isinstance(strategy.package, str) and strategy.package.startswith("git+"):
                 inferred.append("git")
         return tuple(dict.fromkeys([*declared, *inferred]))
+
+    def minimum_node_version(self) -> Optional[tuple[int, ...]]:
+        strategies = self._normalize_install_strategies(self.install_strategy)
+        versions = [
+            strategy.minimum_node_version
+            for strategy in strategies
+            if strategy.minimum_node_version is not None
+        ]
+        if not versions:
+            return None
+        return max(versions)
 
     def _runtime_asset_env(
         self,

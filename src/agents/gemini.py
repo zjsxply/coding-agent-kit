@@ -22,7 +22,11 @@ class GeminiAgent(CodingAgent):
     binary = "gemini"
     supports_images = True
     supports_videos = True
-    install_strategy = InstallStrategy(kind="npm", package="@google/gemini-cli")
+    install_strategy = InstallStrategy(
+        kind="npm",
+        package="@google/gemini-cli",
+        minimum_node_version=(20, 0, 0),
+    )
     run_template = RunCommandTemplate(
         base_args=("--output-format", "json", "--approval-mode", "yolo"),
         prompt_mode="flag",

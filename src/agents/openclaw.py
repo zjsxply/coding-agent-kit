@@ -29,8 +29,9 @@ class OpenClawAgent(CodingAgent):
             shell_versioned_command=(
                 "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard --version {version_quoted}"
             ),
+            minimum_node_version=(22, 16, 0),
         ),
-        InstallStrategy(kind="npm", package="openclaw"),
+        InstallStrategy(kind="npm", package="openclaw", minimum_node_version=(22, 16, 0)),
     ]
     version_template = VersionCommandTemplate(
         args=("openclaw", "--version"),

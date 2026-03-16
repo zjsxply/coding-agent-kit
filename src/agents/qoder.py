@@ -37,7 +37,11 @@ class QoderAgent(CodingAgent):
     binary = "qodercli"
     supports_images = True
     supports_videos = False
-    install_strategy = InstallStrategy(kind="npm", package="@qoder-ai/qodercli")
+    install_strategy = InstallStrategy(
+        kind="npm",
+        package="@qoder-ai/qodercli",
+        minimum_node_version=(14, 0, 0),
+    )
     run_template = RunCommandTemplate(
         base_args=("-q", "--output-format", "stream-json", "--dangerously-skip-permissions"),
         prompt_mode="flag",

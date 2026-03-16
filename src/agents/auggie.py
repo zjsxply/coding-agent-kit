@@ -28,7 +28,11 @@ class AuggieAgent(CodingAgent):
     binary = "auggie"
     supports_images = True
     supports_videos = False
-    install_strategy = InstallStrategy(kind="npm", package="@augmentcode/auggie")
+    install_strategy = InstallStrategy(
+        kind="npm",
+        package="@augmentcode/auggie",
+        minimum_node_version=(20, 0, 0),
+    )
     version_template = VersionCommandTemplate(
         args=("auggie", "--version"),
         parse_mode="regex_first_line",

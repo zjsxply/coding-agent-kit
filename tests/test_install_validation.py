@@ -5,6 +5,7 @@ import os
 
 from src.agents.aider import AiderAgent
 from src.agents.base import CodingAgent, CommandResult, InstallStrategy
+from src.agents.codex import CodexAgent
 from src.agents.copilot import CopilotAgent
 from src.agents.cursor import CursorAgent
 from src.agents.deepagents import DeepAgentsAgent
@@ -84,6 +85,54 @@ def test_python_build_runtime_packages_cover_alpine_native_extension_builds():
 
 def test_aider_runtime_dependencies_include_python_build_and_uv():
     assert AiderAgent().runtime_dependencies() == ("python-build", "uv")
+
+
+def test_install_strategy_minimum_node_version_uses_maximum_declared_requirement():
+    agent = _DummyInstallAgent(
+        strategies=(
+            InstallStrategy(kind="npm", package="one", minimum_node_version=(16, 0, 0)),
+            InstallStrategy(kind="shell"),
+            InstallStrategy(kind="npm", package="two", minimum_node_version=(20, 0, 0)),
+        ),
+        observed_versions=(),
+    )
+
+    assert agent.minimum_node_version() == (20, 0, 0)
+
+
+def test_node_tools_ready_accepts_existing_node_when_no_minimum_version_is_requested(monkeypatch):
+    monkeypatch.setattr(install_cli, "_candidate_runtime_binary", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(install_cli, "_installed_node_version", lambda: (16, 20, 2))
+
+    assert install_cli._node_tools_ready() is True
+    assert install_cli._node_tools_ready(minimum_version=(20, 0, 0)) is False
+
+
+def test_ensure_dependencies_passes_agent_specific_node_minimum(monkeypatch):
+    agent = _DummyInstallAgent(
+        strategies=InstallStrategy(kind="npm", package="@openai/codex", minimum_node_version=(16, 0, 0)),
+        observed_versions=(),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_ensure_runtime_dependencies(runtimes, *, minimum_node_version=None, output_stream=None):
+        del output_stream
+        captured["runtimes"] = tuple(runtimes)
+        captured["minimum_node_version"] = minimum_node_version
+        return {"node": True}
+
+    monkeypatch.setattr(install_cli, "create_agent", lambda name: agent)
+    monkeypatch.setattr(install_cli, "ensure_runtime_dependencies", fake_ensure_runtime_dependencies)
+
+    assert install_cli.ensure_dependencies("dummy") is True
+    assert captured == {
+        "runtimes": ("node",),
+        "minimum_node_version": (16, 0, 0),
+    }
+
+
+def test_codex_declares_upstream_minimum_node_requirement():
+    assert CodexAgent().minimum_node_version() == (16, 0, 0)
 
 
 class _FakeUrlopenResponse:
@@ -382,6 +431,9 @@ def test_install_all_preinstalls_dependencies_before_parallel_agent_install(monk
         def runtime_dependencies(self):
             return self._runtimes
 
+        def minimum_node_version(self):
+            return None
+
     monkeypatch.setattr(install_cli, "_resolve_targets_or_emit", lambda agent_name: ["alpha", "beta"])
     monkeypatch.setattr(
         install_cli,
@@ -391,7 +443,7 @@ def test_install_all_preinstalls_dependencies_before_parallel_agent_install(monk
     monkeypatch.setattr(
         install_cli,
         "ensure_runtime_dependencies",
-        lambda runtimes, output_stream=None: (
+        lambda runtimes, minimum_node_version=None, output_stream=None: (
             runtime_batches.append(tuple(runtimes))
             or {"python-build": True, "node": True, "uv": False}
         ),

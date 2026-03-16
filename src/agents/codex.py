@@ -34,6 +34,7 @@ class CodexAgent(CodingAgent):
     install_strategy = InstallStrategy(
         kind="npm",
         package="@openai/codex",
+        minimum_node_version=(16, 0, 0),
         require_config=True,
         configure_failure_message="codex configure failed",
     )

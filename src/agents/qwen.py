@@ -35,7 +35,11 @@ class QwenAgent(CodingAgent):
     binary = "qwen"
     supports_images = True
     supports_videos = True
-    install_strategy = InstallStrategy(kind="npm", package="@qwen-code/qwen-code")
+    install_strategy = InstallStrategy(
+        kind="npm",
+        package="@qwen-code/qwen-code",
+        minimum_node_version=(20, 0, 0),
+    )
     run_template = RunCommandTemplate(
         base_args=(
             "--output-format",

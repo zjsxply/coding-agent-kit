@@ -427,11 +427,16 @@ def _installed_cmake_version() -> Optional[tuple[int, ...]]:
     return _parse_version_tuple(output)
 
 
-def _node_tools_ready() -> bool:
+def _node_tools_ready(*, minimum_version: Optional[tuple[int, ...]] = None) -> bool:
     node_binary = _candidate_runtime_binary("node")
     npm_binary = _candidate_runtime_binary("npm")
     version = _installed_node_version()
-    return node_binary is not None and npm_binary is not None and version is not None and version >= MINIMUM_NODE_VERSION
+    return (
+        node_binary is not None
+        and npm_binary is not None
+        and version is not None
+        and (minimum_version is None or version >= minimum_version)
+    )
 
 
 def _cmake_ready() -> bool:
@@ -507,7 +512,12 @@ def _extract_tar_safely(archive: tarfile.TarFile, destination: Path) -> None:
     archive.extractall(destination)
 
 
-def _install_node_from_archive(*, quiet_success: bool = False, output_stream: Optional[TextIO] = None) -> bool:
+def _install_node_from_archive(
+    *,
+    minimum_version: Optional[tuple[int, ...]] = None,
+    quiet_success: bool = False,
+    output_stream: Optional[TextIO] = None,
+) -> bool:
     stream = output_stream or sys.stderr
     arch = _linux_node_arch()
     if arch is None:
@@ -522,7 +532,7 @@ def _install_node_from_archive(*, quiet_success: bool = False, output_stream: Op
     final_root = install_root / f"node-{version}-linux-{arch}"
     if (final_root / "bin" / "node").is_file():
         _link_node_binaries(final_root)
-        return _node_tools_ready()
+        return _node_tools_ready(minimum_version=minimum_version)
 
     staging_dir = Path(tempfile.mkdtemp(prefix="cakit-node-"))
     archive_path = staging_dir / "node.tar.xz"
@@ -547,7 +557,7 @@ def _install_node_from_archive(*, quiet_success: bool = False, output_stream: Op
         if not _link_node_binaries(final_root):
             print("[deps] downloaded Node.js archive did not contain expected binaries.", file=stream)
             return False
-        return _node_tools_ready()
+        return _node_tools_ready(minimum_version=minimum_version)
     except (OSError, tarfile.TarError, RuntimeError) as exc:
         print(f"[deps] failed to install Node.js from archive: {exc}", file=stream)
         return False
@@ -687,9 +697,14 @@ def install_system_packages_linux(
     return True
 
 
-def ensure_node_tools(*, quiet_success: bool = False, output_stream: Optional[TextIO] = None) -> bool:
+def ensure_node_tools(
+    *,
+    minimum_version: Optional[tuple[int, ...]] = None,
+    quiet_success: bool = False,
+    output_stream: Optional[TextIO] = None,
+) -> bool:
     stream = output_stream or sys.stderr
-    if not _node_tools_ready():
+    if not _node_tools_ready(minimum_version=minimum_version):
         if not quiet_success:
             version = _installed_node_version()
             if _candidate_runtime_binary("node") is None or _candidate_runtime_binary("npm") is None:
@@ -699,10 +714,14 @@ def ensure_node_tools(*, quiet_success: bool = False, output_stream: Optional[Te
             else:
                 reason = (
                     f"nodejs {_format_version_tuple(version)} is too old; "
-                    f"need >= {_format_version_tuple(MINIMUM_NODE_VERSION)}"
+                    f"need >= {_format_version_tuple(minimum_version or MINIMUM_NODE_VERSION)}"
                 )
             print(f"[deps] {reason}, attempting auto-install.", file=stream)
-        return install_node_linux(quiet_success=quiet_success, output_stream=stream)
+        return install_node_linux(
+            minimum_version=minimum_version,
+            quiet_success=quiet_success,
+            output_stream=stream,
+        )
     return True
 
 
@@ -762,14 +781,20 @@ def ensure_modern_cmake(*, quiet_success: bool = False, output_stream: Optional[
 
 
 def ensure_dependencies(agent_name: str, *, output_stream: Optional[TextIO] = None) -> bool:
-    required_runtimes = create_agent(agent_name).runtime_dependencies()
-    statuses = ensure_runtime_dependencies(required_runtimes, output_stream=output_stream)
+    agent = create_agent(agent_name)
+    required_runtimes = agent.runtime_dependencies()
+    statuses = ensure_runtime_dependencies(
+        required_runtimes,
+        minimum_node_version=agent.minimum_node_version(),
+        output_stream=output_stream,
+    )
     return all(statuses.get(runtime_name, False) for runtime_name in required_runtimes)
 
 
 def ensure_runtime_dependencies(
     runtimes: Iterable[str],
     *,
+    minimum_node_version: Optional[tuple[int, ...]] = None,
     output_stream: Optional[TextIO] = None,
 ) -> dict[str, bool]:
     stream = output_stream or sys.stderr
@@ -843,7 +868,11 @@ def ensure_runtime_dependencies(
 
     if node_required:
         with file_lock("deps-node"):
-            statuses["node"] = ensure_node_tools(quiet_success=True, output_stream=stream)
+            statuses["node"] = ensure_node_tools(
+                minimum_version=minimum_node_version,
+                quiet_success=True,
+                output_stream=stream,
+            )
     if uv_required:
         with file_lock("deps-uv"):
             if runtime_install.resolve_uv_binary() is not None:
@@ -927,12 +956,17 @@ def _install_agent_locked(
         )
 
 
-def install_node_linux(*, quiet_success: bool = False, output_stream: Optional[TextIO] = None) -> bool:
+def install_node_linux(
+    *,
+    minimum_version: Optional[tuple[int, ...]] = None,
+    quiet_success: bool = False,
+    output_stream: Optional[TextIO] = None,
+) -> bool:
     stream = output_stream or sys.stderr
     if not sys.platform.startswith("linux"):
         print("[deps] unsupported OS for auto-install; please install Node.js manually.", file=stream)
         return False
-    if _node_tools_ready():
+    if _node_tools_ready(minimum_version=minimum_version):
         return True
     package_manager = detect_package_manager()
     if package_manager == "apk":
@@ -962,8 +996,12 @@ def install_node_linux(*, quiet_success: bool = False, output_stream: Optional[T
                 output_stream=stream,
             ):
                 return False
-        return _node_tools_ready()
-    return _install_node_from_archive(quiet_success=quiet_success, output_stream=stream)
+        return _node_tools_ready(minimum_version=minimum_version)
+    return _install_node_from_archive(
+        minimum_version=minimum_version,
+        quiet_success=quiet_success,
+        output_stream=stream,
+    )
 
 
 def install_uv_linux(*, quiet_success: bool = False, output_stream: Optional[TextIO] = None) -> bool:
@@ -1018,14 +1056,32 @@ def run_install_command(agent_name: str, scope: str, version: Optional[str]) -> 
     preflight_failures: dict[str, TargetCommandResult] = {}
     install_targets = targets
     if parallel and len(targets) > 1:
-        target_runtimes = {
-            target: create_agent(target).runtime_dependencies()
+        target_agents = {
+            target: create_agent(target)
             for target in targets
         }
+        target_runtimes = {
+            target: agent.runtime_dependencies()
+            for target, agent in target_agents.items()
+        }
+        minimum_node_version = max(
+            (
+                version
+                for version in (
+                    agent.minimum_node_version()
+                    for agent in target_agents.values()
+                )
+                if version is not None
+            ),
+            default=None,
+        )
         runtime_statuses = ensure_runtime_dependencies(
-            runtime_name
-            for runtimes in target_runtimes.values()
-            for runtime_name in runtimes
+            (
+                runtime_name
+                for runtimes in target_runtimes.values()
+                for runtime_name in runtimes
+            ),
+            minimum_node_version=minimum_node_version,
         )
         for target, runtimes in target_runtimes.items():
             if all(runtime_statuses.get(runtime_name, False) for runtime_name in runtimes):
