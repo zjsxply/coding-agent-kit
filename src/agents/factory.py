@@ -41,6 +41,14 @@ class FactoryAgent(CodingAgent):
     )
 
     _VERSION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+    _ALPINE_GLIBC_RELEASE = "2.35-r1"
+    _ALPINE_GLIBC_KEY_URL = "https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub"
+    _ALPINE_GLIBC_APK_URL = (
+        f"https://github.com/sgerrand/alpine-pkg-glibc/releases/download/{_ALPINE_GLIBC_RELEASE}/"
+        f"glibc-{_ALPINE_GLIBC_RELEASE}.apk"
+    )
+    _ALPINE_GLIBC_LOADER_SOURCE = "/usr/glibc-compat/lib64/ld-linux-x86-64.so.2"
+    _ALPINE_GLIBC_LOADER_TARGET = "/lib64/ld-linux-x86-64.so.2"
     _BYOK_DISPLAY_NAME = "CAKIT BYOK"
     _BYOK_PROVIDER_VALUES = {
         "openai",
@@ -54,9 +62,131 @@ class FactoryAgent(CodingAgent):
         scope: str,
         version: Optional[str],
     ) -> CommandResult:
+        compatibility_result = self._ensure_alpine_glibc_compat()
+        if compatibility_result is not None and compatibility_result.exit_code != 0:
+            return compatibility_result
         if version and version.strip():
-            return self._install_specific_version(version.strip())
-        return self._run(["bash", "-lc", "curl -fsSL https://app.factory.ai/cli | sh"])
+            install_result = self._install_specific_version(version.strip())
+        else:
+            install_result = self._run(["bash", "-lc", "curl -fsSL https://app.factory.ai/cli | sh"])
+        return self._merge_install_command_results(compatibility_result, install_result)
+
+    def _ensure_alpine_glibc_compat(self) -> Optional[CommandResult]:
+        if not self._should_install_alpine_glibc_compat():
+            return None
+
+        started = time.monotonic()
+        logs: list[str] = []
+        staging_root: Optional[Path] = None
+        try:
+            apk_binary = shutil.which("apk")
+            if apk_binary is None:
+                raise RuntimeError("apk is required to install Factory glibc compatibility on Alpine")
+
+            sudo_prefix: list[str] = []
+            if os.geteuid() != 0:
+                sudo_binary = shutil.which("sudo")
+                if sudo_binary is None:
+                    raise RuntimeError("factory on Alpine requires root or sudo to install glibc compatibility")
+                sudo_prefix = [sudo_binary]
+
+            loader_source = Path(self._ALPINE_GLIBC_LOADER_SOURCE)
+            loader_target = Path(self._ALPINE_GLIBC_LOADER_TARGET)
+            if loader_source.is_file() and loader_target.exists():
+                return CommandResult(
+                    exit_code=0,
+                    stdout="using existing Factory Alpine glibc compatibility runtime",
+                    stderr="",
+                    duration_seconds=time.monotonic() - started,
+                )
+
+            if not loader_source.is_file():
+                logs.append("installing Alpine glibc compatibility for Factory")
+                install_ca_result = self._run([*sudo_prefix, apk_binary, "add", "--no-cache", "ca-certificates"])
+                if install_ca_result.exit_code != 0:
+                    raise RuntimeError(install_ca_result.output or "failed to install ca-certificates with apk")
+
+                staging_root = Path(tempfile.mkdtemp(prefix="cakit-factory-glibc-"))
+                key_path = staging_root / "sgerrand.rsa.pub"
+                apk_path = staging_root / f"glibc-{self._ALPINE_GLIBC_RELEASE}.apk"
+                self._download_url_to_path(url=self._ALPINE_GLIBC_KEY_URL, target_path=key_path)
+                self._download_url_to_path(url=self._ALPINE_GLIBC_APK_URL, target_path=apk_path)
+
+                mkdir_keys_result = self._run([*sudo_prefix, "mkdir", "-p", "/etc/apk/keys"])
+                if mkdir_keys_result.exit_code != 0:
+                    raise RuntimeError(mkdir_keys_result.output or "failed to create /etc/apk/keys")
+                install_key_result = self._run([*sudo_prefix, "cp", str(key_path), "/etc/apk/keys/sgerrand.rsa.pub"])
+                if install_key_result.exit_code != 0:
+                    raise RuntimeError(install_key_result.output or "failed to install sgerrand apk signing key")
+                install_glibc_result = self._run([*sudo_prefix, apk_binary, "add", "--no-cache", str(apk_path)])
+                if install_glibc_result.exit_code != 0:
+                    raise RuntimeError(install_glibc_result.output or "failed to install Alpine glibc compatibility")
+
+            mkdir_loader_result = self._run([*sudo_prefix, "mkdir", "-p", str(loader_target.parent)])
+            if mkdir_loader_result.exit_code != 0:
+                raise RuntimeError(mkdir_loader_result.output or "failed to create /lib64")
+            link_loader_result = self._run(
+                [
+                    *sudo_prefix,
+                    "ln",
+                    "-sf",
+                    self._ALPINE_GLIBC_LOADER_SOURCE,
+                    self._ALPINE_GLIBC_LOADER_TARGET,
+                ]
+            )
+            if link_loader_result.exit_code != 0:
+                raise RuntimeError(link_loader_result.output or "failed to link Factory Alpine glibc loader")
+            logs.append("configured Factory Alpine glibc loader at /lib64/ld-linux-x86-64.so.2")
+            exit_code = 0
+        except Exception as exc:
+            logs.append(str(exc))
+            exit_code = 1
+        finally:
+            if staging_root is not None:
+                shutil.rmtree(staging_root, ignore_errors=True)
+
+        return CommandResult(
+            exit_code=exit_code,
+            stdout="\n".join(logs),
+            stderr="",
+            duration_seconds=time.monotonic() - started,
+        )
+
+    @staticmethod
+    def _should_install_alpine_glibc_compat() -> bool:
+        return (
+            platform.system() == "Linux"
+            and Path("/etc/alpine-release").exists()
+            and platform.machine().strip().lower() in {"x86_64", "amd64"}
+        )
+
+    @staticmethod
+    def _merge_install_command_results(
+        compatibility_result: Optional[CommandResult],
+        install_result: CommandResult,
+    ) -> CommandResult:
+        if compatibility_result is None or not compatibility_result.output.strip():
+            return install_result
+        if not install_result.output.strip():
+            return CommandResult(
+                exit_code=install_result.exit_code,
+                stdout=compatibility_result.output,
+                stderr="",
+                duration_seconds=compatibility_result.duration_seconds + install_result.duration_seconds,
+            )
+        return CommandResult(
+            exit_code=install_result.exit_code,
+            stdout=f"{compatibility_result.output}\n{install_result.output}",
+            stderr="",
+            duration_seconds=compatibility_result.duration_seconds + install_result.duration_seconds,
+        )
+
+    @staticmethod
+    def _download_url_to_path(*, url: str, target_path: Path) -> None:
+        request = urllib.request.Request(url, headers={"User-Agent": "cakit"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = response.read()
+        target_path.write_bytes(payload)
 
     def _build_run_plan(
         self,

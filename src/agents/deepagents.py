@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib import request as urlrequest
 
 from .base import (
     CodingAgent,
@@ -13,6 +16,7 @@ from .base import (
     RunPlan,
     VersionCommandTemplate,
 )
+from ..models import InstallResult
 from ..stats_extract import last_value, merge_model_usage, parse_usage_by_model, req_str, select_values, sum_int
 from ..agent_runtime import command_exec as runtime_command
 from ..agent_runtime import env as runtime_env
@@ -44,6 +48,18 @@ class DeepAgentsAgent(CodingAgent):
         regex=r"^(?:deepagents(?:-cli)?\s+)?([A-Za-z0-9._-]+)$",
     )
     _THREAD_ID_RE = re.compile(r"Thread:\s*([0-9a-fA-F]{8})")
+
+    def install(self, *, scope: str = "user", version: Optional[str] = None) -> InstallResult:
+        result = super().install(scope=scope, version=version)
+        if result.ok or not self._should_retry_alpine_sqlite_vec_install(result=result):
+            return result
+        return self._install_with_alpine_sqlite_vec_workaround(version=version)
+
+    def get_version(self) -> Optional[str]:
+        version = super().get_version()
+        if version is not None:
+            return version
+        return self._installed_package_version()
 
     def _build_run_plan(
         self,
@@ -184,6 +200,206 @@ class DeepAgentsAgent(CodingAgent):
         if base_url:
             env["OPENAI_BASE_URL"] = base_url
         return env, None, model
+
+    def _should_retry_alpine_sqlite_vec_install(self, *, result: InstallResult) -> bool:
+        if shutil.which("apk") is None:
+            return False
+        details = runtime_parsing.normalize_text(result.details)
+        if details is None:
+            return False
+        return "sqlite-vec" in details and "langgraph-checkpoint-sqlite" in details
+
+    def _install_with_alpine_sqlite_vec_workaround(self, *, version: Optional[str]) -> InstallResult:
+        resolved_version, requirements, sqlite_checkpoint_requirement = self._build_alpine_sqlite_vec_requirements(
+            version=version
+        )
+        if resolved_version is None or requirements is None or sqlite_checkpoint_requirement is None:
+            return InstallResult(
+                agent=self.name,
+                version=None,
+                ok=False,
+                details="deepagents Alpine compatibility workaround could not resolve package metadata",
+                config_path=None,
+            )
+        if runtime_install.resolve_uv_binary() is None and not runtime_install.ensure_uv(self._run):
+            return InstallResult(
+                agent=self.name,
+                version=None,
+                ok=False,
+                details="uv is required for the Alpine deepagents compatibility install path",
+                config_path=None,
+            )
+        uv_binary = runtime_install.resolve_uv_binary() or "uv"
+        install_root = self._deepagents_install_root()
+        version_key = resolved_version.replace("/", "-")
+        venv_dir = install_root / "tools" / f"deepagents-{version_key}-alpine"
+        requirements_path = install_root / "cache" / f"deepagents-{version_key}-alpine.requirements.txt"
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir, ignore_errors=True)
+        self._write_text(requirements_path, "\n".join(requirements) + "\n")
+
+        command_outputs: list[str] = []
+        venv_python = str(venv_dir / "bin" / "python")
+        for command in (
+            [uv_binary, "venv", "--python", "3.12", str(venv_dir)],
+            [uv_binary, "pip", "install", "--python", venv_python, "-r", str(requirements_path)],
+            [uv_binary, "pip", "install", "--python", venv_python, "--no-deps", sqlite_checkpoint_requirement],
+            [uv_binary, "pip", "install", "--python", venv_python, "--no-deps", f"deepagents-cli=={resolved_version}"],
+        ):
+            result = self._run(command)
+            if result.output:
+                command_outputs.append(result.output)
+            if result.exit_code != 0:
+                details = "\n\n".join(command_outputs).strip() or result.output
+                return InstallResult(
+                    agent=self.name,
+                    version=None,
+                    ok=False,
+                    details=details,
+                    config_path=None,
+                )
+
+        binary_path = venv_dir / "bin" / "deepagents"
+        if not binary_path.exists():
+            return InstallResult(
+                agent=self.name,
+                version=None,
+                ok=False,
+                details=f"deepagents compatibility install did not create {binary_path}",
+                config_path=None,
+            )
+        link_error = self._link_compatibility_deepagents_binary(binary_path)
+        if link_error is not None:
+            return InstallResult(
+                agent=self.name,
+                version=None,
+                ok=False,
+                details=link_error,
+                config_path=None,
+            )
+        installed_version = self.get_version()
+        if not self._installed_version_matches_requested(
+            requested_version=version or resolved_version,
+            observed_version=installed_version,
+        ):
+            details = self._build_install_verification_message(
+                requested_version=version or resolved_version,
+                observed_version=installed_version,
+            )
+            return InstallResult(
+                agent=self.name,
+                version=None,
+                ok=False,
+                details=details,
+                config_path=None,
+            )
+        return InstallResult(
+            agent=self.name,
+            version=installed_version,
+            ok=True,
+            details=None,
+            config_path=self.configure(),
+        )
+
+    def _build_alpine_sqlite_vec_requirements(
+        self, *, version: Optional[str]
+    ) -> tuple[Optional[str], Optional[list[str]], Optional[str]]:
+        metadata_url = (
+            f"https://pypi.org/pypi/deepagents-cli/{version}/json"
+            if version
+            else "https://pypi.org/pypi/deepagents-cli/json"
+        )
+        with urlrequest.urlopen(metadata_url, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        info = payload.get("info", {})
+        resolved_version = runtime_parsing.normalize_text(info.get("version"))
+        requires_dist = info.get("requires_dist")
+        if resolved_version is None or not isinstance(requires_dist, list):
+            return None, None, None
+
+        requirements: list[str] = []
+        sqlite_checkpoint_requirement: Optional[str] = None
+        for raw_requirement in requires_dist:
+            if not isinstance(raw_requirement, str):
+                continue
+            requirement = raw_requirement.strip()
+            if not requirement or "extra ==" in requirement:
+                continue
+            if requirement.startswith("langgraph-checkpoint-sqlite"):
+                sqlite_checkpoint_requirement = requirement
+                continue
+            requirements.append(requirement)
+        return resolved_version, requirements, sqlite_checkpoint_requirement
+
+    def _deepagents_install_root(self) -> Path:
+        install_home = os.environ.get("CAKIT_INSTALL_HOME")
+        candidates = [Path(install_home).expanduser()] if install_home else []
+        candidates.extend(
+            [
+                Path("/opt") / "cakit",
+                Path.home() / ".local" / "share" / "cakit",
+                Path("/tmp") / "cakit",
+            ]
+        )
+        return self._resolve_writable_dir(*candidates, purpose="DeepAgents install")
+
+    def _deepagents_bin_dir(self) -> Path:
+        uv_tool_bin = os.environ.get("UV_TOOL_BIN_DIR")
+        xdg_bin_home = os.environ.get("XDG_BIN_HOME")
+        candidates = []
+        if uv_tool_bin:
+            candidates.append(Path(uv_tool_bin).expanduser())
+        if xdg_bin_home:
+            candidates.append(Path(xdg_bin_home).expanduser())
+        candidates.extend([Path("/usr/local/bin"), Path.home() / ".local" / "bin", Path("/tmp") / "cakit" / "bin"])
+        return self._resolve_writable_dir(*candidates, purpose="DeepAgents bin")
+
+    def _link_compatibility_deepagents_binary(self, binary_path: Path) -> Optional[str]:
+        bin_dir = self._deepagents_bin_dir()
+        target = bin_dir / "deepagents"
+        if target.exists() or target.is_symlink():
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                target.unlink()
+        target.symlink_to(binary_path)
+        return None
+
+    def _installed_package_version(self) -> Optional[str]:
+        for dist_info_dir in self._dist_info_dirs():
+            metadata_text = self._read_text(dist_info_dir / "METADATA")
+            if metadata_text is None:
+                continue
+            match = re.search(r"^Version:\s*(\S+)\s*$", metadata_text, flags=re.MULTILINE)
+            if match is not None:
+                return runtime_parsing.normalize_text(match.group(1))
+        return None
+
+    def _dist_info_dirs(self) -> tuple[Path, ...]:
+        binary_path = runtime_command.resolve_binary(
+            agent_name=self.name,
+            binary=self.binary,
+            npm_prefix=self._npm_prefix(),
+            env_source=os.environ,
+        )
+        if binary_path is None:
+            return ()
+        roots: list[Path] = []
+        raw_binary_path = Path(binary_path).expanduser()
+        if raw_binary_path.parent.name == "bin":
+            roots.append(raw_binary_path.parent.parent)
+        try:
+            resolved_binary_path = raw_binary_path.resolve()
+        except OSError:
+            resolved_binary_path = None
+        if resolved_binary_path is not None and resolved_binary_path.parent.name == "bin":
+            roots.append(resolved_binary_path.parent.parent)
+
+        dist_info_dirs: list[Path] = []
+        for root in dict.fromkeys(roots):
+            for site_packages_dir in sorted(root.glob("lib/python*/site-packages")):
+                dist_info_dirs.extend(sorted(site_packages_dir.glob("deepagents_cli-*.dist-info")))
+        return tuple(dict.fromkeys(dist_info_dirs))
 
     def _extract_checkpoint_stats(
         self, *, thread_id: str, base_env: Optional[Dict[str, str]]

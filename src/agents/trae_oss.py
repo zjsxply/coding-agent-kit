@@ -72,14 +72,11 @@ class TraeOssAgent(CodingAgent):
         receipt_text = runtime_parsing.normalize_text(self._read_text(receipt_path))
         if receipt_text is None:
             return None
-        match = re.search(r'git\s*=\s*"([^"]+)"', receipt_text)
-        if match is None:
-            return None
-        query = parse_qs(urlparse(match.group(1)).query)
-        revisions = query.get("rev")
-        if not revisions:
-            return None
-        return runtime_parsing.normalize_text(revisions[-1])
+        revision = self._receipt_git_revision(receipt_text)
+        if revision is not None:
+            return revision
+        tool_root = receipt_path.parent
+        return self._tool_direct_url_commit_id(tool_root) or self._tool_package_version(tool_root)
 
     def configure(self) -> Optional[str]:
         api_key, api_base, model = self._resolve_runtime_settings()
@@ -293,7 +290,83 @@ class TraeOssAgent(CodingAgent):
         )
         if binary_path is None:
             return None
-        resolved_binary = Path(binary_path).expanduser().resolve()
-        if resolved_binary.parent.name != "bin":
+        candidate_binary_paths: list[Path] = []
+        raw_binary_path = Path(binary_path).expanduser()
+        candidate_binary_paths.append(raw_binary_path)
+        try:
+            candidate_binary_paths.append(raw_binary_path.resolve())
+        except OSError:
+            pass
+
+        candidate_receipts: list[Path] = []
+        for candidate_binary in candidate_binary_paths:
+            if candidate_binary.parent.name == "bin":
+                candidate_receipts.append(candidate_binary.parent.parent / "uv-receipt.toml")
+        for tool_dir in self._uv_tool_dirs():
+            if not tool_dir.exists():
+                continue
+            candidate_receipts.extend(sorted(tool_dir.glob("*/uv-receipt.toml")))
+
+        install_path_markers = {f'install-path = "{path}"' for path in candidate_binary_paths}
+        for receipt_path in dict.fromkeys(candidate_receipts):
+            receipt_text = self._read_text(receipt_path)
+            if receipt_text is None:
+                continue
+            if install_path_markers and not any(marker in receipt_text for marker in install_path_markers):
+                continue
+            return receipt_path
+        return None
+
+    @staticmethod
+    def _receipt_git_revision(receipt_text: str) -> Optional[str]:
+        match = re.search(r'git\s*=\s*"([^"]+)"', receipt_text)
+        if match is None:
             return None
-        return resolved_binary.parent.parent / "uv-receipt.toml"
+        query = parse_qs(urlparse(match.group(1)).query)
+        revisions = query.get("rev")
+        if not revisions:
+            return None
+        return runtime_parsing.normalize_text(revisions[-1])
+
+    @staticmethod
+    def _tool_dist_info_dirs(tool_root: Path) -> tuple[Path, ...]:
+        return tuple(
+            dist_info
+            for site_packages in sorted(tool_root.glob("lib/python*/site-packages"))
+            for dist_info in sorted(site_packages.glob("trae_agent-*.dist-info"))
+        )
+
+    def _tool_direct_url_commit_id(self, tool_root: Path) -> Optional[str]:
+        for dist_info in self._tool_dist_info_dirs(tool_root):
+            payload = runtime_parsing.load_json_dict(dist_info / "direct_url.json", read_text=self._read_text)
+            if not isinstance(payload, dict):
+                continue
+            vcs_info = payload.get("vcs_info")
+            if not isinstance(vcs_info, dict):
+                continue
+            commit_id = runtime_parsing.normalize_text(vcs_info.get("commit_id"))
+            if commit_id is not None:
+                return commit_id
+        return None
+
+    def _tool_package_version(self, tool_root: Path) -> Optional[str]:
+        for dist_info in self._tool_dist_info_dirs(tool_root):
+            metadata_text = self._read_text(dist_info / "METADATA")
+            if metadata_text is None:
+                continue
+            match = re.search(r"^Version:\s*(\S+)\s*$", metadata_text, flags=re.MULTILINE)
+            if match is not None:
+                return runtime_parsing.normalize_text(match.group(1))
+        return None
+
+    @staticmethod
+    def _uv_tool_dirs() -> tuple[Path, ...]:
+        candidates = [
+            Path(os.environ["UV_TOOL_DIR"]).expanduser() if os.environ.get("UV_TOOL_DIR") else None,
+            Path(os.environ["XDG_DATA_HOME"]).expanduser() / "uv" / "tools"
+            if os.environ.get("XDG_DATA_HOME")
+            else None,
+            Path.home() / ".local" / "share" / "uv" / "tools",
+            Path("/tmp") / "cakit" / "uv-tools",
+        ]
+        return tuple(dict.fromkeys(path for path in candidates if path is not None))

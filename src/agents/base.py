@@ -172,11 +172,22 @@ class CodingAgent(abc.ABC):
         strategies = self._normalize_install_strategies(self.install_strategy)
         if not strategies:
             raise NotImplementedError(f"{self.__class__.__name__} must define install() or install_strategy")
-        result, strategy = self._run_install_strategies(strategies=strategies, scope=scope, version=version)
+        result, strategy, installed_version = self._run_install_strategies(
+            strategies=strategies,
+            scope=scope,
+            version=version,
+        )
 
         config_path = self.configure()
         ok = result.exit_code == 0
         details = None if ok else result.output
+        if ok and installed_version is None:
+            ok = False
+            verification_message = self._build_install_verification_message(
+                requested_version=version,
+                observed_version=None,
+            )
+            details = f"{result.output}\n{verification_message}".strip() if result.output else verification_message
         if ok and strategy.require_config and config_path is None:
             ok = False
             message = strategy.configure_failure_message or f"{self.name} configure failed"
@@ -184,7 +195,7 @@ class CodingAgent(abc.ABC):
             details = f"{output}\n{message}" if output else message
         return InstallResult(
             agent=self.name,
-            version=self.get_version() if ok else None,
+            version=installed_version if ok else None,
             ok=ok,
             details=details,
             config_path=config_path,
@@ -337,6 +348,9 @@ class CodingAgent(abc.ABC):
         )
 
     def get_version(self) -> Optional[str]:
+        manifest_version = self._version_from_binary_package_manifest()
+        if manifest_version is not None:
+            return manifest_version
         template = self.version_template
         if template is None:
             binary = self.binary or self.name
@@ -368,6 +382,32 @@ class CodingAgent(abc.ABC):
             parse_json=runtime_parsing.parse_json,
             select_last_value=last_value,
         )
+
+    def _version_from_binary_package_manifest(self) -> Optional[str]:
+        if not self.binary:
+            return None
+        binary_path = runtime_command.resolve_binary(
+            agent_name=self.name,
+            binary=self.binary,
+            npm_prefix=self._npm_prefix(),
+            env_source=os.environ,
+        )
+        if binary_path is None:
+            return None
+        resolved_target = Path(binary_path).expanduser()
+        try:
+            resolved_target = resolved_target.resolve(strict=True)
+        except OSError:
+            return None
+        for directory in (resolved_target.parent, *resolved_target.parents):
+            package_json_path = directory / "package.json"
+            package_payload = runtime_parsing.load_json_dict(package_json_path)
+            if not isinstance(package_payload, dict):
+                continue
+            version = runtime_parsing.normalize_text(package_payload.get("version"))
+            if version is not None:
+                return version
+        return None
 
     def runtime_dependencies(self) -> tuple[str, ...]:
         declared = tuple(
@@ -565,15 +605,36 @@ class CodingAgent(abc.ABC):
         strategies: tuple[InstallStrategy, ...],
         scope: str,
         version: Optional[str],
-    ) -> tuple[CommandResult, InstallStrategy]:
+    ) -> tuple[CommandResult, InstallStrategy, Optional[str]]:
         attempts: list[tuple[InstallStrategy, CommandResult]] = []
+        last_observed_version: Optional[str] = None
         for strategy in strategies:
             result = self._run_install_strategy(strategy=strategy, scope=scope, version=version)
-            attempts.append((strategy, result))
-            if result.exit_code == 0:
-                return self._collapse_install_attempts(attempts), strategy
+            if result.exit_code != 0:
+                attempts.append((strategy, result))
+                continue
+            observed_version = self.get_version()
+            last_observed_version = observed_version
+            if self._installed_version_matches_requested(requested_version=version, observed_version=observed_version):
+                attempts.append((strategy, result))
+                return self._collapse_install_attempts(attempts), strategy, observed_version
+            verification_message = self._build_install_verification_message(
+                requested_version=version,
+                observed_version=observed_version,
+            )
+            attempts.append(
+                (
+                    strategy,
+                    CommandResult(
+                        exit_code=1,
+                        stdout=result.stdout,
+                        stderr=f"{result.stderr}\n{verification_message}".strip() if result.stderr else verification_message,
+                        duration_seconds=result.duration_seconds,
+                    ),
+                )
+            )
         last_strategy, _ = attempts[-1]
-        return self._collapse_install_attempts(attempts), last_strategy
+        return self._collapse_install_attempts(attempts), last_strategy, last_observed_version
 
     def _collapse_install_attempts(
         self,
@@ -603,6 +664,46 @@ class CodingAgent(abc.ABC):
         if strategy.kind in {"npm", "uv_tool", "uv_pip"} and strategy.package:
             return f"{strategy.kind}:{strategy.package}"
         return strategy.kind
+
+    @staticmethod
+    def _normalize_install_version_value(version: Optional[str]) -> Optional[str]:
+        if not isinstance(version, str):
+            return None
+        normalized = version.strip()
+        if not normalized:
+            return None
+        if normalized[:1] in {"v", "V"}:
+            normalized = normalized[1:]
+        return normalized or None
+
+    def _installed_version_matches_requested(
+        self,
+        *,
+        requested_version: Optional[str],
+        observed_version: Optional[str],
+    ) -> bool:
+        normalized_observed = self._normalize_install_version_value(observed_version)
+        if normalized_observed is None:
+            return False
+        normalized_requested = self._normalize_install_version_value(requested_version)
+        if normalized_requested is None:
+            return True
+        return normalized_observed == normalized_requested
+
+    def _build_install_verification_message(
+        self,
+        *,
+        requested_version: Optional[str],
+        observed_version: Optional[str],
+    ) -> str:
+        if observed_version is None:
+            return f"{self.name} install completed but the installed version could not be verified"
+        if requested_version is None:
+            return f"{self.name} install completed but version verification failed"
+        return (
+            f"{self.name} install completed but resolved version {observed_version!r} "
+            f"did not match requested version {requested_version!r}"
+        )
 
     def _run_npm_install_command(
         self,

@@ -10,7 +10,7 @@ import tarfile
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable, Optional, TextIO
+from typing import Callable, Iterable, Optional, TextIO
 from urllib import request as urlrequest
 
 from ..agent_runtime import install_version as runtime_install
@@ -46,6 +46,7 @@ SYSTEM_RUNTIME_BINARIES = {
 SYSTEM_RUNTIME_PACKAGES = {
     "libxcb",
     "libgomp",
+    "python-build",
 }
 TargetCommandResult = tuple[bool, dict[str, object]]
 
@@ -150,8 +151,14 @@ def _run_for_targets(
     return 0 if all(ok for ok, _ in results) else 1
 
 
-def _install_target(target: str, *, scope: str, version: Optional[str]) -> TargetCommandResult:
-    install_result = install_agent(target, scope=scope, version=version)
+def _install_target(
+    target: str,
+    *,
+    scope: str,
+    version: Optional[str],
+    skip_dependencies: bool = False,
+) -> TargetCommandResult:
+    install_result = install_agent(target, scope=scope, version=version, skip_dependencies=skip_dependencies)
     return install_result.ok, {
         "agent": install_result.agent,
         "ok": install_result.ok,
@@ -159,6 +166,38 @@ def _install_target(target: str, *, scope: str, version: Optional[str]) -> Targe
         "config_path": install_result.config_path,
         "details": install_result.details,
     }
+
+
+def _dependency_failure_payload(target: str) -> TargetCommandResult:
+    return False, {
+        "agent": target,
+        "ok": False,
+        "version": None,
+        "config_path": None,
+        "details": "dependency install failed",
+    }
+
+
+def _emit_target_results(agent_name: str, targets: list[str], results: list[TargetCommandResult], *, parallel: bool) -> int:
+    if len(results) == 1:
+        ok, payload = results[0]
+        emit_json(payload)
+        return 0 if ok else 1
+
+    failed_agents = [target for target, (ok, _) in zip(targets, results) if not ok]
+    successful_agents = [target for target, (ok, _) in zip(targets, results) if ok]
+    emit_json(
+        {
+            "agent": agent_name,
+            "resolved_agents": targets,
+            "ok": all(ok for ok, _ in results),
+            "parallel": parallel,
+            "successful_agents": successful_agents,
+            "failed_agents": failed_agents,
+            "results": [payload for _, payload in results],
+        }
+    )
+    return 0 if all(ok for ok, _ in results) else 1
 
 
 def _resolve_configure_post_command() -> Optional[str]:
@@ -302,6 +341,16 @@ def _node_install_root() -> Path:
 
 def _package_manager_lock_name(package_manager: str) -> str:
     return f"deps-package-manager-{package_manager}"
+
+
+def _normalize_runtime_names(runtimes: Iterable[str]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            runtime.strip().lower()
+            for runtime in runtimes
+            if isinstance(runtime, str) and runtime.strip()
+        )
+    )
 
 
 def _candidate_runtime_binary(name: str) -> Optional[str]:
@@ -553,6 +602,22 @@ def package_install_commands(
     return []
 
 
+def system_runtime_package_names(runtime_name: str, package_manager: str) -> list[str]:
+    if runtime_name == "python-build":
+        if package_manager == "apk":
+            return ["gcc", "musl-dev", "python3-dev", "linux-headers"]
+        if package_manager == "apt-get":
+            return ["gcc", "libc6-dev", "python3-dev"]
+        if package_manager in {"dnf", "microdnf", "yum"}:
+            return ["gcc", "glibc-devel", "python3-devel"]
+        if package_manager == "zypper":
+            return ["gcc", "glibc-devel", "python3-devel"]
+        if package_manager == "pacman":
+            return ["gcc", "python"]
+        return ["gcc", "python3-dev"]
+    return [system_runtime_package_name(runtime_name, package_manager)]
+
+
 def system_runtime_package_name(runtime_name: str, package_manager: str) -> str:
     if runtime_name == "git" and package_manager in {"dnf", "microdnf", "yum", "zypper"}:
         return "git-core"
@@ -697,69 +762,101 @@ def ensure_modern_cmake(*, quiet_success: bool = False, output_stream: Optional[
 
 
 def ensure_dependencies(agent_name: str, *, output_stream: Optional[TextIO] = None) -> bool:
-    stream = output_stream or sys.stderr
     required_runtimes = create_agent(agent_name).runtime_dependencies()
-    ok = True
-    for runtime_name in required_runtimes:
+    statuses = ensure_runtime_dependencies(required_runtimes, output_stream=output_stream)
+    return all(statuses.get(runtime_name, False) for runtime_name in required_runtimes)
+
+
+def ensure_runtime_dependencies(
+    runtimes: Iterable[str],
+    *,
+    output_stream: Optional[TextIO] = None,
+) -> dict[str, bool]:
+    stream = output_stream or sys.stderr
+    normalized_runtimes = _normalize_runtime_names(runtimes)
+    if not normalized_runtimes:
+        return {}
+
+    statuses: dict[str, bool] = {}
+    package_manager = detect_package_manager()
+    pending_packages: list[str] = []
+    pending_binary_runtimes: list[str] = []
+    pending_package_runtimes: list[str] = []
+    cmake_required = False
+    node_required = False
+    uv_required = False
+
+    for runtime_name in normalized_runtimes:
         if runtime_name == "node":
-            with file_lock("deps-node"):
-                if not ensure_node_tools(quiet_success=True, output_stream=stream):
-                    ok = False
+            node_required = True
             continue
         if runtime_name == "uv":
-            with file_lock("deps-uv"):
-                if runtime_install.resolve_uv_binary() is None:
-                    ok = install_uv_linux(quiet_success=True, output_stream=stream) and ok
+            uv_required = True
             continue
         if runtime_name == "cmake":
-            with file_lock("deps-cmake"):
-                version = _installed_cmake_version()
-                if version is None:
-                    package_manager = detect_package_manager()
-                    if package_manager is None:
-                        ok = False
-                        continue
-                    if not install_system_packages_linux(
-                        [system_runtime_package_name(runtime_name, package_manager)],
-                        quiet_success=True,
-                        output_stream=stream,
-                        refresh_package_index=True,
-                    ):
-                        ok = False
-                        continue
-                if not ensure_modern_cmake(quiet_success=True, output_stream=stream):
-                    ok = False
+            if _cmake_ready():
+                statuses[runtime_name] = True
+                continue
+            cmake_required = True
+            if _installed_cmake_version() is None:
+                if package_manager is None:
+                    statuses[runtime_name] = False
+                    cmake_required = False
+                    continue
+                pending_packages.extend(system_runtime_package_names(runtime_name, package_manager))
             continue
         if runtime_name in SYSTEM_RUNTIME_BINARIES:
             binary_name = SYSTEM_RUNTIME_BINARIES[runtime_name]
-            with file_lock(f"deps-system-{runtime_name}"):
-                if shutil.which(binary_name) is None:
-                    package_manager = detect_package_manager()
-                    if package_manager is None:
-                        ok = False
-                        continue
-                    ok = install_system_packages_linux(
-                        [system_runtime_package_name(runtime_name, package_manager)],
-                        quiet_success=True,
-                        output_stream=stream,
-                        refresh_package_index=True,
-                    ) and ok
+            if shutil.which(binary_name) is not None:
+                statuses[runtime_name] = True
+                continue
+            if package_manager is None:
+                statuses[runtime_name] = False
+                continue
+            pending_packages.extend(system_runtime_package_names(runtime_name, package_manager))
+            pending_binary_runtimes.append(runtime_name)
             continue
         if runtime_name in SYSTEM_RUNTIME_PACKAGES:
-            package_manager = detect_package_manager()
             if package_manager is None:
-                ok = False
+                statuses[runtime_name] = False
                 continue
-            ok = install_system_packages_linux(
-                [system_runtime_package_name(runtime_name, package_manager)],
-                quiet_success=True,
-                output_stream=stream,
-                refresh_package_index=True,
-            ) and ok
+            pending_packages.extend(system_runtime_package_names(runtime_name, package_manager))
+            pending_package_runtimes.append(runtime_name)
             continue
-        print(f"[deps] unsupported runtime dependency for {agent_name}: {runtime_name}", file=stream)
-        ok = False
-    return ok
+        print(f"[deps] unsupported runtime dependency: {runtime_name}", file=stream)
+        statuses[runtime_name] = False
+
+    if pending_packages:
+        package_install_ok = install_system_packages_linux(
+            list(dict.fromkeys(pending_packages)),
+            quiet_success=True,
+            output_stream=stream,
+            refresh_package_index=True,
+        )
+        for runtime_name in pending_binary_runtimes:
+            binary_name = SYSTEM_RUNTIME_BINARIES[runtime_name]
+            statuses[runtime_name] = package_install_ok and shutil.which(binary_name) is not None
+        for runtime_name in pending_package_runtimes:
+            statuses[runtime_name] = package_install_ok
+        if cmake_required and "cmake" not in statuses and _installed_cmake_version() is None:
+            statuses["cmake"] = package_install_ok
+
+    if node_required:
+        with file_lock("deps-node"):
+            statuses["node"] = ensure_node_tools(quiet_success=True, output_stream=stream)
+    if uv_required:
+        with file_lock("deps-uv"):
+            if runtime_install.resolve_uv_binary() is not None:
+                statuses["uv"] = True
+            else:
+                statuses["uv"] = install_uv_linux(quiet_success=True, output_stream=stream)
+    if cmake_required and statuses.get("cmake", True):
+        with file_lock("deps-cmake"):
+            statuses["cmake"] = ensure_modern_cmake(quiet_success=True, output_stream=stream)
+
+    for runtime_name in normalized_runtimes:
+        statuses.setdefault(runtime_name, False)
+    return statuses
 
 
 def install_agent(
@@ -768,9 +865,16 @@ def install_agent(
     version: Optional[str] = None,
     *,
     output_stream: Optional[TextIO] = None,
+    skip_dependencies: bool = False,
 ) -> InstallResult:
     with file_lock(f"install-{agent_name}"):
-        return _install_agent_locked(agent_name, scope=scope, version=version, output_stream=output_stream)
+        return _install_agent_locked(
+            agent_name,
+            scope=scope,
+            version=version,
+            output_stream=output_stream,
+            skip_dependencies=skip_dependencies,
+        )
 
 
 def ensure_agent_installed(
@@ -788,6 +892,7 @@ def ensure_agent_installed(
             scope=scope,
             version=version,
             output_stream=output_stream,
+            skip_dependencies=False,
         )
 
 
@@ -797,8 +902,9 @@ def _install_agent_locked(
     scope: str,
     version: Optional[str],
     output_stream: Optional[TextIO],
+    skip_dependencies: bool,
 ) -> InstallResult:
-    if not ensure_dependencies(agent_name, output_stream=output_stream):
+    if not skip_dependencies and not ensure_dependencies(agent_name, output_stream=output_stream):
         return InstallResult(
             agent=agent_name,
             version=None,
@@ -904,11 +1010,42 @@ def install_uv_linux(*, quiet_success: bool = False, output_stream: Optional[Tex
 
 
 def run_install_command(agent_name: str, scope: str, version: Optional[str]) -> int:
-    return _run_for_targets(
-        agent_name,
-        lambda target: _install_target(target, scope=scope, version=version),
-        parallel=agent_name.strip().lower() in ALL_AGENT_SELECTORS,
+    targets = _resolve_targets_or_emit(agent_name)
+    if targets is None:
+        return 2
+
+    parallel = agent_name.strip().lower() in ALL_AGENT_SELECTORS
+    preflight_failures: dict[str, TargetCommandResult] = {}
+    install_targets = targets
+    if parallel and len(targets) > 1:
+        target_runtimes = {
+            target: create_agent(target).runtime_dependencies()
+            for target in targets
+        }
+        runtime_statuses = ensure_runtime_dependencies(
+            runtime_name
+            for runtimes in target_runtimes.values()
+            for runtime_name in runtimes
+        )
+        for target, runtimes in target_runtimes.items():
+            if all(runtime_statuses.get(runtime_name, False) for runtime_name in runtimes):
+                continue
+            preflight_failures[target] = _dependency_failure_payload(target)
+        install_targets = [target for target in targets if target not in preflight_failures]
+
+    install_results = _run_targets(
+        install_targets,
+        target_runner=lambda target: _install_target(
+            target,
+            scope=scope,
+            version=version,
+            skip_dependencies=parallel and len(targets) > 1,
+        ),
+        parallel=parallel,
     )
+    install_results_by_target = dict(zip(install_targets, install_results))
+    ordered_results = [preflight_failures.get(target) or install_results_by_target[target] for target in targets]
+    return _emit_target_results(agent_name, targets, ordered_results, parallel=parallel)
 
 
 def run_configure_command(agent_name: str) -> int:

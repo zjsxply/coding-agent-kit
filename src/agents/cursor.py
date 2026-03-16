@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import platform
 import re
 import shutil
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .base import CodingAgent, CommandResult, InstallStrategy, RunCommandTemplate, RunParseResult, RunPlan
+from ..agent_runtime import command_exec as runtime_command
 from ..agent_runtime import parsing as runtime_parsing
 from ..agent_runtime import env as runtime_env
 from ..stats_extract import last_value, parse_usage_by_model, select_values, sum_usage_entries
@@ -30,6 +32,38 @@ class CursorAgent(CodingAgent):
     )
 
     _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+    _BUNDLED_VERSION_PATTERN = re.compile(r"agent-cli@([A-Za-z0-9._-]+)")
+
+    def get_version(self) -> Optional[str]:
+        binary_path = runtime_command.resolve_binary(
+            agent_name=self.name,
+            binary=self.binary,
+            npm_prefix=self._npm_prefix(),
+            env_source=os.environ,
+        )
+        if binary_path is not None:
+            resolved_binary = Path(binary_path).expanduser()
+            try:
+                resolved_binary = resolved_binary.resolve(strict=True)
+            except OSError:
+                pass
+            install_dir = resolved_binary.parent
+            package_payload = runtime_parsing.load_json_dict(install_dir / "package.json")
+            version = runtime_parsing.normalize_text(
+                package_payload.get("version") if isinstance(package_payload, dict) else None
+            )
+            if version is not None:
+                return version
+            for candidate in [install_dir / "index.js", *sorted(install_dir.glob("*.index.js"))]:
+                content = self._read_text_lossy(candidate)
+                if content is None:
+                    continue
+                match = self._BUNDLED_VERSION_PATTERN.search(content)
+                if match is not None:
+                    version = runtime_parsing.normalize_text(match.group(1))
+                    if version is not None:
+                        return version
+        return super().get_version()
 
     def _install_with_custom_strategy(
         self,

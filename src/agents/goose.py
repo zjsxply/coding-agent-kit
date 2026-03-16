@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from .base import CodingAgent, InstallStrategy, RunCommandTemplate, RunParseResult, RunPlan, VersionCommandTemplate
+from ..agent_runtime import command_exec as runtime_command
 from ..agent_runtime import env as runtime_env
 from ..agent_runtime import parsing as runtime_parsing
 from ..agent_runtime import trajectory as runtime_trajectory
@@ -45,6 +46,11 @@ class GooseAgent(CodingAgent):
         regex=r"^(?:goose\s+)?([A-Za-z0-9._-]+)$",
     )
     _SESSION_ID_RE = re.compile(r"session id:\s*([^\s]+)", re.IGNORECASE)
+    _BINARY_VERSION_PATTERNS = (
+        re.compile(rb"goose Version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9._-]+)?)"),
+        re.compile(rb"linux(?:x86_64|aarch64)version([0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9._-]+)?)interface"),
+        re.compile(rb"service\.version([0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9._-]+)?)"),
+    )
 
     def _build_run_plan(
         self,
@@ -444,13 +450,12 @@ class GooseAgent(CodingAgent):
     def get_version(self) -> Optional[str]:
         run_home = self._make_temp_dir(prefix="cakit-goose-version-")
         result = self._run(["goose", "--version"], env=self._build_runtime_state_env(run_home))
-        if result.exit_code != 0:
-            return None
-        line = runtime_parsing.first_nonempty_line(result.output)
-        if line is None:
-            return None
-        match = re.match(r"^(?:goose\s+)?([A-Za-z0-9._-]+)$", line)
-        return match.group(1) if match else line
+        if result.exit_code == 0:
+            line = runtime_parsing.first_nonempty_line(result.output)
+            if line is not None:
+                match = re.match(r"^(?:goose\s+)?([A-Za-z0-9._-]+)$", line)
+                return match.group(1) if match else line
+        return self._version_from_installed_binary()
 
     @staticmethod
     def _build_runtime_state_env(run_home: Path) -> Dict[str, str]:
@@ -461,3 +466,28 @@ class GooseAgent(CodingAgent):
             "XDG_DATA_HOME": str(run_home / "data"),
             "XDG_STATE_HOME": str(run_home / "state"),
         }
+
+    def _version_from_installed_binary(self) -> Optional[str]:
+        binary_path = runtime_command.resolve_binary(
+            agent_name=self.name,
+            binary=self.binary,
+            npm_prefix=self._npm_prefix(),
+            env_source=os.environ,
+        )
+        if binary_path is None:
+            return None
+        try:
+            payload = Path(binary_path).expanduser().read_bytes()
+        except OSError:
+            return None
+        for pattern in self._BINARY_VERSION_PATTERNS:
+            match = pattern.search(payload)
+            if match is None:
+                continue
+            try:
+                version = match.group(1).decode("utf-8", errors="ignore").strip()
+            except Exception:
+                continue
+            if version:
+                return version
+        return None
