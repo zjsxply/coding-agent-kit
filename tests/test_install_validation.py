@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 
 from src.agents.aider import AiderAgent
 from src.agents.base import CodingAgent, CommandResult, InstallStrategy
@@ -14,6 +15,7 @@ from src.agents.goose import GooseAgent
 from src.agents.trae_oss import TraeOssAgent
 from src.models import InstallResult
 from src.cli import install as install_cli
+from src.cli import tools as tools_cli
 
 
 class _DummyInstallAgent(CodingAgent):
@@ -538,6 +540,61 @@ def test_ensure_runtime_dependencies_batches_system_package_install(monkeypatch)
         "uv": True,
         "cmake": True,
     }
+
+
+def test_run_logged_command_returns_false_on_timeout(monkeypatch):
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=kwargs.get("args", args[0] if args else []),
+            timeout=5,
+            output="partial output",
+            stderr="timed out",
+        )
+
+    monkeypatch.setattr("src.cli.install.subprocess.run", fake_run)
+
+    assert install_cli.run_logged_command(
+        "[tools]",
+        ["sleep", "10"],
+        quiet_success=True,
+        timeout_seconds=5,
+    ) is False
+
+
+def test_tools_limits_playwright_install_steps_with_timeout(monkeypatch):
+    recorded_timeouts: list[object] = []
+
+    monkeypatch.setattr(tools_cli.sys, "platform", "linux")
+    monkeypatch.setattr(tools_cli.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(tools_cli.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        tools_cli,
+        "ARCH_SPECIFIC_TOOL_COMPONENTS",
+        (("playwright-chromium (deps+browser)", "_install_playwright_chromium"),),
+    )
+    monkeypatch.setattr(tools_cli, "PACKAGE_MANAGER_BOOTSTRAP_PACKAGES", {"apt-get": ()})
+    monkeypatch.setattr(tools_cli, "detect_package_manager", lambda: "apt-get")
+    monkeypatch.setattr(tools_cli, "_has_component_binary", lambda component: True)
+    monkeypatch.setattr(tools_cli, "ensure_node_tools", lambda quiet_success=True: True)
+
+    def fake_run_logged_command(prefix, cmd, **kwargs):
+        del prefix, cmd
+        recorded_timeouts.append(kwargs.get("timeout_seconds"))
+        return True
+
+    monkeypatch.setattr(tools_cli, "run_logged_command", fake_run_logged_command)
+    monkeypatch.setattr(
+        "src.cli.tools.shutil.which",
+        lambda name: "/usr/bin/npx" if name in {"npx", "npm", "node"} else "/usr/bin/tool",
+    )
+
+    result = tools_cli.install_fast_tools_linux()
+
+    assert result["ok"] is True
+    assert [timeout for timeout in recorded_timeouts if timeout is not None] == [
+        tools_cli.PLAYWRIGHT_COMMAND_TIMEOUT_SECONDS,
+        tools_cli.PLAYWRIGHT_COMMAND_TIMEOUT_SECONDS,
+    ]
 
 
 def test_deepagents_reads_version_from_installed_dist_info_when_cli_version_probe_fails(monkeypatch, tmp_path):

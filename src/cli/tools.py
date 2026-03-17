@@ -146,6 +146,7 @@ TOOL_PACKAGE_CANDIDATES: dict[str, dict[str, tuple[tuple[str, ...], ...]]] = {
 }
 
 PLAYWRIGHT_DEPS_PACKAGE_MANAGERS = {"apt-get"}
+PLAYWRIGHT_COMMAND_TIMEOUT_SECONDS = 300
 
 
 def _append_unique(items: list[str], value: str) -> None:
@@ -561,6 +562,7 @@ def install_fast_tools_linux() -> dict[str, object]:
                     "[tools]",
                     with_sudo([*playwright_cmd, "install-deps", "chromium"], use_sudo=use_sudo),
                     quiet_success=True,
+                    timeout_seconds=PLAYWRIGHT_COMMAND_TIMEOUT_SECONDS,
                 )
                 browser_ok = False
                 if deps_ok:
@@ -568,6 +570,7 @@ def install_fast_tools_linux() -> dict[str, object]:
                         "[tools]",
                         [*playwright_cmd, "install", "chromium"],
                         quiet_success=True,
+                        timeout_seconds=PLAYWRIGHT_COMMAND_TIMEOUT_SECONDS,
                     )
                 if deps_ok and browser_ok:
                     _append_unique(installed_components, component_name)

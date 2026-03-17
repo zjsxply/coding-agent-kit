@@ -272,6 +272,7 @@ def run_logged_command(
     input_text: Optional[str] = None,
     quiet_success: bool = False,
     output_stream: Optional[TextIO] = None,
+    timeout_seconds: Optional[float] = None,
 ) -> bool:
     stream = output_stream or sys.stderr
 
@@ -284,24 +285,48 @@ def run_logged_command(
 
     if not quiet_success:
         print(f"{prefix} {' '.join(cmd)}", file=stream)
+        try:
+            result = subprocess.run(
+                cmd,
+                check=False,
+                input=input_text,
+                text=True,
+                stdout=stream,
+                stderr=stream,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            print(f"{prefix} {' '.join(cmd)}", file=stream)
+            timed_output = f"{exc.stdout or ''}{exc.stderr or ''}"
+            if timed_output:
+                stream.write(timed_output)
+                if not timed_output.endswith("\n"):
+                    stream.write("\n")
+            print(
+                f"{prefix} command timed out after {timeout_seconds}s",
+                file=stream,
+            )
+            return False
+        return result.returncode == 0
+
+    try:
         result = subprocess.run(
             cmd,
             check=False,
             input=input_text,
             text=True,
-            stdout=stream,
-            stderr=stream,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout_seconds,
         )
-        return result.returncode == 0
-
-    result = subprocess.run(
-        cmd,
-        check=False,
-        input=input_text,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    except subprocess.TimeoutExpired as exc:
+        timed_output = f"{exc.stdout or ''}{exc.stderr or ''}"
+        print_captured_output(timed_output)
+        print(
+            f"{prefix} command timed out after {timeout_seconds}s",
+            file=stream,
+        )
+        return False
     if result.returncode != 0:
         print_captured_output(result.stdout or "")
     return result.returncode == 0
