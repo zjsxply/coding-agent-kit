@@ -290,7 +290,7 @@ cakit tools
 | qoder |  | ✗ |  | ✗ |  |  |  |  | 0.1.28 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.13.0 |
 | swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  | 1.1.0 |
-| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  | e839e559ac61bdd0e057c375dd1dee391fee797d |
+| trae-oss | ✗ | ✓ | ✗ | ✗ |  |  |  |  | e839e559ac61bdd0e057c375dd1dee391fee797d |
 
 ## 待办（Todo）
 

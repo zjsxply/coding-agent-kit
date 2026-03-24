@@ -290,7 +290,7 @@ This project is not fully tested. ✓ = tested, ✗ = not supported, blank = unt
 | qoder |  | ✗ |  | ✗ |  |  |  |  | 0.1.28 |
 | openhands | ✗ | ✓ | ✗ | ✗ |  |  |  | ✓ | 1.13.0 |
 | swe-agent | ✗ |  | ✗ | ✗ |  |  |  |  | 1.1.0 |
-| trae-oss | ✗ |  | ✗ | ✗ |  |  |  |  | e839e559ac61bdd0e057c375dd1dee391fee797d |
+| trae-oss | ✗ | ✓ | ✗ | ✗ |  |  |  |  | e839e559ac61bdd0e057c375dd1dee391fee797d |
 
 ## Todo
 

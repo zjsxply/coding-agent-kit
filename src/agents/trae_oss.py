@@ -114,7 +114,7 @@ class TraeOssAgent(CodingAgent):
                     "top_p": 1.0,
                     "top_k": 0,
                     "parallel_tool_calls": False,
-                    "max_retries": 10,
+                    "max_retries": 5,
                 }
             },
         }

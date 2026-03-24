@@ -29,11 +29,18 @@ This document describes how `cakit` runs `trae-cli` and extracts run stats.
   - `--trajectory-file <path>`
   - `--config-file ~/.config/trae/config.yaml` (if present)
   - `--model <...>` when model is configured or overridden.
+- Provider selection for the generated config:
+  - `CAKIT_TRAE_AGENT_PROVIDER` when set
+  - `openai` for `api.openai.com`
+  - `openrouter` for `*.openrouter.ai`
+  - fallback: `doubao` for other custom gateways, which keeps Trae on the chat-completions-compatible path
 - Trajectory file path for `--trajectory-file`:
   - `CAKIT_TRAE_TRAJECTORY` when set (supports `~` expansion)
   - fallback: run-unique temp path `/tmp/cakit-trae-<uuid>.json`
 - Model priority is: `--model` > `TRAE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`.
 - cakit forwards the resolved shared OpenAI-compatible base URL to the child via `OPENAI_BASE_URL`.
+- Set `CAKIT_TRAE_AGENT_PROVIDER=openai` when a custom gateway fully supports Trae's OpenAI Responses API path; otherwise keep the default fallback.
+- cakit sets `max_retries: 5` in the generated Trae config so transient upstream failures still retry without becoming effectively unbounded.
 
 ## Stats extraction
 

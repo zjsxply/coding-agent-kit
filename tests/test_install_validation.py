@@ -623,3 +623,43 @@ def test_deepagents_reads_version_from_installed_dist_info_when_cli_version_prob
     )
 
     assert agent.get_version() == "0.0.12"
+
+
+def test_trae_oss_defaults_unknown_non_openai_gateways_to_doubao(monkeypatch):
+    monkeypatch.delenv("CAKIT_TRAE_AGENT_PROVIDER", raising=False)
+
+    assert TraeOssAgent()._resolve_model_provider("https://api.toiotech.com/v1") == "doubao"
+
+
+def test_trae_oss_recognizes_doubao_endpoints(monkeypatch):
+    monkeypatch.delenv("CAKIT_TRAE_AGENT_PROVIDER", raising=False)
+
+    assert (
+        TraeOssAgent()._resolve_model_provider("https://ark.cn-beijing.volces.com/api/v3/")
+        == "doubao"
+    )
+
+
+def test_trae_oss_respects_explicit_provider_override(monkeypatch):
+    monkeypatch.setenv("CAKIT_TRAE_AGENT_PROVIDER", "openai")
+
+    assert TraeOssAgent()._resolve_model_provider("https://api.toiotech.com/v1") == "openai"
+
+
+def test_trae_oss_configure_defaults_to_doubao_and_sets_retry_limit(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAE_AGENT_API_KEY", "test-key")
+    monkeypatch.setenv("TRAE_AGENT_BASE_URL", "https://api.toiotech.com/v1")
+    monkeypatch.setenv("TRAE_AGENT_MODEL", "kimi-k2.5")
+    monkeypatch.delenv("CAKIT_TRAE_AGENT_PROVIDER", raising=False)
+    monkeypatch.setattr(
+        TraeOssAgent,
+        "_resolve_writable_dir",
+        lambda self, *args, **kwargs: tmp_path,
+    )
+
+    config_path = TraeOssAgent().configure()
+
+    assert config_path == os.fspath(tmp_path / "config.yaml")
+    config_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert "provider: doubao" in config_text
+    assert "max_retries: 5" in config_text

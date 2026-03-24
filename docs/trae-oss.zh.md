@@ -29,11 +29,18 @@
   - `--trajectory-file <path>`
   - `--config-file ~/.config/trae/config.yaml`（若存在）
   - 配置了模型时追加 `--model <...>`
+- 生成配置时的 provider 选择规则：
+  - 若设置了 `CAKIT_TRAE_AGENT_PROVIDER`，优先使用它
+  - `api.openai.com` 识别为 `openai`
+  - `*.openrouter.ai` 识别为 `openrouter`
+  - 其他自定义网关默认识别为 `doubao`，保持 Trae 走兼容 chat completions 的路径
 - `--trajectory-file` 的路径来源：
   - 设置了 `CAKIT_TRAE_TRAJECTORY` 时使用该值（支持 `~` 展开）
   - 未设置时回退为 run 唯一路径 `/tmp/cakit-trae-<uuid>.json`
 - 模型优先级为：`--model` > `TRAE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`。
 - cakit 会把解析后的共享 OpenAI 兼容 base URL 通过 `OPENAI_BASE_URL` 传给子进程。
+- 如果某个自定义网关完整支持 Trae 所需的 OpenAI Responses API 路径，可显式设置 `CAKIT_TRAE_AGENT_PROVIDER=openai`；否则保持默认即可。
+- cakit 会在生成的 Trae 配置里写入 `max_retries: 5`，让临时性的上游失败仍然会重试，但不会变成近乎无界的长时间等待。
 
 ## 统计提取
 
