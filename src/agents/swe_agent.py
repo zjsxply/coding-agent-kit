@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -10,6 +11,8 @@ import urllib.request
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+import yaml
 
 from .base import CodingAgent, InstallStrategy, ParsedStats, VersionCommandTemplate
 from ..models import InstallResult, RunResult
@@ -36,6 +39,9 @@ class SweAgent(CodingAgent):
         kind="uv_tool",
         package="git+https://github.com/SWE-agent/SWE-agent",
         version_style="git_ref",
+        python_version="3.12",
+        force=True,
+        with_packages=("pip", "tree-sitter==0.21.3", "tree-sitter-languages"),
     )
     _install_runtime_asset_version: Optional[str] = None
     version_template = VersionCommandTemplate(
@@ -69,10 +75,10 @@ class SweAgent(CodingAgent):
         if not tools_dir:
             return None
         config = self._build_config_payload(
-            registry_bundle=Path(tools_dir) / "registry",
-            submit_bundle=Path(tools_dir) / "submit",
+            tools_root=Path(tools_dir),
             api_base=runtime_env.resolve_openai_base_url("SWE_AGENT_BASE_URL"),
             model_name=None,
+            default_config_path=Path(runtime_assets_env["SWE_AGENT_CONFIG_DIR"]) / "default.yaml",
         )
         config_dir = self._resolve_writable_dir(
             Path.home() / ".config" / "sweagent",
@@ -100,6 +106,14 @@ class SweAgent(CodingAgent):
             "OPENAI_API_KEY": api_key,
             "OPENAI_BASE_URL": api_base,
         }
+        tool_bin_dir = self._installed_tool_bin_dir()
+        if tool_bin_dir is not None:
+            current_path = os.environ.get("PATH", "")
+            env["PATH"] = (
+                os.pathsep.join((str(tool_bin_dir), current_path))
+                if current_path
+                else str(tool_bin_dir)
+            )
         env.update(self._runtime_asset_env(create_if_missing=True))
         run_home = self._make_temp_dir(prefix="cakit-sweagent-home-")
         env["HOME"] = str(run_home)
@@ -108,7 +122,10 @@ class SweAgent(CodingAgent):
             output_format="slash",
         )
         repo_path = self._resolve_repo_path(base_env=base_env)
-        registry_bundle, submit_bundle = self._prepare_run_tool_bundles(Path(env["SWE_AGENT_TOOLS_DIR"]))
+        run_bundle_paths = self._prepare_run_tool_bundle_paths(
+            tools_dir=Path(env["SWE_AGENT_TOOLS_DIR"]),
+            default_config_path=Path(env["SWE_AGENT_CONFIG_DIR"]) / "default.yaml",
+        )
         output_dir = self._make_temp_dir(prefix="cakit-sweagent-")
         supports_output_dir = self._supports_output_dir(env=env, base_env=base_env)
         cmd = [
@@ -130,18 +147,20 @@ class SweAgent(CodingAgent):
         config_path = config_dir / "config.yaml"
         if model:
             config = self._build_config_payload(
-                registry_bundle=registry_bundle,
-                submit_bundle=submit_bundle,
+                tools_root=Path(env["SWE_AGENT_TOOLS_DIR"]),
                 api_base=api_base,
                 model_name=model,
+                default_config_path=Path(env["SWE_AGENT_CONFIG_DIR"]) / "default.yaml",
+                bundle_path_overrides=run_bundle_paths,
             )
             self._write_text(config_path, dump_yaml(config))
         elif not config_path.exists():
             config = self._build_config_payload(
-                registry_bundle=registry_bundle,
-                submit_bundle=submit_bundle,
+                tools_root=Path(env["SWE_AGENT_TOOLS_DIR"]),
                 api_base=api_base,
                 model_name=runtime_env.resolve_openai_model("SWE_AGENT_MODEL"),
+                default_config_path=Path(env["SWE_AGENT_CONFIG_DIR"]) / "default.yaml",
+                bundle_path_overrides=run_bundle_paths,
             )
             self._write_text(config_path, dump_yaml(config))
         if config_path.exists():
@@ -224,11 +243,13 @@ class SweAgent(CodingAgent):
     def _build_config_payload(
         self,
         *,
-        registry_bundle: Path,
-        submit_bundle: Path,
+        tools_root: Path,
         api_base: Optional[str],
         model_name: Optional[str],
+        default_config_path: Path,
+        bundle_path_overrides: Optional[Dict[str, Path]] = None,
     ) -> Dict[str, Any]:
+        agent_config = self._load_official_default_agent(default_config_path)
         model_config: Dict[str, Any] = {
             "name": model_name or "swe-agent-required-model",
             "per_instance_cost_limit": 0.0,
@@ -236,40 +257,104 @@ class SweAgent(CodingAgent):
         }
         if api_base:
             model_config["api_base"] = api_base
-        return {
-            "agent": {
-                "model": model_config,
-                "templates": {
-                    "system_template": "You are a helpful assistant that can interact with a computer to solve tasks.",
-                    "instance_template": "{{problem_statement}}",
-                },
-                "tools": {
-                    "bundles": [
-                        {"path": str(registry_bundle)},
-                        {"path": str(submit_bundle)},
-                    ],
-                    "enable_bash_tool": True,
-                    "parse_function": {"type": "thought_action"},
-                },
-                "history_processors": [
-                    {
-                        "type": "cache_control",
-                        "last_n_messages": 2,
-                    }
-                ],
-            }
-        }
+        agent_config["model"] = model_config
+        self._rewrite_tool_bundle_paths(
+            agent_config=agent_config,
+            tools_root=tools_root,
+            bundle_path_overrides=bundle_path_overrides,
+        )
+        return {"agent": agent_config}
 
-    def _prepare_run_tool_bundles(self, tools_dir: Path) -> tuple[Path, Path]:
+    def _load_official_default_agent(self, default_config_path: Path) -> Dict[str, Any]:
+        payload = yaml.safe_load(default_config_path.read_text(encoding="utf-8"))
+        agent_payload = payload.get("agent") if isinstance(payload, dict) else None
+        if not isinstance(agent_payload, dict) or not agent_payload:
+            raise RuntimeError(f"Failed to load official SWE-agent default agent config from {default_config_path}.")
+        return copy.deepcopy(agent_payload)
+
+    def _rewrite_tool_bundle_paths(
+        self,
+        *,
+        agent_config: Dict[str, Any],
+        tools_root: Path,
+        bundle_path_overrides: Optional[Dict[str, Path]],
+    ) -> None:
+        tools_config = agent_config.get("tools")
+        if not isinstance(tools_config, dict):
+            raise RuntimeError("Official SWE-agent default config is missing agent.tools.")
+        bundles = tools_config.get("bundles")
+        if not isinstance(bundles, list) or not bundles:
+            raise RuntimeError("Official SWE-agent default config is missing agent.tools.bundles.")
+
+        rewritten_bundles: list[Dict[str, Any]] = []
+        for bundle in bundles:
+            if not isinstance(bundle, dict):
+                raise RuntimeError("Official SWE-agent bundle entry is not an object.")
+            bundle_path = runtime_parsing.normalize_text(bundle.get("path"))
+            if bundle_path is None:
+                raise RuntimeError("Official SWE-agent bundle entry is missing path.")
+            resolved_bundle = (
+                bundle_path_overrides.get(bundle_path)
+                if isinstance(bundle_path_overrides, dict)
+                else None
+            )
+            if resolved_bundle is None:
+                resolved_bundle = self._resolve_tool_bundle_path(bundle_path=bundle_path, tools_root=tools_root)
+            rewritten_bundle = copy.deepcopy(bundle)
+            rewritten_bundle["path"] = str(resolved_bundle)
+            rewritten_bundles.append(rewritten_bundle)
+        tools_config["bundles"] = rewritten_bundles
+
+    def _resolve_tool_bundle_path(self, *, bundle_path: str, tools_root: Path) -> Path:
+        candidate = Path(bundle_path)
+        if candidate.is_absolute():
+            return candidate
+        direct_path = tools_root / candidate
+        if direct_path.exists():
+            return direct_path
+        named_path = tools_root / candidate.name
+        if named_path.exists():
+            return named_path
+        raise RuntimeError(f"Failed to resolve official SWE-agent tool bundle {bundle_path!r} in {tools_root}.")
+
+    def _prepare_run_tool_bundle_paths(
+        self,
+        *,
+        tools_dir: Path,
+        default_config_path: Path,
+    ) -> Dict[str, Path]:
+        agent_config = self._load_official_default_agent(default_config_path)
+        tools_config = agent_config.get("tools")
+        bundles = tools_config.get("bundles") if isinstance(tools_config, dict) else None
+        if not isinstance(bundles, list) or not bundles:
+            raise RuntimeError("Official SWE-agent default config is missing agent.tools.bundles.")
+
         run_bundle_root = self._make_temp_dir(prefix="cakit-sweagent-bundles-")
         suffix = run_bundle_root.name.rsplit("-", 1)[-1]
-        registry_source = tools_dir / "registry"
-        submit_source = tools_dir / "submit"
-        registry_target = run_bundle_root / f"registry-{suffix}"
-        submit_target = run_bundle_root / f"submit-{suffix}"
-        shutil.copytree(registry_source, registry_target)
-        shutil.copytree(submit_source, submit_target)
-        return registry_target, submit_target
+        bundle_paths: Dict[str, Path] = {}
+        for bundle in bundles:
+            if not isinstance(bundle, dict):
+                raise RuntimeError("Official SWE-agent bundle entry is not an object.")
+            bundle_path = runtime_parsing.normalize_text(bundle.get("path"))
+            if bundle_path is None:
+                raise RuntimeError("Official SWE-agent bundle entry is missing path.")
+            source_path = self._resolve_tool_bundle_path(bundle_path=bundle_path, tools_root=tools_dir)
+            target_path = run_bundle_root / f"{Path(bundle_path).name}-{suffix}"
+            shutil.copytree(source_path, target_path)
+            bundle_paths[bundle_path] = target_path
+        return bundle_paths
+
+    def _installed_tool_bin_dir(self) -> Optional[Path]:
+        binary_path = shutil.which("sweagent")
+        if not binary_path:
+            return None
+        shebang = runtime_parsing.first_nonempty_line(self._read_text(Path(binary_path)))
+        if isinstance(shebang, str) and shebang.startswith("#!"):
+            python_path = Path(shebang[2:].strip())
+            if python_path.exists():
+                return python_path.parent
+        resolved = Path(binary_path).expanduser().resolve()
+        return resolved.parent if resolved.exists() else None
 
     def _installed_version(self) -> Optional[str]:
         try:
@@ -466,11 +551,31 @@ class SweAgent(CodingAgent):
             ["git", "-C", str(self.workdir), "rev-parse", "--is-inside-work-tree"],
             base_env=base_env,
         )
-        if result.exit_code == 0 and result.stdout.strip().lower() == "true":
-            return self.workdir
+        if result.exit_code != 0 or result.stdout.strip().lower() != "true":
+            return self._create_temporary_repo(base_env=base_env)
 
+        repo_root_result = self._run(
+            ["git", "-C", str(self.workdir), "rev-parse", "--show-toplevel"],
+            base_env=base_env,
+        )
+        repo_root_text = runtime_parsing.normalize_text(repo_root_result.stdout) if repo_root_result.exit_code == 0 else None
+        if repo_root_text is None:
+            return self._create_temporary_repo(base_env=base_env)
+        repo_root = Path(repo_root_text).expanduser().resolve()
+
+        status_result = self._run(
+            ["git", "-C", str(repo_root), "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            base_env=base_env,
+        )
+        if status_result.exit_code != 0:
+            return repo_root
+        if not status_result.stdout:
+            return repo_root
+        return self._create_repo_snapshot(source_root=repo_root, status_output=status_result.stdout, base_env=base_env)
+
+    def _create_temporary_repo(self, *, base_env: Optional[Dict[str, str]]) -> Path:
         repo_path = self._make_temp_dir(prefix="cakit-swe-repo-")
-        (repo_path / "README.md").write_text("Temporary repository for cakit swe-agent run.\n", encoding="utf-8")
+        self._write_text(repo_path / "README.md", "Temporary repository for cakit swe-agent run.\n")
         init_commands = [
             ["git", "-C", str(repo_path), "init"],
             ["git", "-C", str(repo_path), "config", "user.email", "cakit@example.com"],
@@ -483,6 +588,73 @@ class SweAgent(CodingAgent):
             if result.exit_code != 0:
                 return self.workdir
         return repo_path
+
+    def _create_repo_snapshot(self, *, source_root: Path, status_output: str, base_env: Optional[Dict[str, str]]) -> Path:
+        snapshot_root = self._make_temp_dir(prefix="cakit-swe-repo-")
+        clone_result = self._run(
+            ["git", "clone", "--quiet", "--no-hardlinks", str(source_root), str(snapshot_root)],
+            base_env=base_env,
+        )
+        if clone_result.exit_code != 0:
+            return source_root
+
+        entries = status_output.split("\0")
+        index = 0
+        # Apply the current working tree state on top of a clean clone so SWE-agent sees a clean repo.
+        while index < len(entries):
+            entry = entries[index]
+            index += 1
+            if not entry:
+                continue
+            status_code = entry[:2]
+            current_path = entry[3:] if len(entry) > 3 else ""
+            previous_path = None
+            if "R" in status_code or "C" in status_code:
+                previous_path = current_path
+                if index < len(entries):
+                    current_path = entries[index]
+                    index += 1
+            if previous_path is not None and "R" in status_code:
+                self._remove_snapshot_path(snapshot_root / previous_path)
+            if not current_path:
+                continue
+            source_path = source_root / current_path
+            target_path = snapshot_root / current_path
+            if source_path.exists() or source_path.is_symlink():
+                self._replace_snapshot_path(source=source_path, target=target_path)
+            else:
+                self._remove_snapshot_path(target_path)
+
+        finalize_commands = [
+            ["git", "-C", str(snapshot_root), "config", "user.email", "cakit@example.com"],
+            ["git", "-C", str(snapshot_root), "config", "user.name", "cakit"],
+            ["git", "-C", str(snapshot_root), "add", "-A"],
+            ["git", "-C", str(snapshot_root), "commit", "-m", "Snapshot working tree for cakit swe-agent run"],
+        ]
+        for command in finalize_commands:
+            result = self._run(command, base_env=base_env)
+            if result.exit_code != 0 and command[-2:] != ["add", "-A"] and "nothing to commit" not in result.output.lower():
+                return source_root
+        return snapshot_root
+
+    def _replace_snapshot_path(self, *, source: Path, target: Path) -> None:
+        self._remove_snapshot_path(target)
+        if source.is_symlink():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(os.readlink(source), target)
+            return
+        if source.is_dir():
+            shutil.copytree(source, target, symlinks=True)
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target, follow_symlinks=False)
+
+    def _remove_snapshot_path(self, path: Path) -> None:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+            return
+        if path.exists() or path.is_symlink():
+            path.unlink()
 
     def _run_sweagent_command(
         self, args: list[str], *, env: Optional[Dict[str, str]], base_env: Optional[Dict[str, str]]
@@ -499,6 +671,23 @@ class SweAgent(CodingAgent):
         if help_result.exit_code != 0:
             return False
         return "--output_dir" in help_result.output or "output_dir:" in help_result.output
+
+    def _extract_response_from_trajectory(self, payload: Dict[str, Any]) -> Optional[str]:
+        entries = select_values(payload, "$.attempts[*].trajectory[*]")
+        if entries is None:
+            entries = select_values(payload, "$.trajectory[*]")
+        if entries is not None:
+            for entry in reversed(entries):
+                if not isinstance(entry, dict):
+                    continue
+                action = runtime_parsing.normalize_text(entry.get("action"))
+                if action is not None and action.splitlines()[0].strip().lower().startswith("submit"):
+                    continue
+                for key in ("observation", "response", "thought"):
+                    text = runtime_parsing.normalize_text(entry.get(key))
+                    if text is not None:
+                        return text
+        return req_str(payload, "$.info.submission")
 
     def _extract_single_trajectory_stats(
         self,
@@ -521,25 +710,7 @@ class SweAgent(CodingAgent):
             else None
         )
 
-        response = next(
-            (
-                text
-                for text in (
-                    runtime_parsing.last_nonempty_text(select_values(payload, path))
-                    for path in (
-                        "$.attempts[*].trajectory[*].response",
-                        "$.attempts[*].trajectory[*].thought",
-                        "$.attempts[*].trajectory[*].observation",
-                        "$.trajectory[*].response",
-                        "$.trajectory[*].thought",
-                        "$.trajectory[*].observation",
-                        "$.info.submission",
-                    )
-                )
-                if text is not None
-            ),
-            None,
-        )
+        response = self._extract_response_from_trajectory(payload)
 
         usage = (
             {

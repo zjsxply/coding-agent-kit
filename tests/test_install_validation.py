@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from pathlib import Path
 
 from src.agents.aider import AiderAgent
 from src.agents.base import CodingAgent, CommandResult, InstallStrategy
@@ -13,6 +14,7 @@ from src.agents.deepagents import DeepAgentsAgent
 from src.agents.factory import FactoryAgent
 from src.agents.goose import GooseAgent
 from src.agents.trae_oss import TraeOssAgent
+from src.agent_runtime import command_exec as runtime_command
 from src.models import InstallResult
 from src.cli import install as install_cli
 from src.cli import tools as tools_cli
@@ -87,6 +89,19 @@ def test_python_build_runtime_packages_cover_alpine_native_extension_builds():
 
 def test_aider_runtime_dependencies_include_python_build_and_uv():
     assert AiderAgent().runtime_dependencies() == ("python-build", "uv")
+
+
+def test_runtime_path_prefixes_prefer_default_uv_tool_bin_before_tmp_fallback(monkeypatch):
+    monkeypatch.delenv("UV_TOOL_BIN_DIR", raising=False)
+    monkeypatch.delenv("XDG_BIN_HOME", raising=False)
+    monkeypatch.delenv("CAKIT_INSTALL_UV_DIR", raising=False)
+    monkeypatch.delenv("CAKIT_NPM_PREFIX", raising=False)
+
+    prefixes = runtime_command.build_runtime_path_prefixes("test")
+
+    assert prefixes[0] == str(Path.home() / ".local" / "bin")
+    assert str(Path("/tmp") / "cakit" / "bin") in prefixes
+    assert prefixes.index(str(Path("/tmp") / "cakit" / "bin")) > 0
 
 
 def test_install_strategy_minimum_node_version_uses_maximum_declared_requirement():

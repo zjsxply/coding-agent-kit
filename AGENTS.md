@@ -41,7 +41,7 @@
 - If manual validation is required, run tests in this order and in the same shell:
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`
-  3. `cakit run <agent> "Reply with exactly this text and nothing else: CAKIT_HEALTHCHECK_OK" > /tmp/cakit-<agent>-basic.json` (basic reply check)
+  3. `cakit run <agent> "Add a new file named cakit_healthcheck.txt at the repository root. Write exactly one line to that file: CAKIT_HEALTHCHECK_OK. Verify the file content, then summarize the change you made." > /tmp/cakit-<agent>-basic.json` (basic repository-change check)
   4. `cakit run <agent> "What is in this image? What text is shown?" --image tests/image1.png > /tmp/cakit-<agent>-image.json` (image input check)
   5. `cakit run <agent> "What happens in this video? List any visible text." --video tests/video.mp4 > /tmp/cakit-<agent>-video.json` (video input check; use a small local mp4)
   6. `cakit run <agent> "Visit https://github.com/algorithmicsuperintelligence/openevolve and summarize what is on that page." > /tmp/cakit-<agent>-web.json` (web access check)

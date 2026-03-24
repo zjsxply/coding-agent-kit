@@ -36,17 +36,19 @@ def build_runtime_path_prefixes(cache_key: str) -> tuple[str, ...]:
         if install_uv_dir
         else _default_install_home(os.environ) / "uv"
     )
+    default_bin_home = Path(xdg_bin_home).expanduser() if xdg_bin_home else Path.home() / ".local" / "bin"
     node_bin_dirs = _node_install_bin_dirs(os.environ)
     return tuple(
         dict.fromkeys(
             (
-                str(Path(uv_tool_bin).expanduser()) if uv_tool_bin else str(Path("/tmp") / "cakit" / "bin"),
-                str(Path(xdg_bin_home).expanduser()) if xdg_bin_home else str(Path.home() / ".local" / "bin"),
+                str(Path(uv_tool_bin).expanduser()) if uv_tool_bin else str(default_bin_home),
+                str(default_bin_home),
                 str(cakit_uv_root),
                 *node_bin_dirs,
                 str(npm_prefix / "bin"),
                 str(Path.home() / ".npm" / "bin"),
                 str(Path.home() / ".local" / "bin"),
+                str(Path("/tmp") / "cakit" / "bin"),
             )
         )
     )

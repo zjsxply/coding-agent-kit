@@ -42,9 +42,14 @@ DEFAULT_WEB_KEYWORD_GROUPS = [
     ["circle packing", "benchmark", "speedup", "2-3x", "2x", "3x"],
     ["open-source implementation", "open source implementation", "open-source", "open source"],
 ]
+DEFAULT_BASIC_FILENAME = "cakit_healthcheck.txt"
 DEFAULT_BASIC_EXPECTED = "CAKIT_HEALTHCHECK_OK"
 DEFAULT_VIDEO_EXPECTED = "CAKIT VIDEO TEST 123"
-DEFAULT_BASIC_PROMPT = f"Reply with exactly this text and nothing else: {DEFAULT_BASIC_EXPECTED}"
+DEFAULT_BASIC_PROMPT = (
+    f"Add a new file named {DEFAULT_BASIC_FILENAME} at the repository root. "
+    f"Write exactly one line to that file: {DEFAULT_BASIC_EXPECTED}. "
+    "Verify the file content, then summarize the change you made."
+)
 CASE_ORDER = {
     "basic": 0,
     "image": 1,
@@ -304,7 +309,7 @@ def _build_case_specs(
                 "prompt": DEFAULT_BASIC_PROMPT,
                 "image": None,
                 "video": None,
-                "expected_keywords": [DEFAULT_BASIC_EXPECTED],
+                "expected_keywords": [DEFAULT_BASIC_EXPECTED, DEFAULT_BASIC_FILENAME, "healthcheck"],
                 "required": True,
             }
         )

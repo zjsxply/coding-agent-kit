@@ -41,7 +41,7 @@
 - 若需要手工逐项验证，再在同一个 shell 中按以下顺序执行：
   1. `source .venv/bin/activate`
   2. `set -a; source .env; set +a`
-  3. `cakit run <agent> "Reply with exactly this text and nothing else: CAKIT_HEALTHCHECK_OK" > /tmp/cakit-<agent>-basic.json`（基础回复检查，期望返回 `CAKIT_HEALTHCHECK_OK`）
+  3. `cakit run <agent> "Add a new file named cakit_healthcheck.txt at the repository root. Write exactly one line to that file: CAKIT_HEALTHCHECK_OK. Verify the file content, then summarize the change you made." > /tmp/cakit-<agent>-basic.json`（基础仓库改动检查）
   4. `cakit run <agent> "这幅图片的内容是什么？有什么文字？" --image tests/image1.png > /tmp/cakit-<agent>-image.json`（图像输入检查）
   5. `cakit run <agent> "这个视频里发生了什么？有什么可见文字？" --video tests/video.mp4 > /tmp/cakit-<agent>-video.json`（视频输入检查，使用本地小体积 mp4）
   6. `cakit run <agent> "访问 https://github.com/algorithmicsuperintelligence/openevolve，并简要说明页面内容。" > /tmp/cakit-<agent>-web.json`（联网访问检查）

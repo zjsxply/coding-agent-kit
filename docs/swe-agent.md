@@ -13,6 +13,7 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
 ## Install
 
 - `cakit install swe-agent` resolves the latest upstream release tag, then installs that git ref with `uv tool install`.
+- cakit installs the upstream CLI in a Python 3.12 `uv tool` environment and preinstalls `pip`, `tree-sitter==0.21.3`, and `tree-sitter-languages` so the upstream official `edit_anthropic` bundle can run in local deployment mode.
 - If `uv` is unavailable, cakit falls back to `pip install` for the same git ref.
 - `cakit install swe-agent --version <tag_or_plain_version>` installs the specified upstream git tag with the same flow. Plain semver such as `1.1.0` is normalized to the upstream `v1.1.0` tag internally.
 - cakit also prepares runtime assets (`config/`, `tools/`, `trajectories/`) under `~/.cache/cakit/swe-agent-assets/<resolved_tag>` and passes:
@@ -28,6 +29,9 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
   - `--problem_statement.text <prompt>`
 - If the installed `sweagent run` supports `--output_dir`, cakit passes a run-local output directory and reads `.traj` files from there.
 - Model priority is: `--model` > `SWE_AGENT_MODEL` > `OPENAI_DEFAULT_MODEL`.
+- cakit deep-copies the upstream official `config/default.yaml` agent defaults when generating the run config, then injects the resolved model/API settings and rewrites tool bundle paths to cakit-managed runtime assets.
+- If current `--cwd` is inside a clean git repo, cakit passes the repo root to SWE-agent instead of just the current subdirectory.
+- If current `--cwd` is inside a dirty git repo, cakit clones the repo to `/tmp`, overlays the current uncommitted worktree changes, creates a temporary snapshot commit, and runs SWE-agent against that clean snapshot.
 - If current `--cwd` is not a git repo, cakit creates a temporary git repo under `/tmp` and uses that path.
 - cakit writes a cakit-managed config to `~/.config/sweagent/config.yaml` and passes it with `--config`.
 - When a base URL is configured, cakit writes it to `agent.model.api_base` and also forwards `OPENAI_BASE_URL` to the child process.
@@ -42,7 +46,7 @@ This document describes how `cakit` runs SWE-agent CLI and extracts run stats.
 - `llm_calls`: `info.model_stats.api_calls`
 - `tool_calls`: number of non-empty `action` entries in `trajectory` (sum across `attempts[*].trajectory` for retry runs).
 - `response`:
-  - latest non-empty text from trajectory steps (`response` / `thought` / `observation`)
+  - latest non-empty text from the last non-`submit` trajectory step, preferring `observation`, then `response`, then `thought`
   - fallback to `info.submission`
   - fallback to last non-empty stdout line
 - `trajectory_path`: YAML-formatted trace from trajectory file; fallback to formatted raw output.
